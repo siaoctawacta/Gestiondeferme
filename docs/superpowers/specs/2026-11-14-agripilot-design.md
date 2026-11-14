@@ -234,6 +234,88 @@ Each ends with a running, tested app pushed to the branch.
 5. Personnel & tâches, équipements & maintenance, rapports, alertes, QR,
    exports, demo seed ("Ferme Kpalimé" data from the reference), docs.
 
+## Rules settled after review
+
+### Roles (cahier §6) — one role per user, valid on the farms the user is assigned to
+
+| Role | Access |
+|---|---|
+| Super Administrateur | Everything: configuration, users, security, audit. |
+| Propriétaire / Direction | Read everything, finance, reports, validations (achats, rapports). |
+| Directeur de ferme | All operational modules of the farm; validates purchases. |
+| Responsable avicole | Lots, ponte, incubation, alimentation and santé for poultry. |
+| Responsable porcin | Animals, reproduction, croissance, alimentation and santé for pigs. |
+| Vétérinaire | Santé: diagnostics, vaccinations, traitements, biosécurité; reads production. |
+| Responsable stock | Stock entries, exits, inventories, thresholds, transfers; purchase requests. |
+| Comptable | Dépenses, recettes, factures, paiements, financial reports. |
+| Commercial | Clients, devis, ventes, facturation, payment follow-up. |
+| Agent d'élevage | Field entry only: mortalité, pesées, alimentation, eau, ponte, tasks assigned to them. |
+| Magasinier | Stock movements and purchase reception. |
+| Auditeur | Read-only everywhere, reports and audit log; no modification. |
+
+### KPI formulas (cahier §35)
+
+- Taux de mortalité = morts / effectif initial × 100
+- GMD = gain de poids / nombre de jours
+- Indice de consommation = aliment consommé / gain de poids
+- Taux de ponte = œufs produits / nombre de poules × 100
+- Taux d'éclosion = poussins nés / œufs incubés × 100
+- Coût par animal = coût total du lot / animaux vendus ou suivis
+- Coût/kg = coût de production / kg produit
+- Marge = revenus − coûts et charges
+- Jours de stock = stock disponible / consommation moyenne quotidienne (30 derniers jours)
+- Coût total = animaux + aliments + médicaments + vaccins + main-d'œuvre + eau + électricité + transport + autres charges
+
+Alert thresholds are settings with defaults: mortalité inhabituelle = daily
+deaths > 0.5 % of live count or cumulative > 3 %; consommation anormale = a
+day's feed or water deviating > 25 % from the lot's 7-day average; stock
+faible = below seuil minimum, critique = below half of it; expiry warning 30
+days; mise bas warning 7 days before the expected date (saillie + 114 days).
+
+### Pigs: individual and by group (cahier §10)
+
+Breeders (truies, verrats) are individual `animal` rows with père/mère. Groups
+(porcelets, engraissement) are `animal_batch` rows with `species = PORCIN` and a
+headcount, sharing the herd ledger with poultry lots. A mise bas creates a
+litter batch from nés vivants linked to the truie; sevrage records sevrés and
+moves the litter into a post-sevrage/engraissement batch. Sales and deaths of
+grouped pigs are herd events on the batch. The Cheptel porcin list shows both
+kinds in one table, as the reference does.
+
+### Finance (owner's decision)
+
+- A facture counts as a recette at its date; payments only change the créance.
+- A received purchase counts as a dépense in its category at reception; supplier
+  payments only change the supplier balance.
+- Salaries, energy, transport and other charges are entered by hand.
+- Stock consumed by a lot (feed, medicines, vaccines) is valued at weighted
+  average purchase cost and attributed to that lot, giving cost and margin per
+  lot, building and activity. General charges stay under "Général" and are not
+  spread over lots.
+- No tax: documents show line totals and a grand total (owner's decision). The
+  farm's name, address, NIF/RCCM print from settings.
+
+### Tenancy
+
+One organisation per deployment (no tenant onboarding). Shared across the
+organisation: users, customers, suppliers, breeds, stock item catalogue, feed
+products and formulas, settings. Per farm: sites, buildings, zones, lots,
+animals, all operations, stock quantities and movements, documents, finance,
+employees, tasks, equipment. Document numbers run per organisation. Stock and
+herd transfers stay within one farm in this build. The farm switcher offers
+"Toutes les fermes" (read-only, consolidated dashboard and reports) to Super
+Administrateur, Propriétaire and Auditeur.
+
+### Edit and delete
+
+Row edit/delete icons stay as in the reference. Operational entries (mortalité,
+pesée, distribution, ponte, traitement…) can be edited or deleted by the roles
+that may create them; ledgers recompute and the change is audited. Documents
+are editable only as drafts (devis, demande d'achat); once a facture is issued
+or a purchase received they are locked and corrected through an avoir, a stock
+AJUSTEMENT or a cancellation with a reason. A lot or animal with history cannot
+be deleted, only closed.
+
 ## Builder's calls (not decided by the owner)
 
 - React + Vite SPA rather than Next.js.
@@ -246,6 +328,9 @@ Each ends with a running, tested app pushed to the branch.
 - The role → permission map is fixed in code (not editable in the UI) in this
   build; initial mapping follows cahier §6.
 - The confidential cahier PDF is not committed to the repo.
+- Everything under "Rules settled after review" except the two items marked
+  as the owner's decision: one role per user, alert thresholds, pig group
+  model, weighted-average costing, tenancy split, edit/delete rules.
 
 ## Left to the builder
 
