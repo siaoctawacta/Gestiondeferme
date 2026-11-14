@@ -15,7 +15,7 @@ import { ProbeController } from './probe.controller';
 
 let migrated = false;
 
-function migrateTestDb(): void {
+export function migrateTestDb(): void {
   if (migrated) return;
   execSync('npx prisma migrate deploy', {
     cwd: join(__dirname, '..'),

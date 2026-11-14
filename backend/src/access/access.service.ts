@@ -8,11 +8,22 @@ import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AccessClaims } from './access-token';
 import type { RequestContext } from './decorators';
+import { Action, can, ModuleKey } from './permissions';
 import { ALL_FARMS_ROLES } from './roles';
 
 @Injectable()
 export class AccessService {
   constructor(private readonly prisma: PrismaService) {}
+
+  /**
+   * For routes whose module depends on the request (poultry lots vs pig lots),
+   * so `@RequirePermission` cannot name it: the handler checks it explicitly.
+   */
+  assertCan(ctx: RequestContext, module: ModuleKey, action: Action): void {
+    if (!can(ctx.user.role, module, action)) {
+      throw new ForbiddenException('Permission insuffisante');
+    }
+  }
 
   /** Loads the user fresh from the DB: role and active flag come from the row, not the token. */
   async loadUser(claims: AccessClaims): Promise<RequestContext['user']> {

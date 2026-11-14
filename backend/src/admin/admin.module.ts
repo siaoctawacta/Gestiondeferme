@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { HerdModule } from '../herd/herd.module';
 import { BuildingsController } from './buildings/buildings.controller';
 import { BuildingsService } from './buildings/buildings.service';
 import { FarmsController } from './farms/farms.controller';
@@ -14,7 +15,7 @@ import { ZonesController } from './zones/zones.controller';
 import { ZonesService } from './zones/zones.service';
 
 @Module({
-  imports: [AuthModule],
+  imports: [AuthModule, HerdModule],
   controllers: [
     FarmsController,
     SitesController,

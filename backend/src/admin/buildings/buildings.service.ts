@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -9,6 +10,7 @@ import type { Prisma } from '../../generated/prisma/client';
 import { BuildingStatus, BuildingType } from '../../generated/prisma/enums';
 import type { ExportColumn } from '../../listing/export';
 import { ListQueryDto, orderBy } from '../../listing/list-query.dto';
+import { OccupationRegistry } from '../../herd/occupation';
 import { PrismaService } from '../../prisma/prisma.service';
 import { containsInsensitive, orConflict } from '../../listing/list-helpers';
 import type { CreateBuildingDto, UpdateBuildingDto } from './buildings.dto';
@@ -58,14 +60,17 @@ const SORTABLE = ['name', 'type', 'capacity', 'status', 'createdAt'];
 
 @Injectable()
 export class BuildingsService implements AuditableService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly occupation: OccupationRegistry,
+  ) {}
 
-  /**
-   * Animals currently housed per building. Slice 2 replaces this body with the
-   * herd ledger; until then every building is empty.
-   */
-  occupationOf(buildingIds: string[]): Promise<Map<string, number>> {
-    return Promise.resolve(new Map(buildingIds.map((id) => [id, 0])));
+  /** Animals currently housed per building, summed over every registered source (lots, individual animals). */
+  occupationOf(
+    farmIds: string[],
+    buildingIds: string[],
+  ): Promise<Map<string, number>> {
+    return this.occupation.occupationByBuilding(farmIds, buildingIds);
   }
 
   private scope(ctx: RequestContext): Prisma.BuildingWhereInput {
@@ -73,7 +78,10 @@ export class BuildingsService implements AuditableService {
   }
 
   private async toItems(rows: BuildingRow[]): Promise<BuildingItem[]> {
-    const occupation = await this.occupationOf(rows.map((r) => r.id));
+    const occupation = await this.occupationOf(
+      [...new Set(rows.map((r) => r.farmId))],
+      rows.map((r) => r.id),
+    );
     return rows.map((r) => {
       const occ = occupation.get(r.id) ?? 0;
       return {
@@ -193,11 +201,27 @@ export class BuildingsService implements AuditableService {
 
   async remove(ctx: RequestContext, id: string): Promise<void> {
     const building = await this.load(id, ctx);
-    await orConflict(() =>
-      this.prisma.$transaction([
+    const message = 'Ce bâtiment est occupé ou a un historique';
+    const occupied = (
+      await this.occupationOf([building.farmId], [building.id])
+    ).get(building.id);
+    const batches = await this.prisma.animalBatch.count({
+      where: { buildingId: building.id },
+    });
+    if ((occupied ?? 0) > 0 || batches > 0) {
+      throw new ConflictException(message);
+    }
+    try {
+      await this.prisma.$transaction([
         this.prisma.zone.deleteMany({ where: { buildingId: building.id } }),
         this.prisma.building.delete({ where: { id } }),
-      ]),
-    );
+      ]);
+    } catch (error) {
+      // A lot or animal was housed here between the check and the delete.
+      if ((error as { code?: string } | null)?.code === 'P2003') {
+        throw new ConflictException(message);
+      }
+      throw error;
+    }
   }
 }

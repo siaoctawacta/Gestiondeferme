@@ -35,6 +35,35 @@ enum BuildingStatus {
   MAINTENANCE
 }
 
+enum Species {
+  AVICOLE
+  PORCIN
+}
+
+enum BatchType {
+  CHAIR
+  PONDEUSE
+  POUSSIN
+  REPRODUCTEUR
+  PORCELET
+  ENGRAISSEMENT
+}
+
+enum BatchStatus {
+  EN_COURS
+  CLOTURE
+}
+
+enum BatchEventType {
+  ENTREE
+  NAISSANCE
+  MORTALITE
+  VENTE
+  TRANSFERT_SORTIE
+  TRANSFERT_ENTREE
+  REFORME
+}
+
 enum AuditAction {
   CREATE
   UPDATE
@@ -56,21 +85,25 @@ model Organization {
   users     User[]
   settings  Setting[]
   auditLogs AuditLog[]
+  breeds    Breed[]
 }
 
 model Farm {
-  id             String       @id @default(cuid())
+  id             String        @id @default(cuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id])
+  organization   Organization  @relation(fields: [organizationId], references: [id])
   name           String
   location       String?
-  active         Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  active         Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
   sites          Site[]
   buildings      Building[]
   zones          Zone[]
   userFarms      UserFarm[]
+  batches        AnimalBatch[]
+  batchEvents    BatchEvent[]
+  weighings      Weighing[]
 }
 
 model Site {
@@ -98,6 +131,7 @@ model Building {
   createdAt DateTime       @default(now())
   updatedAt DateTime       @updatedAt
   zones     Zone[]
+  batches   AnimalBatch[]
 
   @@unique([farmId, name])
   @@index([siteId])
@@ -142,6 +176,8 @@ model User {
   passwordResets PasswordReset[]
   loginLogs      LoginLog[]
   auditLogs      AuditLog[]
+  responsibleFor AnimalBatch[]
+  batchEvents    BatchEvent[]
 }
 
 model UserFarm {
@@ -228,4 +264,95 @@ model Setting {
   updatedAt      DateTime     @updatedAt
 
   @@unique([organizationId, key])
+}
+
+model Breed {
+  id             String        @id @default(cuid())
+  organizationId String
+  organization   Organization  @relation(fields: [organizationId], references: [id])
+  name           String
+  species        Species
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+  batches        AnimalBatch[]
+
+  @@unique([organizationId, species, name])
+}
+
+model AnimalBatch {
+  id             String       @id @default(cuid())
+  farmId         String
+  farm           Farm         @relation(fields: [farmId], references: [id])
+  code           String
+  species        Species
+  type           BatchType
+  breedId        String?
+  breed          Breed?       @relation(fields: [breedId], references: [id], onDelete: Restrict)
+  buildingId     String
+  building       Building     @relation(fields: [buildingId], references: [id])
+  entryDate      DateTime     @db.Date
+  initialCount   Int
+  supplierName   String?
+  purchasePrice  Decimal?     @db.Decimal(14, 2)
+  responsibleId  String?
+  responsible    User?        @relation(fields: [responsibleId], references: [id], onDelete: Restrict)
+  status         BatchStatus  @default(EN_COURS)
+  closedAt       DateTime?
+  /// Sow of a piglet batch; the animals table (and its foreign key) arrive with the pig module.
+  motherAnimalId String?
+  notes          String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  events         BatchEvent[] @relation("BatchEvents")
+  relatedEvents  BatchEvent[] @relation("RelatedBatch")
+  weighings      Weighing[]
+
+  @@unique([farmId, code])
+  @@index([farmId])
+  @@index([breedId])
+  @@index([buildingId])
+  @@index([responsibleId])
+}
+
+model BatchEvent {
+  id             String         @id @default(cuid())
+  farmId         String
+  farm           Farm           @relation(fields: [farmId], references: [id])
+  batchId        String
+  batch          AnimalBatch    @relation("BatchEvents", fields: [batchId], references: [id])
+  date           DateTime       @db.Date
+  type           BatchEventType
+  quantity       Int
+  cause          String?
+  note           String?
+  relatedBatchId String?
+  relatedBatch   AnimalBatch?   @relation("RelatedBatch", fields: [relatedBatchId], references: [id], onDelete: Restrict)
+  sourceType     String?
+  sourceId       String?
+  createdById    String
+  createdBy      User           @relation(fields: [createdById], references: [id])
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([farmId])
+  @@index([batchId, date])
+  @@index([relatedBatchId])
+  @@index([createdById])
+}
+
+model Weighing {
+  id             String      @id @default(cuid())
+  farmId         String
+  farm           Farm        @relation(fields: [farmId], references: [id])
+  batchId        String
+  batch          AnimalBatch @relation(fields: [batchId], references: [id])
+  date           DateTime    @db.Date
+  sampleSize     Int
+  averageWeightG Int
+  note           String?
+  createdAt      DateTime    @default(now())
+  updatedAt      DateTime    @updatedAt
+
+  @@index([farmId])
+  @@index([batchId, date])
 }
