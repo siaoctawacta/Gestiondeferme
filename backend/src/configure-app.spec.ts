@@ -1,4 +1,4 @@
-import { assertJwtSecret } from './configure-app';
+import { apiDocsEnabled, assertJwtSecret } from './configure-app';
 import { assertEncryptionKey } from './auth/crypto';
 
 describe('boot secret validation', () => {
@@ -19,7 +19,30 @@ describe('boot secret validation', () => {
       process.env.TOTP_ENC_KEY = Buffer.alloc(32, 1).toString('base64');
       expect(() => assertEncryptionKey()).not.toThrow();
     } finally {
-      process.env.TOTP_ENC_KEY = saved;
+      // Assigning undefined would store the string "undefined".
+      if (saved === undefined) delete process.env.TOTP_ENC_KEY;
+      else process.env.TOTP_ENC_KEY = saved;
     }
+  });
+});
+
+describe('apiDocsEnabled', () => {
+  it('is on outside production', () => {
+    expect(apiDocsEnabled({ NODE_ENV: 'development' })).toBe(true);
+    expect(apiDocsEnabled({ NODE_ENV: 'test' })).toBe(true);
+    expect(apiDocsEnabled({})).toBe(true);
+  });
+
+  it('is off in production unless ENABLE_API_DOCS=true', () => {
+    expect(apiDocsEnabled({ NODE_ENV: 'production' })).toBe(false);
+    expect(
+      apiDocsEnabled({ NODE_ENV: 'production', ENABLE_API_DOCS: 'false' }),
+    ).toBe(false);
+    expect(
+      apiDocsEnabled({ NODE_ENV: 'production', ENABLE_API_DOCS: '1' }),
+    ).toBe(false);
+    expect(
+      apiDocsEnabled({ NODE_ENV: 'production', ENABLE_API_DOCS: 'true' }),
+    ).toBe(true);
   });
 });

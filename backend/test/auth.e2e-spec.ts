@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { hashPassword } from '../src/auth/password';
+import { TokensService } from '../src/auth/tokens.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import type { Role } from '../src/generated/prisma/enums';
 import {
@@ -581,5 +582,30 @@ describe('Authentication (e2e)', () => {
       (comptaMe.body as { user: { twoFactorMandatory: boolean } }).user
         .twoFactorMandatory,
     ).toBe(true);
+  });
+
+  it('purgeExpired deletes refresh tokens expired or revoked over 30 days ago and keeps the rest', async () => {
+    const user = await makeUser();
+    const day = 24 * 60 * 60 * 1000;
+    const make = (tokenHash: string, expiresAt: Date, revokedAt?: Date) =>
+      prisma.refreshToken.create({
+        data: { userId: user.id, tokenHash, expiresAt, revokedAt },
+      });
+    const future = new Date(Date.now() + day);
+    await make('long-expired', new Date(Date.now() - 40 * day));
+    await make('long-revoked', future, new Date(Date.now() - 31 * day));
+    await make('recently-expired', new Date(Date.now() - 2 * day));
+    await make('recently-revoked', future, new Date(Date.now() - 2 * day));
+    await make('live', future);
+    const removed = await app.get(TokensService).purgeExpired();
+    expect(removed).toBe(2);
+    const left = await prisma.refreshToken.findMany({
+      select: { tokenHash: true },
+    });
+    expect(left.map((t) => t.tokenHash).sort()).toEqual([
+      'live',
+      'recently-expired',
+      'recently-revoked',
+    ]);
   });
 });

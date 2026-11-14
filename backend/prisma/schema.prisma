@@ -100,6 +100,7 @@ model Building {
   zones     Zone[]
 
   @@unique([farmId, name])
+  @@index([siteId])
 }
 
 model Zone {
@@ -112,6 +113,10 @@ model Zone {
   capacity   Int?
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
+
+  @@unique([buildingId, name])
+  @@index([farmId])
+  @@index([buildingId])
 }
 
 model User {
@@ -148,6 +153,7 @@ model UserFarm {
   updatedAt DateTime @updatedAt
 
   @@id([userId, farmId])
+  @@index([farmId])
 }
 
 model RefreshToken {
@@ -160,6 +166,8 @@ model RefreshToken {
   replacedById String?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+
+  @@index([userId])
 }
 
 model PasswordReset {
@@ -171,6 +179,8 @@ model PasswordReset {
   usedAt    DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+
+  @@index([userId])
 }
 
 model LoginLog {
@@ -183,6 +193,8 @@ model LoginLog {
   userAgent String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@index([userId])
 }
 
 model AuditLog {
@@ -200,9 +212,10 @@ model AuditLog {
   before         Json?
   after          Json?
   createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
 
   @@index([organizationId, createdAt])
+  @@index([farmId])
+  @@index([userId])
 }
 
 model Setting {

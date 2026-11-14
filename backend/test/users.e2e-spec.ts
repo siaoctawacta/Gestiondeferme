@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
+import { UsersService } from '../src/admin/users/users.service';
 import { hashPassword } from '../src/auth/password';
 import { encrypt } from '../src/auth/crypto';
 import { sha256 } from '../src/auth/tokens.service';
@@ -211,6 +212,35 @@ describe('Users and settings (e2e)', () => {
         .expect('Content-Type', /text\/csv/);
     });
 
+    it('exports the exact French role labels', async () => {
+      const admin = await actor('SUPER_ADMIN');
+      const labels: Record<string, string> = {
+        SUPER_ADMIN: 'Super Administrateur',
+        PROPRIETAIRE: 'Propriétaire / Direction',
+        DIRECTEUR_FERME: 'Directeur de ferme',
+        RESP_AVICOLE: 'Responsable avicole',
+        RESP_PORCIN: 'Responsable porcin',
+        VETERINAIRE: 'Vétérinaire',
+        RESP_STOCK: 'Responsable stock',
+        COMPTABLE: 'Comptable',
+        COMMERCIAL: 'Commercial',
+        AGENT_ELEVAGE: "Agent d'élevage",
+        MAGASINIER: 'Magasinier',
+        AUDITEUR: 'Auditeur',
+      };
+      for (const role of Object.keys(labels)) {
+        if (role !== 'SUPER_ADMIN') await actor(role as Role);
+      }
+      const res = await http()
+        .get('/api/users?format=csv&pageSize=200')
+        .set(admin.headers)
+        .expect(200);
+      const text = res.text;
+      for (const label of Object.values(labels)) {
+        expect(text).toContain(label);
+      }
+    });
+
     it('updates name, role, active and farms; never the password', async () => {
       const admin = await actor('SUPER_ADMIN');
       const u = (
@@ -365,6 +395,57 @@ describe('Users and settings (e2e)', () => {
         .set(admin.headers)
         .send({ active: false })
         .expect(200);
+    });
+
+    it('decides on the locked row, not on a stale snapshot (last admin)', async () => {
+      const sole = await actor('SUPER_ADMIN');
+      const service = app.get(UsersService);
+      // A snapshot taken before the user was promoted: it still says COMMERCIAL.
+      const stale = jest
+        .spyOn(service as unknown as { load: () => Promise<unknown> }, 'load')
+        .mockResolvedValue({ role: 'COMMERCIAL', active: true });
+      const ctx = {
+        user: {
+          id: 'someone-else',
+          name: 'Autre',
+          role: 'PROPRIETAIRE' as const,
+          organizationId: orgId,
+        },
+        farmId: null,
+        allFarms: false,
+        farmIds: [],
+      };
+      try {
+        await expect(
+          service.update(ctx, sole.user.id, { active: false }),
+        ).rejects.toThrow('Au moins un Super Administrateur actif est requis');
+        await expect(service.remove(ctx, sole.user.id)).rejects.toThrow(
+          'Au moins un Super Administrateur actif est requis',
+        );
+      } finally {
+        stale.mockRestore();
+      }
+      const row = await prisma.user.findUniqueOrThrow({
+        where: { id: sole.user.id },
+      });
+      expect(row.active).toBe(true);
+    });
+
+    it('two concurrent demotions of the two admins never leave zero', async () => {
+      const a = await actor('SUPER_ADMIN');
+      const b = await actor('SUPER_ADMIN');
+      const demote = (by: typeof a, target: typeof a) =>
+        http()
+          .patch(`/api/users/${target.user.id}`)
+          .set(by.headers)
+          .send({ role: 'COMMERCIAL' });
+      const statuses = (await Promise.all([demote(a, b), demote(b, a)]))
+        .map((r) => r.status)
+        .sort();
+      expect(statuses).toEqual([200, 409]);
+      expect(await prisma.user.count({ where: { role: 'SUPER_ADMIN' } })).toBe(
+        1,
+      );
     });
 
     it('hard delete: refused with history, allowed without', async () => {
@@ -612,6 +693,28 @@ describe('Users and settings (e2e)', () => {
         await put('gestationDays', bad).expect(400);
       }
       await put('mortalityDailyPct', 0.75).expect(200);
+      // Day counts are whole numbers; percentages stay within ]0, 100].
+      for (const key of [
+        'expiryWarningDays',
+        'farrowingWarningDays',
+        'gestationDays',
+      ]) {
+        for (const bad of [1.5, 0.5, -3, 0, '7', null]) {
+          await put(key, bad).expect(400);
+        }
+        await put(key, 21).expect(200);
+      }
+      for (const key of [
+        'mortalityDailyPct',
+        'mortalityCumulPct',
+        'consumptionDeviationPct',
+      ]) {
+        for (const bad of [0, -1, 100.01, 101, 1000, '50', null]) {
+          await put(key, bad).expect(400);
+        }
+        await put(key, 100).expect(200);
+        await put(key, 0.1).expect(200);
+      }
       await put('currency', '').expect(400);
       await put('currency', 'x'.repeat(11)).expect(400);
       await put('currency', 12).expect(400);

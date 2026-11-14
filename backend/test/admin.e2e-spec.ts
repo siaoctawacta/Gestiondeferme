@@ -434,6 +434,27 @@ describe('Administration resources (e2e)', () => {
   });
 
   describe('zones', () => {
+    it('answers 409 to concurrent creations of the same zone name, backed by a unique index', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const b = (
+        await http().post('/api/buildings').set(headers).send(building())
+      ).body as BuildingItem;
+      const attempt = () =>
+        http()
+          .post('/api/zones')
+          .set(headers)
+          .send({ buildingId: b.id, name: 'Zone concurrente' });
+      const statuses = (await Promise.all([attempt(), attempt()]))
+        .map((r) => r.status)
+        .sort();
+      expect(statuses).toEqual([201, 409]);
+      await expect(
+        prisma.zone.create({
+          data: { farmId: farmA, buildingId: b.id, name: 'Zone concurrente' },
+        }),
+      ).rejects.toMatchObject({ code: 'P2002' });
+    });
+
     it('supports CRUD filtered by building, scoped to the farm', async () => {
       const { headers } = await actor('DIRECTEUR_FERME');
       const b1 = (

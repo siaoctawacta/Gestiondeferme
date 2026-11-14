@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import type { Request, Response } from 'express';
 import { signAccessToken } from '../access/access-token';
@@ -8,6 +8,7 @@ import { PrismaService } from '../prisma/prisma.service';
 export const REFRESH_COOKIE = 'ap_refresh';
 const REFRESH_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const PARTIAL_TOKEN_TTL_SECONDS = 10 * 60;
+const PURGE_AFTER_MS = 30 * 24 * 60 * 60 * 1000;
 
 export interface SessionUser {
   id: string;
@@ -52,6 +53,8 @@ const cookieOptions = () =>
 
 @Injectable()
 export class TokensService {
+  private readonly logger = new Logger(TokensService.name);
+
   constructor(private readonly prisma: PrismaService) {}
 
   private accessTokenFor(user: SessionUser, stage: 'full' | '2fa' | 'setup') {
@@ -207,6 +210,29 @@ export class TokensService {
       },
       data: { revokedAt: new Date() },
     });
+  }
+
+  /**
+   * Housekeeping: deletes refresh tokens that expired or were revoked more
+   * than 30 days ago. Best-effort (called once at boot): a failure is logged
+   * and never stops the application. Returns the number of rows removed.
+   */
+  async purgeExpired(): Promise<number> {
+    const cutoff = new Date(Date.now() - PURGE_AFTER_MS);
+    try {
+      const { count } = await this.prisma.refreshToken.deleteMany({
+        where: {
+          OR: [{ expiresAt: { lt: cutoff } }, { revokedAt: { lt: cutoff } }],
+        },
+      });
+      return count;
+    } catch (error) {
+      this.logger.error(
+        'Refresh token purge failed',
+        error instanceof Error ? error.stack : String(error),
+      );
+      return 0;
+    }
   }
 
   clearCookie(res: Response): void {

@@ -91,7 +91,7 @@ export class ZonesService implements AuditableService {
     return zone;
   }
 
-  /** Zone names are unique within a building (the schema has no constraint for it). */
+  /** Zone names are unique within a building (also enforced by a unique index). */
   private async assertNameFree(
     buildingId: string,
     name: string,
@@ -117,10 +117,13 @@ export class ZonesService implements AuditableService {
       throw new BadRequestException('Bâtiment invalide pour cette ferme');
     }
     await this.assertNameFree(building.id, dto.name);
-    const zone = await this.prisma.zone.create({
-      data: { ...dto, farmId: ctx.farmId! },
-      include,
-    });
+    // The (building, name) unique index settles races the pre-check cannot see.
+    const zone = await orConflict(() =>
+      this.prisma.zone.create({
+        data: { ...dto, farmId: ctx.farmId! },
+        include,
+      }),
+    );
     return toItem(zone);
   }
 
@@ -131,11 +134,9 @@ export class ZonesService implements AuditableService {
   ): Promise<ZoneItem> {
     const current = await this.load(id, ctx);
     if (dto.name) await this.assertNameFree(current.buildingId, dto.name, id);
-    const zone = await this.prisma.zone.update({
-      where: { id },
-      data: dto,
-      include,
-    });
+    const zone = await orConflict(() =>
+      this.prisma.zone.update({ where: { id }, data: dto, include }),
+    );
     return toItem(zone);
   }
 
