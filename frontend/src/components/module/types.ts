@@ -141,12 +141,13 @@ export type ModuleConfig<T extends { id: string }> = {
   /**
    * Custom add / edit form replacing the generated dialog; `row` is absent when adding. Call `onSaved`
    * after a successful write (the list is refetched and the form closed) or `onClose` to cancel.
+   * `scope` is the effective scope of the list (see `scope`): the form must merge it into its create payload.
    */
-  form?: ComponentType<{ row?: T; onSaved: () => void; onClose: () => void }>;
+  form?: ComponentType<{ row?: T; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }>;
   /**
    * Fixed query parameters for a list embedded in a detail page (e.g. `{ batchId }`): sent with the list
-   * request and the unfiltered-count request, and merged into every create payload after `toPayload`.
-   * Never shown as filters.
+   * request and the unfiltered-count request, and merged into every create payload after `toPayload` (a custom `form` receives it as a prop and must
+   * merge it itself). It wins over a filter or form field of the same name. Never shown as filters.
    */
   scope?: Record<string, string>;
   /** Shows a QR code button linking to `detailPath`. */

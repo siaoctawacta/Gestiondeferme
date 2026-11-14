@@ -244,11 +244,14 @@ export class UsersService implements AuditableService {
             'Vous ne pouvez pas désactiver votre propre compte',
           );
         }
-        const farmCount = farmIds
-          ? farmIds.length
-          : await tx.userFarm.count({ where: { userId: id } });
-        if (needsFarm(role, farmCount))
-          throw new BadRequestException(FARM_REQUIRED);
+        // Only when the body touches role or farms: a legacy farm-less user can still be renamed or deactivated.
+        if (dto.role !== undefined || farmIds) {
+          const farmCount = farmIds
+            ? farmIds.length
+            : await tx.userFarm.count({ where: { userId: id } });
+          if (needsFarm(role, farmCount))
+            throw new BadRequestException(FARM_REQUIRED);
+        }
         if (farmIds) {
           await tx.userFarm.deleteMany({ where: { userId: id } });
           await tx.userFarm.createMany({

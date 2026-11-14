@@ -434,6 +434,42 @@ describe('ModulePage kit extensions', () => {
     expect(listCalls().every((c) => c.url.includes('buildingId=b9'))).toBe(true);
   });
 
+  it('gives a custom form the effective scope', async () => {
+    const seen: unknown[] = [];
+    const form: NonNullable<ModuleConfig<Building>['form']> = ({ scope }) => {
+      seen.push(scope);
+      return <div role="dialog" aria-label="Formulaire perso" />;
+    };
+    setup({ list: true, scope: { buildingId: 'b9' }, config: { ...batiments, scope: { batchId: 'b1' }, form } });
+    await screen.findByText('Poulailler A');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Ajouter' }));
+    expect(seen.at(-1)).toEqual({ batchId: 'b1', buildingId: 'b9' });
+  });
+
+  it('lets the scope win over a filter or form field of the same name', async () => {
+    setup({ config: { ...batiments, scope: { status: 'ACTIF', type: 'PORCIN' } } });
+    await screen.findByText('Poulailler A');
+    const user = userEvent.setup();
+    await user.selectOptions(screen.getByLabelText('Tous les statuts'), 'Maintenance');
+    await waitFor(() => expect(listCalls().some((c) => c.url.includes('status=MAINTENANCE') || c.url.includes('status=ACTIF'))).toBe(true));
+    for (const c of listCalls().slice(-1)) {
+      expect(c.url).toContain('status=ACTIF');
+      expect(c.url).not.toContain('status=MAINTENANCE');
+    }
+    handler = (c) => (c.method === 'POST' ? json(201, { id: 'b3' }) : undefined);
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText('Nom'), 'X');
+    await user.selectOptions(within(dialog).getByLabelText('Type'), 'Avicole');
+    await user.selectOptions(await within(dialog).findByLabelText('Site'), 'Site Nord');
+    await user.type(within(dialog).getByLabelText('Capacité'), '10');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === '/api/buildings')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST' && c.url === '/api/buildings')?.body).toMatchObject({
+      type: 'PORCIN', status: 'ACTIF',
+    });
+  });
+
   it('renders an element tab', async () => {
     setup({ config: { ...batiments, tabs: [{ key: 'extra', label: 'Résumé', element: <p>Contenu libre</p> }] } });
     await screen.findByText('Poulailler A');
@@ -479,6 +515,29 @@ describe('ModulePage kit extensions', () => {
 
       await user.selectOptions(within(dialog).getByLabelText('Site'), 'Site Sud');
       expect(within(dialog).getByLabelText('Zone')).toHaveValue('');
+    });
+
+    it('clears dependents transitively', async () => {
+      const chain: ModuleConfig<Building> = {
+        ...batiments,
+        fields: [
+          { name: 'a', label: 'Aa', type: 'select', options: [{ value: '1', label: 'Un' }, { value: '2', label: 'Deux' }] },
+          { name: 'b', label: 'Bb', type: 'select', dependsOn: 'a', options: [{ value: 'x', label: 'Ex' }] },
+          { name: 'c', label: 'Cc', type: 'select', dependsOn: 'b', options: [{ value: 'y', label: 'Ygrec' }] },
+        ],
+      };
+      setup({ config: chain });
+      await screen.findByText('Poulailler A');
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+      const dialog = await screen.findByRole('dialog');
+      await user.selectOptions(within(dialog).getByLabelText('Aa'), 'Un');
+      await user.selectOptions(within(dialog).getByLabelText('Bb'), 'Ex');
+      await user.selectOptions(within(dialog).getByLabelText('Cc'), 'Ygrec');
+      expect(within(dialog).getByLabelText('Cc')).toHaveValue('y');
+      await user.selectOptions(within(dialog).getByLabelText('Aa'), 'Deux');
+      expect(within(dialog).getByLabelText('Bb')).toHaveValue('');
+      expect(within(dialog).getByLabelText('Cc')).toHaveValue('');
     });
 
     it('submits a time field as HH:mm and passes max / step to number inputs', async () => {

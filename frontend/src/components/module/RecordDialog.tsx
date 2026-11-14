@@ -184,7 +184,16 @@ export function RecordDialog<T extends { id: string }>({ config, row, scope, onC
   const setField = (name: string, v: unknown) =>
     setValues((s) => {
       const next = { ...s, [name]: v };
-      for (const f of fields) if (f.type === 'select' && f.dependsOn === name) next[f.name] = '';
+      // Clear the dependents, and theirs in turn (A -> B -> C).
+      const cleared = [name];
+      for (let i = 0; i < cleared.length; i++) {
+        for (const f of fields) {
+          if (f.type === 'select' && f.dependsOn === cleared[i] && !cleared.includes(f.name)) {
+            next[f.name] = '';
+            cleared.push(f.name);
+          }
+        }
+      }
       return next;
     });
 

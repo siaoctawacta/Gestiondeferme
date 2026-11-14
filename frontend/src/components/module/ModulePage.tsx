@@ -250,6 +250,7 @@ function ModuleView<T extends { id: string }>({
 
       {editing && EditForm && (
         <EditForm
+          scope={scope}
           row={editing === 'new' ? undefined : editing}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); afterWrite(); }}

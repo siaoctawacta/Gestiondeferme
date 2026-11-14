@@ -214,6 +214,31 @@ describe('Users and settings (e2e)', () => {
         .expect(200);
     });
 
+    it('lets a legacy farm-less user be renamed or deactivated, but not re-roled', async () => {
+      const admin = await actor('SUPER_ADMIN');
+      const legacy = await createUser({
+        organizationId: orgId,
+        role: 'RESP_AVICOLE',
+        farmIds: [],
+        passwordHash,
+      });
+      await http()
+        .patch(`/api/users/${legacy.id}`)
+        .set(admin.headers)
+        .send({ name: 'Renommé' })
+        .expect(200);
+      await http()
+        .patch(`/api/users/${legacy.id}`)
+        .set(admin.headers)
+        .send({ active: false })
+        .expect(200);
+      await http()
+        .patch(`/api/users/${legacy.id}`)
+        .set(admin.headers)
+        .send({ role: 'COMMERCIAL' })
+        .expect(400);
+    });
+
     it('enforces permissions: DIRECTEUR_FERME 403, AUDITEUR read-only', async () => {
       const director = await actor('DIRECTEUR_FERME');
       await http().get('/api/users').set(director.headers).expect(403);
