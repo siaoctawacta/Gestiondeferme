@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BrowserRouter, Route, Routes, useParams } from 'react-router';
+import { BrowserRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './lib/auth';
 import type { ModuleKey } from './lib/modules';
@@ -10,6 +10,10 @@ import { RequireAuth, RequirePermission } from './components/shell/guards';
 import Account from './pages/Account';
 import Login from './pages/Login';
 import NotFound from './pages/NotFound';
+import { ModuleRoute } from './pages/ModuleRoute';
+import Farms from './pages/admin/Farms';
+import Settings from './pages/admin/Settings';
+import Users from './pages/admin/Users';
 import { Placeholder } from './pages/Placeholder';
 import ResetPassword from './pages/ResetPassword';
 
@@ -25,12 +29,6 @@ function Guarded({ module }: { module: ModuleKey }) {
       <Placeholder title={ITEMS.find((i) => i.slug === module)!.label} />
     </RequirePermission>
   );
-}
-
-function ModuleRoute() {
-  const { module } = useParams();
-  const item = ITEMS.find((i) => i.slug === module && i.to === `/m/${module}`);
-  return item ? <Guarded module={item.slug} /> : <NotFound />;
 }
 
 function Shell({ children }: { children: ReactNode }) {
@@ -61,9 +59,9 @@ export default function App() {
                       <Route path="/rapports" element={<Guarded module="rapports" />} />
                       <Route path="/audit" element={<Guarded module="audit" />} />
                       <Route path="/m/:module" element={<ModuleRoute />} />
-                      <Route path="/admin/fermes" element={<Guarded module="fermes" />} />
-                      <Route path="/admin/utilisateurs" element={<Guarded module="utilisateurs" />} />
-                      <Route path="/admin/parametres" element={<Guarded module="parametres" />} />
+                      <Route path="/admin/fermes" element={<RequirePermission module="fermes"><Farms /></RequirePermission>} />
+                      <Route path="/admin/utilisateurs" element={<RequirePermission module="utilisateurs"><Users /></RequirePermission>} />
+                      <Route path="/admin/parametres" element={<RequirePermission module="parametres"><Settings /></RequirePermission>} />
                       <Route path="/compte" element={<Account />} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>

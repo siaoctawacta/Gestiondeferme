@@ -1,0 +1,149 @@
+import { useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { KeyRound, ShieldOff } from 'lucide-react';
+import { ActionButton } from '../../components/module/DataTable';
+import { ConfirmDialog } from '../../components/module/ConfirmDialog';
+import { errorMessage } from '../../components/module/errorMessage';
+import { ModulePage } from '../../components/module/ModulePage';
+import type { ModuleConfig } from '../../components/module/types';
+import { Alert } from '../../components/ui/Alert';
+import { Button } from '../../components/ui/Button';
+import { Dialog } from '../../components/ui/Dialog';
+import { Input } from '../../components/ui/Input';
+import { Pill } from '../../components/ui/Pill';
+import { api } from '../../lib/api';
+import { formatDateTimeFr } from '../../lib/format';
+import { farmKey } from '../../lib/query';
+import { useAuth } from '../../lib/auth';
+import { ROLE_LABELS, ROLE_OPTIONS } from '../../lib/roles';
+
+interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  active: boolean;
+  farms: { id: string; name: string }[];
+  twoFactorEnabled: boolean;
+  lastLoginAt: string | null;
+}
+
+type LinkState =
+  | { status: 'loading' }
+  | { status: 'ready'; url: string; expiresAt: string }
+  | { status: 'error'; message: string };
+
+function ResetLinkDialog({ state, onClose }: { state: LinkState; onClose: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+    } catch {
+      setCopied(false);
+    }
+  };
+  return (
+    <Dialog open onClose={onClose} title="Lien de réinitialisation">
+      {state.status === 'loading' && <p className="text-sm text-muted-foreground">Génération du lien…</p>}
+      {state.status === 'error' && <Alert>{state.message}</Alert>}
+      {state.status === 'ready' && (
+        <div className="space-y-3">
+          <p className="text-sm">Transmettez ce lien à l’utilisateur pour qu’il choisisse un nouveau mot de passe.</p>
+          <div className="flex gap-2">
+            <Input readOnly aria-label="Lien de réinitialisation" value={state.url} onFocus={(e) => e.target.select()} />
+            <Button onClick={() => copy(state.url)}>{copied ? 'Copié' : 'Copier'}</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">Valable jusqu’au {formatDateTimeFr(state.expiresAt)}</p>
+        </div>
+      )}
+      <div className="mt-6 flex justify-end">
+        <Button variant="outline" onClick={onClose}>Fermer</Button>
+      </div>
+    </Dialog>
+  );
+}
+
+function UserActions({ user }: { user: User }) {
+  const queryClient = useQueryClient();
+  const { farmId } = useAuth();
+  const [link, setLink] = useState<LinkState | null>(null);
+  const [confirm2fa, setConfirm2fa] = useState(false);
+
+  const openLink = async () => {
+    setLink({ status: 'loading' });
+    try {
+      const res = await api.post<{ url: string; expiresAt: string }>(`/users/${user.id}/reset-link`);
+      setLink({ status: 'ready', ...res });
+    } catch (e) {
+      setLink({ status: 'error', message: errorMessage(e) });
+    }
+  };
+
+  return (
+    <>
+      <ActionButton label="Lien de réinitialisation" onClick={openLink}>
+        <KeyRound aria-hidden className="size-4" />
+      </ActionButton>
+      <ActionButton label="Réinitialiser 2FA" onClick={() => setConfirm2fa(true)}>
+        <ShieldOff aria-hidden className="size-4" />
+      </ActionButton>
+      {link && <ResetLinkDialog state={link} onClose={() => setLink(null)} />}
+      {confirm2fa && (
+        <ConfirmDialog
+          title="Réinitialiser la 2FA"
+          message={`Réinitialiser la double authentification de « ${user.name} » ? Il devra la configurer à nouveau.`}
+          confirmLabel="Réinitialiser"
+          onClose={() => setConfirm2fa(false)}
+          onConfirm={async () => {
+            await api.post(`/users/${user.id}/reset-2fa`);
+            setConfirm2fa(false);
+            void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
+          }}
+        />
+      )}
+    </>
+  );
+}
+
+export const users: ModuleConfig<User> = {
+  slug: 'utilisateurs',
+  group: 'Administration',
+  title: 'Utilisateurs',
+  subtitle: 'Comptes, rôles et accès aux fermes.',
+  endpoint: '/users',
+  farmScoped: false,
+  columns: [
+    { key: 'name', header: 'Nom', sortable: true },
+    { key: 'email', header: 'Email', sortable: true },
+    { key: 'role', header: 'Rôle', sortable: true, render: (u) => ROLE_LABELS[u.role] ?? u.role },
+    { key: 'farms', header: 'Fermes', render: (u) => u.farms.map((f) => f.name).join(', ') || '—' },
+    {
+      key: 'twoFactorEnabled',
+      header: '2FA',
+      render: (u) => <Pill tone={u.twoFactorEnabled ? 'success' : 'neutral'}>{u.twoFactorEnabled ? 'Activée' : 'Non activée'}</Pill>,
+    },
+    {
+      key: 'active',
+      header: 'Statut',
+      sortable: true,
+      render: (u) => <Pill tone={u.active ? 'success' : 'neutral'}>{u.active ? 'Actif' : 'Inactif'}</Pill>,
+    },
+  ],
+  fields: [
+    { name: 'name', label: 'Nom', type: 'text', required: true },
+    { name: 'email', label: 'E-mail', type: 'text', required: true, only: 'create' },
+    { name: 'role', label: 'Rôle', type: 'select', required: true, options: ROLE_OPTIONS },
+    { name: 'farmIds', label: 'Fermes', type: 'multiselect', options: { endpoint: '/farms' } },
+    { name: 'password', label: 'Mot de passe', type: 'password', required: true, minLength: 10, only: 'create' },
+    { name: 'active', label: 'Compte actif', type: 'checkbox', only: 'update' },
+  ],
+  statTiles: 'totalOnly',
+  toForm: (u) => ({ name: u.name, role: u.role, active: u.active, farmIds: u.farms.map((f) => f.id) }),
+  rowLabel: (u) => u.name,
+  rowActions: (u) => <UserActions user={u} />,
+};
+
+export default function Users() {
+  return <ModulePage config={users} />;
+}

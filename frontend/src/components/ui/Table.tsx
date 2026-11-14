@@ -19,12 +19,12 @@ export function TR({ className = '', ...props }: HTMLAttributes<HTMLTableRowElem
 export function TH({ className = '', ...props }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
-      className={`px-4 py-4 text-xs font-medium uppercase tracking-wider text-muted-foreground ${className}`}
+      className={`px-4 py-3 text-xs font-medium uppercase leading-[18px] tracking-wider text-muted-foreground ${className}`}
       {...props}
     />
   );
 }
 
 export function TD({ className = '', ...props }: TdHTMLAttributes<HTMLTableCellElement>) {
-  return <td className={`px-4 py-4 align-middle ${className}`} {...props} />;
+  return <td className={`px-4 py-3 align-middle ${className}`} {...props} />;
 }
