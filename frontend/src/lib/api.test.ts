@@ -1,0 +1,138 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { api, ApiError, setAccessToken, getAccessToken, setFarmHeader } from './api';
+
+function json(status: number, body?: unknown): Response {
+  return new Response(body === undefined ? null : JSON.stringify(body), {
+    status,
+    headers: { 'content-type': 'application/json' },
+  });
+}
+
+const fetchMock = vi.fn<typeof fetch>();
+
+function headersOf(call: number): Headers {
+  return new Headers((fetchMock.mock.calls[call][1] as RequestInit).headers);
+}
+
+beforeEach(() => {
+  fetchMock.mockReset();
+  vi.stubGlobal('fetch', fetchMock);
+  setAccessToken('tok-1');
+  setFarmHeader('farm-1');
+});
+afterEach(() => {
+  vi.unstubAllGlobals();
+  setAccessToken(null);
+  setFarmHeader(null);
+});
+
+describe('api client', () => {
+  it('sends Authorization and X-Farm-Id with credentials', async () => {
+    fetchMock.mockResolvedValueOnce(json(200, { ok: true }));
+    await expect(api.get('/lots', { page: 2 })).resolves.toEqual({ ok: true });
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('/api/lots?page=2');
+    expect((init as RequestInit).credentials).toBe('include');
+    expect(headersOf(0).get('Authorization')).toBe('Bearer tok-1');
+    expect(headersOf(0).get('X-Farm-Id')).toBe('farm-1');
+  });
+
+  it('refreshes once on 401 and retries with the new token', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(401, { message: 'Unauthorized' }))
+      .mockResolvedValueOnce(json(200, { accessToken: 'tok-2', user: { id: 'u' } }))
+      .mockResolvedValueOnce(json(200, { data: 1 }));
+    await expect(api.get('/lots')).resolves.toEqual({ data: 1 });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/refresh');
+    expect(headersOf(2).get('Authorization')).toBe('Bearer tok-2');
+    expect(getAccessToken()).toBe('tok-2');
+  });
+
+  it('shares a single refresh between parallel 401s', async () => {
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = String(input);
+      if (url === '/api/auth/refresh') return json(200, { accessToken: 'tok-2', user: {} });
+      const auth = new Headers((init as RequestInit).headers).get('Authorization');
+      return auth === 'Bearer tok-2' ? json(200, { ok: url }) : json(401, { message: 'x' });
+    });
+    const [a, b] = await Promise.all([api.get('/a'), api.get('/b')]);
+    expect(a).toEqual({ ok: '/api/a' });
+    expect(b).toEqual({ ok: '/api/b' });
+    const refreshes = fetchMock.mock.calls.filter(([u]) => u === '/api/auth/refresh');
+    expect(refreshes).toHaveLength(1);
+  });
+
+  it('does not retry more than once', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(401, { message: 'x' }))
+      .mockResolvedValueOnce(json(200, { accessToken: 'tok-2', user: {} }))
+      .mockResolvedValueOnce(json(401, { message: 'still no' }));
+    await expect(api.get('/lots')).rejects.toMatchObject({ status: 401 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('rejects with ApiError 401 and clears the token when refresh fails', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(401, { message: 'Unauthorized' }))
+      .mockResolvedValueOnce(json(401, { message: 'Session expirée' }));
+    const err = (await api.get('/lots').catch((e: unknown) => e)) as ApiError;
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err.status).toBe(401);
+    expect(getAccessToken()).toBeNull();
+  });
+
+  it('refreshes once for /auth/2fa/setup made with the session token', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(401, { message: 'Unauthorized' }))
+      .mockResolvedValueOnce(json(200, { accessToken: 'tok-2', user: {} }))
+      .mockResolvedValueOnce(json(200, { secret: 's' }));
+    await expect(api.post('/auth/2fa/setup')).resolves.toEqual({ secret: 's' });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/refresh');
+    expect(headersOf(2).get('Authorization')).toBe('Bearer tok-2');
+  });
+
+  it('retries with a newer token without refreshing again', async () => {
+    fetchMock.mockImplementationOnce(async () => {
+      setAccessToken('tok-2'); // another request refreshed meanwhile
+      return json(401, { message: 'x' });
+    });
+    fetchMock.mockResolvedValueOnce(json(200, { ok: 1 }));
+    await expect(api.get('/lots')).resolves.toEqual({ ok: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(headersOf(1).get('Authorization')).toBe('Bearer tok-2');
+  });
+
+  it('never tries to refresh for login, 2FA verify or explicit-token calls', async () => {
+    fetchMock.mockResolvedValueOnce(json(401, { message: 'Identifiants invalides' }));
+    await expect(api.post('/auth/login', { email: 'a', password: 'b' })).rejects.toMatchObject({
+      status: 401,
+      message: 'Identifiants invalides',
+    });
+    fetchMock.mockResolvedValueOnce(json(401, { message: 'Code invalide' }));
+    await expect(api.post('/auth/2fa/verify', { code: '1' }, { token: 'c' })).rejects.toMatchObject({
+      status: 401,
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('surfaces the server message, joining validation arrays', async () => {
+    fetchMock.mockResolvedValueOnce(json(409, { message: 'Ce nom existe déjà', code: 'DUP' }));
+    await expect(api.post('/fermes', {})).rejects.toMatchObject({
+      status: 409,
+      message: 'Ce nom existe déjà',
+      code: 'DUP',
+    });
+    fetchMock.mockResolvedValueOnce(json(400, { message: ['a est requis', 'b est invalide'] }));
+    await expect(api.post('/fermes', {})).rejects.toMatchObject({
+      message: 'a est requis\nb est invalide',
+    });
+  });
+
+  it('returns undefined on 204 and omits X-Farm-Id when no farm is selected', async () => {
+    setFarmHeader(null);
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 204 }));
+    await expect(api.del('/lots/1')).resolves.toBeUndefined();
+    expect(headersOf(0).has('X-Farm-Id')).toBe(false);
+    expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('DELETE');
+  });
+});
