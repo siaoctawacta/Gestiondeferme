@@ -1,0 +1,212 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum Role {
+  SUPER_ADMIN
+  PROPRIETAIRE
+  DIRECTEUR_FERME
+  RESP_AVICOLE
+  RESP_PORCIN
+  VETERINAIRE
+  RESP_STOCK
+  COMPTABLE
+  COMMERCIAL
+  AGENT_ELEVAGE
+  MAGASINIER
+  AUDITEUR
+}
+
+enum BuildingType {
+  AVICOLE
+  PORCIN
+  AUTRE
+}
+
+enum BuildingStatus {
+  ACTIF
+  VIDE_SANITAIRE
+  MAINTENANCE
+}
+
+enum AuditAction {
+  CREATE
+  UPDATE
+  DELETE
+  LOGIN
+  LOGOUT
+  OTHER
+}
+
+model Organization {
+  id        String    @id @default(cuid())
+  name      String
+  currency  String    @default("FCFA")
+  legalId   String?
+  address   String?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  farms     Farm[]
+  users     User[]
+  settings  Setting[]
+}
+
+model Farm {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  name           String
+  location       String?
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  sites          Site[]
+  buildings      Building[]
+  zones          Zone[]
+  userFarms      UserFarm[]
+}
+
+model Site {
+  id        String     @id @default(cuid())
+  farmId    String
+  farm      Farm       @relation(fields: [farmId], references: [id])
+  name      String
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
+  buildings Building[]
+
+  @@unique([farmId, name])
+}
+
+model Building {
+  id        String         @id @default(cuid())
+  farmId    String
+  farm      Farm           @relation(fields: [farmId], references: [id])
+  siteId    String
+  site      Site           @relation(fields: [siteId], references: [id])
+  name      String
+  type      BuildingType
+  capacity  Int
+  status    BuildingStatus @default(ACTIF)
+  createdAt DateTime       @default(now())
+  updatedAt DateTime       @updatedAt
+  zones     Zone[]
+
+  @@unique([farmId, name])
+}
+
+model Zone {
+  id         String   @id @default(cuid())
+  farmId     String
+  farm       Farm     @relation(fields: [farmId], references: [id])
+  buildingId String
+  building   Building @relation(fields: [buildingId], references: [id])
+  name       String
+  capacity   Int?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model User {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id])
+  email          String          @unique
+  name           String
+  passwordHash   String
+  role           Role
+  active         Boolean         @default(true)
+  failedLogins   Int             @default(0)
+  lockedUntil    DateTime?
+  totpSecretEnc  String?
+  totpEnabledAt  DateTime?
+  backupCodes    String[]
+  lastLoginAt    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  farms          UserFarm[]
+  refreshTokens  RefreshToken[]
+  passwordResets PasswordReset[]
+  loginLogs      LoginLog[]
+  auditLogs      AuditLog[]
+}
+
+model UserFarm {
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  farmId    String
+  farm      Farm     @relation(fields: [farmId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@id([userId, farmId])
+}
+
+model RefreshToken {
+  id           String    @id @default(cuid())
+  userId       String
+  user         User      @relation(fields: [userId], references: [id])
+  tokenHash    String    @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  replacedById String?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+model PasswordReset {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model LoginLog {
+  id        String   @id @default(cuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id])
+  email     String
+  success   Boolean
+  ip        String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model AuditLog {
+  id        String      @id @default(cuid())
+  userId    String?
+  user      User?       @relation(fields: [userId], references: [id])
+  userName  String
+  farmId    String?
+  module    String
+  action    AuditAction
+  recordId  String?
+  label     String?
+  before    Json?
+  after     Json?
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
+}
+
+model Setting {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  key            String
+  value          Json
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@unique([organizationId, key])
+}
