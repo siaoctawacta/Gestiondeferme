@@ -78,11 +78,15 @@ export class TokensService {
         expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
       },
     });
+    this.setCookie(res, raw);
+    return row;
+  }
+
+  private setCookie(res: Response, raw: string): void {
     res.cookie(REFRESH_COOKIE, raw, {
       ...cookieOptions(),
       maxAge: REFRESH_TTL_MS,
     });
-    return row;
   }
 
   /** Full session: refresh cookie + access token. */
@@ -107,14 +111,17 @@ export class TokensService {
     ];
     const invalid = () => new UnauthorizedException('Session expirée');
     if (!raw) throw invalid();
+    const newRaw = randomBytes(48).toString('base64url');
 
     const token = await this.prisma.refreshToken.findUnique({
       where: { tokenHash: sha256(raw) },
       include: { user: true },
     });
     if (!token) throw invalid();
+    // Reuse detection applies to ROTATED tokens only. A token revoked by
+    // logout, change-password or reset simply gets 401.
     if (token.revokedAt) {
-      await this.revokeAll(token.userId);
+      if (token.replacedById) await this.revokeAll(token.userId);
       this.clearCookie(res);
       throw invalid();
     }
@@ -123,21 +130,34 @@ export class TokensService {
       throw invalid();
     }
 
-    // Atomic claim: of two concurrent refreshes with the same token only one wins.
-    const claimed = await this.prisma.refreshToken.updateMany({
-      where: { id: token.id, revokedAt: null },
-      data: { revokedAt: new Date() },
+    // Atomic claim + replacement in one transaction: of two concurrent
+    // refreshes with the same token only one wins.
+    const next = await this.prisma.$transaction(async (tx) => {
+      const claimed = await tx.refreshToken.updateMany({
+        where: { id: token.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      if (claimed.count === 0) return null;
+      const row = await tx.refreshToken.create({
+        data: {
+          userId: token.userId,
+          tokenHash: sha256(newRaw),
+          expiresAt: new Date(Date.now() + REFRESH_TTL_MS),
+        },
+      });
+      await tx.refreshToken.update({
+        where: { id: token.id },
+        data: { replacedById: row.id },
+      });
+      return row;
     });
-    if (claimed.count === 0) {
+    if (!next) {
+      // Lost the race: the winner rotated this token, so this is a replay.
       await this.revokeAll(token.userId);
       this.clearCookie(res);
       throw invalid();
     }
-    const next = await this.createRefreshToken(token.userId, res);
-    await this.prisma.refreshToken.update({
-      where: { id: token.id },
-      data: { replacedById: next.id },
-    });
+    this.setCookie(res, newRaw);
     return {
       accessToken: this.accessTokenFor(token.user, 'full'),
       user: toUserView(token.user),

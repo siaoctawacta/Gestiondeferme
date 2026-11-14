@@ -84,8 +84,8 @@ export class AuthService {
     res: Response,
   ): Promise<LoginResult> {
     const normalized = email.trim().toLowerCase();
-    let user = await this.prisma.user.findFirst({
-      where: { email: { equals: normalized, mode: 'insensitive' } },
+    let user = await this.prisma.user.findUnique({
+      where: { email: normalized },
     });
 
     if (!user) {
@@ -97,23 +97,16 @@ export class AuthService {
     const now = new Date();
     if (user.lockedUntil && user.lockedUntil > now) {
       await this.log(normalized, false, user.id, req);
-      throw new HttpException(
-        {
-          statusCode: HttpStatus.LOCKED,
-          error: 'Locked',
-          message:
-            'Compte verrouillé après trop de tentatives. Réessayez plus tard.',
-          lockedUntil: user.lockedUntil.toISOString(),
-        },
-        HttpStatus.LOCKED,
-      );
+      throw this.lockedError(user.lockedUntil);
     }
     if (user.lockedUntil) {
       // The lock has expired: start a fresh count.
-      user = await this.prisma.user.update({
-        where: { id: user.id },
+      // Conditional so a lock set by a concurrent request is never wiped.
+      await this.prisma.user.updateMany({
+        where: { id: user.id, lockedUntil: { lte: now } },
         data: { failedLogins: 0, lockedUntil: null },
       });
+      user = { ...user, failedLogins: 0, lockedUntil: null };
     }
 
     const passwordOk = await verifyPassword(user.passwordHash, password);
@@ -123,10 +116,24 @@ export class AuthService {
       throw new UnauthorizedException(INVALID);
     }
 
-    await this.prisma.user.update({
-      where: { id: user.id },
+    // Conditional: a lock set by a concurrent failed attempt while we were
+    // verifying the password must still win.
+    const reset = await this.prisma.user.updateMany({
+      where: {
+        id: user.id,
+        OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }],
+      },
       data: { failedLogins: 0, lockedUntil: null, lastLoginAt: now },
     });
+    if (reset.count === 0) {
+      const current = await this.prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+      });
+      await this.log(normalized, false, user.id, req);
+      throw this.lockedError(
+        current.lockedUntil ?? new Date(Date.now() + LOCK_MS),
+      );
+    }
     await this.log(normalized, true, user.id, req);
 
     const session: SessionUser = user;
@@ -146,17 +153,29 @@ export class AuthService {
     }
   }
 
+  private lockedError(lockedUntil: Date): HttpException {
+    return new HttpException(
+      {
+        statusCode: HttpStatus.LOCKED,
+        error: 'Locked',
+        message:
+          'Compte verrouillé après trop de tentatives. Réessayez plus tard.',
+        lockedUntil: lockedUntil.toISOString(),
+      },
+      HttpStatus.LOCKED,
+    );
+  }
+
+  /** One atomic statement: concurrent failures cannot under-count or miss the lock. */
   private async registerFailure(userId: string): Promise<void> {
-    const updated = await this.prisma.user.update({
-      where: { id: userId },
-      data: { failedLogins: { increment: 1 } },
-    });
-    if (updated.failedLogins >= MAX_FAILED_LOGINS) {
-      await this.prisma.user.update({
-        where: { id: userId },
-        data: { lockedUntil: new Date(Date.now() + LOCK_MS) },
-      });
-    }
+    await this.prisma.$executeRaw`
+      UPDATE "User"
+      SET "failedLogins" = "failedLogins" + 1,
+          "lockedUntil" = CASE
+            WHEN "failedLogins" + 1 >= ${MAX_FAILED_LOGINS}
+            THEN now() + ${LOCK_MS / 1000} * interval '1 second'
+            ELSE "lockedUntil" END
+      WHERE "id" = ${userId}`;
   }
 
   async me(userId: string) {

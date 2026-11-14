@@ -347,6 +347,74 @@ describe('Authentication (e2e)', () => {
     ).toBe(401);
   });
 
+  it('cannot bypass the lockout with parallel guesses', async () => {
+    const user = await makeUser();
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => login(user.email, 'wrong-password')),
+    );
+    expect(results.every((r) => r.status === 401 || r.status === 423)).toBe(
+      true,
+    );
+    const ok = await login(user.email, PASSWORD);
+    expect(ok.status).toBe(423);
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.failedLogins).toBeGreaterThanOrEqual(5);
+    expect(row.lockedUntil!.getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it('refuses a correct password that raced a lock', async () => {
+    const user = await makeUser();
+    const results = await Promise.all([
+      ...Array.from({ length: 8 }, () => login(user.email, 'wrong-password')),
+      login(user.email, PASSWORD),
+    ]);
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    // Whatever the interleaving, a success is only valid if no lock exists.
+    const success = results.some((r) => r.status === 200);
+    if (row.lockedUntil && row.lockedUntil > new Date()) {
+      expect(row.failedLogins).toBeGreaterThanOrEqual(5);
+    }
+    expect(success && row.failedLogins >= 5 && row.lockedUntil === null).toBe(
+      false,
+    );
+  });
+
+  it('resets the failure counter on success (4 failures, success, 1 failure)', async () => {
+    const user = await makeUser();
+    for (let i = 0; i < 4; i += 1) await login(user.email, 'wrong-password');
+    expect((await login(user.email, PASSWORD)).status).toBe(200);
+    expect((await login(user.email, 'wrong-password')).status).toBe(401);
+    const row = await prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    expect(row.failedLogins).toBe(1);
+    expect(row.lockedUntil).toBeNull();
+  });
+
+  it('keeps the calling session alive when another revoked device refreshes', async () => {
+    const user = await makeUser();
+    const auth = `Bearer ${await tokenFor(user.id)}`;
+    const current = refreshCookie(await login(user.email, PASSWORD));
+    const otherDevice = refreshCookie(await login(user.email, PASSWORD));
+    const ok = await http()
+      .post('/api/auth/change-password')
+      .set('Authorization', auth)
+      .set('Cookie', current)
+      .send({ currentPassword: PASSWORD, newPassword: 'A-brand-new-pass-1' });
+    expect(ok.status).toBe(204);
+    expect(
+      (await http().post('/api/auth/refresh').set('Cookie', otherDevice))
+        .status,
+    ).toBe(401);
+    expect(
+      (await http().post('/api/auth/refresh').set('Cookie', current)).status,
+    ).toBe(200);
+  });
+
+  it('normalises the email case on login', async () => {
+    const user = await makeUser();
+    const res = await login(`  ${user.email.toUpperCase()} `, PASSWORD);
+    expect(res.status).toBe(200);
+  });
+
   it('writes a LoginLog row for every attempt with the right success flag', async () => {
     const user = await makeUser();
     await login(user.email, 'wrong-password');

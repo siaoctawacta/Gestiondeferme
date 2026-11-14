@@ -13,6 +13,16 @@ export function configureApp(app: INestApplication): void {
   if (!webOrigin) {
     throw new Error('WEB_ORIGIN must be set (CORS never allows any origin)');
   }
+  const trustProxy = process.env.TRUST_PROXY;
+  if (trustProxy) {
+    const value =
+      trustProxy === 'true'
+        ? true
+        : /^\d+$/.test(trustProxy)
+          ? Number(trustProxy)
+          : trustProxy;
+    app.getHttpAdapter().getInstance().set('trust proxy', value);
+  }
   app.setGlobalPrefix('api');
   app.use(helmet());
   app.use(cookieParser());
