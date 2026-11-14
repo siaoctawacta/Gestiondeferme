@@ -8,7 +8,9 @@ import type { DashboardDto } from '../../lib/dashboard';
 export function niceDomain(values: number[]): [number, number] {
   const min = Math.min(...values);
   const max = Math.max(...values);
-  const span = max - min || Math.max(Math.abs(max) * 0.1, 4);
+  // A flat series (all zero, or a single point) still needs a range with distinct ticks.
+  if (min === max) return min === 0 ? [0, 4] : [min - 2, max + 2];
+  const span = max - min;
   const raw = span / 4;
   const pow = 10 ** Math.floor(Math.log10(raw));
   const step = [1, 2.5, 5, 10].map((m) => m * pow).find((s) => s >= raw)!;
@@ -59,7 +61,7 @@ export function EggChart({ series }: { series: DashboardDto['eggSeries'] }) {
                 stroke="var(--chart-1)"
                 strokeWidth={2}
                 fill="url(#egg-fill)"
-                dot={false}
+                dot={data.length === 1}
                 isAnimationActive={false}
               />
             </AreaChart>

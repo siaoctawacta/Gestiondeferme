@@ -1,6 +1,6 @@
-import { keepPreviousData } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { useFarmQuery } from '../lib/query';
 import { errorMessage } from '../components/module/errorMessage';
 import { ExportMenu } from '../components/module/ExportMenu';
@@ -56,6 +56,7 @@ const SEARCH_DEBOUNCE_MS = 300;
 const SKELETON_ROWS = 5;
 
 export default function Audit() {
+  const { farmId } = useAuth();
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
   const [module, setModule] = useState('');
@@ -65,18 +66,19 @@ export default function Audit() {
   useEffect(() => {
     const timer = setTimeout(() => {
       const next = searchInput.trim();
-      setSearch((prev) => {
-        if (prev !== next) setPage(1);
-        return next;
-      });
+      if (next !== search) {
+        setSearch(next);
+        setPage(1);
+      }
     }, SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [searchInput]);
+  }, [searchInput, search]);
 
   const filters = { search: search || undefined, module: module || undefined };
   const params = { ...filters, page };
   const list = useFarmQuery<AuditPage>(['audit', params], () => api.get<AuditPage>('/audit', params), {
-    placeholderData: keepPreviousData,
+    // Keep the previous page while paging, but never rows of another farm.
+    placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === farmId ? prev : undefined),
   });
   const data = list.data;
   const pages = data ? Math.max(1, Math.ceil(data.total / data.pageSize)) : 1;

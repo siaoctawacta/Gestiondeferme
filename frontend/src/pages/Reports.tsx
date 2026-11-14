@@ -7,36 +7,37 @@ import { errorMessage } from '../components/module/errorMessage';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Table, TD, TH, THead, TR } from '../components/ui/Table';
+import { buildCsv, type IndicatorRow } from './reportCsv';
 import { ErrorRetry, PageTitle, Skeleton } from './PageParts';
 
-type Row = [label: string, value: string];
-
-function indicators(d: DashboardDto): Row[] {
+function indicators(d: DashboardDto): IndicatorRow[] {
+  const num = (label: string, value: number, unit = ''): IndicatorRow => ({
+    label, display: unit === 'FCFA' ? formatMoney(value) : `${formatNumber(value)}${unit ? ` ${unit}` : ''}`, value, unit,
+  });
+  const rate = (label: string, value: number | null): IndicatorRow => ({
+    label, display: rateOrDash(value), value, unit: '%',
+  });
   return [
-    ['Volailles vivantes', formatNumber(d.kpis.poultryAlive)],
-    ['Porcs (cheptel)', formatNumber(d.kpis.pigs)],
-    ['Taux de mortalité (lots en cours)', rateOrDash(d.kpis.mortalityRate)],
-    ['Œufs produits (dernier jour)', formatNumber(d.kpis.eggsLastDay)],
-    ['Taux de ponte', rateOrDash(d.kpis.layingRate)],
-    ['Aliment distribué', `${formatNumber(d.feedDistributedKg)} kg`],
-    ['Eau consommée', `${formatNumber(d.waterConsumedL)} L`],
-    ["Chiffre d'affaires", formatMoney(d.profitability.revenue)],
-    ['Dépenses', formatMoney(d.profitability.expenses)],
-    ['Marge indicative', formatMoney(d.profitability.margin)],
-    ['Créances clients', formatMoney(d.profitability.receivables)],
-    ['Alertes ouvertes', formatNumber(d.alerts.total)],
+    num('Volailles vivantes', d.kpis.poultryAlive),
+    num('Porcs (cheptel)', d.kpis.pigs),
+    rate('Taux de mortalité (lots en cours)', d.kpis.mortalityRate),
+    num('Œufs produits (dernier jour)', d.kpis.eggsLastDay),
+    rate('Taux de ponte', d.kpis.layingRate),
+    num('Aliment distribué', d.feedDistributedKg, 'kg'),
+    num('Eau consommée', d.waterConsumedL, 'L'),
+    num("Chiffre d'affaires", d.profitability.revenue, 'FCFA'),
+    num('Dépenses', d.profitability.expenses, 'FCFA'),
+    num('Marge indicative', d.profitability.margin, 'FCFA'),
+    num('Créances clients', d.profitability.receivables, 'FCFA'),
+    num('Alertes ouvertes', d.alerts.total),
   ];
 }
 
 const frDate = (d: Date) =>
   `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
 
-const csvCell = (v: string) => `"${v.replaceAll('"', '""')}"`;
-
-/** Downloads the indicator table: `;` separated, UTF-8 BOM so Excel reads the accents. */
-function downloadCsv(rows: Row[], today: Date) {
-  const lines = [['Indicateur', 'Valeur'], ...rows].map((r) => r.map(csvCell).join(';'));
-  const blob = new Blob([`﻿${lines.join('\r\n')}\r\n`], { type: 'text/csv;charset=utf-8' });
+function downloadCsv(rows: IndicatorRow[], today: Date) {
+  const blob = new Blob([buildCsv(rows)], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -87,10 +88,10 @@ export default function Reports() {
                 </TR>
               </THead>
               <tbody>
-                {rows.map(([label, value]) => (
-                  <TR key={label}>
-                    <TD className="px-5">{label}</TD>
-                    <TD className="px-5 text-right font-semibold">{value}</TD>
+                {rows.map((r) => (
+                  <TR key={r.label}>
+                    <TD className="px-5">{r.label}</TD>
+                    <TD className="px-5 text-right font-semibold">{r.display}</TD>
                   </TR>
                 ))}
               </tbody>

@@ -10,6 +10,10 @@ import Alerts from './Alerts';
 import Audit from './Audit';
 import Dashboard from './Dashboard';
 import Reports from './Reports';
+import { buildCsv } from './reportCsv';
+import { EggChart, niceDomain } from './dashboard/EggChart';
+import { Shell } from '../App';
+import { RequireAuth } from '../components/shell/guards';
 
 function json(status: number, body?: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -114,6 +118,8 @@ describe('Dashboard', () => {
     expect(screen.getByText('Taux de ponte 87%')).toBeInTheDocument();
     expect(screen.getByText('3.6%')).toBeInTheDocument();
     expect(screen.getByText('3 970 000 FCFA')).toBeInTheDocument();
+    expect(screen.getByText('2 835 000 FCFA')).toBeInTheDocument();
+    expect(screen.getByText('1 135 000 FCFA')).toBeInTheDocument();
     expect(screen.getByText('29%')).toBeInTheDocument();
     expect(screen.getByText('5 bâtiments actifs')).toBeInTheDocument();
     expect(screen.getByText('1 800 kg')).toBeInTheDocument();
@@ -203,5 +209,119 @@ describe('Audit', () => {
     await waitFor(() => expect(urls.some((u) => u.includes('/api/audit') && u.includes('page=2'))).toBe(true));
     await userEvent.selectOptions(screen.getByLabelText('Filtrer par module'), 'batiments');
     await waitFor(() => expect(urls.some((u) => u.includes('module=batiments') && u.includes('page=1'))).toBe(true));
+  });
+});
+
+describe('Dashboard edge cases', () => {
+  it('shows a dash for a null margin rate even with revenue', async () => {
+    const dto = { ...FULL, profitability: { ...FULL.profitability, marginPct: null } };
+    mount(<Dashboard />, (u) => (u === '/api/dashboard' ? json(200, dto) : undefined));
+    const card = (await screen.findByText('Rentabilité du mois')).closest('div')!;
+    expect(within(card).getByText('—')).toBeInTheDocument();
+    expect(within(card).getByText('3 970 000 FCFA')).toBeInTheDocument();
+    expect(within(card).queryByText('0%')).not.toBeInTheDocument();
+  });
+
+  it('takes the alert count from the shared alerts hook', async () => {
+    mount(<Dashboard />, (u) => (u === '/api/dashboard' ? json(200, FULL) : u === '/api/alerts' ? json(200, { total: 9, items: ALERT_ITEMS }) : undefined));
+    expect(await screen.findByText('(9)')).toBeInTheDocument();
+  });
+});
+
+describe('Shell alert indicators', () => {
+  const shell = (total: number) =>
+    mount(<RequireAuth><Shell><p>page</p></Shell></RequireAuth>, (u) => (u === '/api/alerts' ? json(200, { total, items: [] }) : undefined));
+
+  it('shows the pill and the dot when alerts exist', async () => {
+    shell(14);
+    const sidebarLink = await screen.findByRole('link', { name: /^Alertes\s*14$/ });
+    expect(sidebarLink).toBeInTheDocument();
+    const bell = document.querySelector('a[aria-label="Alertes"]')!;
+    expect(bell.querySelector('.bg-destructive')).not.toBeNull();
+  });
+
+  it('shows neither pill nor dot without alerts', async () => {
+    shell(0);
+    await screen.findByText('page');
+    await waitFor(() => expect(urls).toContain('/api/alerts'));
+    const bell = document.querySelector('a[aria-label="Alertes"]')!;
+    expect(bell.querySelector('.bg-destructive')).toBeNull();
+  });
+});
+
+describe('EggChart', () => {
+  const renderChart = (series: { date: string; eggs: number }[]) =>
+    render(<MemoryRouter><EggChart series={series} /></MemoryRouter>);
+
+  it('gives flat series a range with distinct ticks', () => {
+    expect(niceDomain([0, 0, 0])).toEqual([0, 4]);
+    expect(niceDomain([2480])).toEqual([2478, 2482]);
+    const { container } = renderChart(['18', '19', '20'].map((d) => ({ date: `2026-10-${d}`, eggs: 0 })));
+    const ticks = [...container.querySelectorAll('.recharts-yAxis-tick-labels text')].map((t) => t.textContent);
+    expect(ticks.length).toBeGreaterThan(1);
+    expect(new Set(ticks).size).toBe(ticks.length);
+  });
+
+  it('draws a visible dot for a one-point series', () => {
+    const { container } = renderChart([{ date: '2026-10-22', eggs: 2480 }]);
+    expect(container.querySelector('.recharts-dot')).not.toBeNull();
+  });
+});
+
+describe('Reports actions', () => {
+  it('prints with window.print', async () => {
+    const print = vi.fn();
+    vi.stubGlobal('print', print);
+    mount(<Reports />, (u) => (u === '/api/dashboard' ? json(200, FULL) : undefined));
+    await userEvent.click(await screen.findByRole('button', { name: /Imprimer/ }));
+    expect(print).toHaveBeenCalledOnce();
+  });
+
+  it('exports plain numbers with the unit in its own column', async () => {
+    let blob: Blob | undefined;
+    URL.createObjectURL = vi.fn((b: Blob | MediaSource) => { blob = b as Blob; return 'blob:x'; });
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const dto = { ...FULL, profitability: { ...FULL.profitability, margin: -1135000 } };
+    mount(<Reports />, (u) => (u === '/api/dashboard' ? json(200, dto) : undefined));
+    await userEvent.click(await screen.findByRole('button', { name: 'CSV' }));
+    const text = await blob!.text();
+    expect(text).toContain('"Marge indicative";-1135000;"FCFA"');
+    expect(text).toContain('"Volailles vivantes";11570;""');
+  });
+});
+
+describe('buildCsv', () => {
+  it('writes BOM, ; separator, CRLF, doubled quotes and neutralised formulas', () => {
+    const csv = buildCsv([
+      { label: 'Marge "nette"', display: '', value: -1135000, unit: 'FCFA' },
+      { label: '=SOMME(A1)', display: '', value: null, unit: '' },
+    ]);
+    expect(csv.startsWith('\uFEFF"Indicateur";"Valeur";"Unité"\r\n')).toBe(true);
+    const lines = csv.slice(1).split('\r\n');
+    expect(lines[1]).toBe('"Marge ""nette""";-1135000;"FCFA"');
+    expect(lines[2]).toBe('"\'=SOMME(A1)";"";""');
+    expect(csv.endsWith('\r\n')).toBe(true);
+  });
+});
+
+describe('Audit pills and search', () => {
+  const entry = (id: string, action: string) => ({
+    id, createdAt: '2026-11-14T09:05:00.000Z', userName: 'Awa', action, module: 'batiments', label: `L-${id}`, recordId: id,
+  });
+
+  it('labels every action and falls back to Autre', async () => {
+    const items = ['UPDATE', 'DELETE', 'LOGIN', 'LOGOUT', 'WHATEVER'].map((a, i) => entry(String(i), a));
+    mount(<Audit />, (u) => (u.startsWith('/api/audit') ? json(200, { items, total: 5, page: 1, pageSize: 25 }) : undefined));
+    for (const label of ['Modification', 'Suppression', 'Connexion', 'Déconnexion', 'Autre']) {
+      expect(await screen.findByText(label, { selector: 'span' })).toBeInTheDocument();
+    }
+  });
+
+  it('sends the search term after the debounce', async () => {
+    mount(<Audit />, (u) => (u.startsWith('/api/audit') ? json(200, { items: [], total: 0, page: 1, pageSize: 25 }) : undefined));
+    await screen.findByText('Aucune action enregistrée pour le moment.');
+    await userEvent.type(screen.getByLabelText('Rechercher'), 'poul');
+    await waitFor(() => expect(urls.some((u) => u.includes('/api/audit') && u.includes('search=poul'))).toBe(true));
   });
 });

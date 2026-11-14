@@ -2,17 +2,20 @@ import { Link } from 'react-router';
 import { ArrowUpRight } from 'lucide-react';
 import { Card } from '../../components/ui/Card';
 import { Pill } from '../../components/ui/Pill';
+import { useAlerts } from '../../lib/alerts';
 import { EmptyData } from '../PageParts';
 import type { DashboardDto } from '../../lib/dashboard';
 
 const SHOWN = 5;
 
 export function AlertsCard({ alerts }: { alerts: DashboardDto['alerts'] }) {
+  // Same source as the sidebar pill, so the two counts can never disagree.
+  const total = useAlerts().data?.total ?? alerts.total;
   return (
     <Card className="p-5">
       <div className="flex items-center justify-between">
         <h2 className="text-lg font-bold">
-          Alertes ouvertes <span className="font-medium text-muted-foreground">({alerts.total})</span>
+          Alertes ouvertes <span className="font-medium text-muted-foreground">({total})</span>
         </h2>
         <Link to="/alertes" aria-label="Voir toutes les alertes" className="text-primary">
           <ArrowUpRight aria-hidden className="size-4" />

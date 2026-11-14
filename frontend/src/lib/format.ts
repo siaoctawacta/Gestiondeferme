@@ -1,8 +1,8 @@
-const NNBSP = ' ';
+const NBSP = ' ';
 
 export function formatNumber(n: number): string {
   const [int, dec] = String(Math.abs(n)).split('.');
-  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, NNBSP);
+  const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, NBSP);
   return `${n < 0 ? '-' : ''}${grouped}${dec ? `.${dec}` : ''}`;
 }
 

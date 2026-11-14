@@ -20,7 +20,7 @@ function DashboardSkeleton() {
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {[0, 1, 2, 3].map((i) => <Skeleton key={i} className="h-36" />)}
       </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <Skeleton className="h-[340px] lg:col-span-2" />
         <Skeleton className="h-[340px]" />
       </div>
@@ -76,7 +76,7 @@ export default function Dashboard() {
               <KpiCard label="Mortalité lots" icon={Skull} value={rateOrDash(d.kpis.mortalityRate)} sub="Lots avicoles en cours" />
             </div>
 
-            <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               <EggChart series={d.eggSeries} />
               <ProfitCard profit={d.profitability} />
             </div>
