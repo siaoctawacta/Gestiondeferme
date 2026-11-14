@@ -1,10 +1,12 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
+import { AuditService } from '../audit/audit.service';
 import type { AuditableService } from '../audit/audited.decorator';
-import type { Breed } from '../generated/prisma/client';
-import type { Species } from '../generated/prisma/enums';
+import type { Breed, Prisma } from '../generated/prisma/client';
+import type { AuditAction, Species } from '../generated/prisma/enums';
 import { orConflict } from '../listing/list-helpers';
 import { PrismaService } from '../prisma/prisma.service';
+import { auditHerd } from './herd-audit';
 import type { CreateBreedDto, UpdateBreedDto } from './dto/breed.dto';
 
 export interface BreedItem {
@@ -23,7 +25,10 @@ const toItem = (b: Breed): BreedItem => ({
 
 @Injectable()
 export class BreedsService implements AuditableService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly audit: AuditService,
+  ) {}
 
   async list(ctx: RequestContext, species?: Species): Promise<BreedItem[]> {
     const breeds = await this.prisma.breed.findMany({
@@ -34,14 +39,17 @@ export class BreedsService implements AuditableService {
   }
 
   async create(ctx: RequestContext, dto: CreateBreedDto): Promise<BreedItem> {
-    const created = await orConflict(
+    return orConflict(
       () =>
-        this.prisma.breed.create({
-          data: { ...dto, organizationId: ctx.user.organizationId },
+        this.prisma.$transaction(async (tx) => {
+          const created = await tx.breed.create({
+            data: { ...dto, organizationId: ctx.user.organizationId },
+          });
+          await this.auditBreed(tx, ctx, 'CREATE', created, undefined, created);
+          return toItem(created);
         }),
       BREED_TAKEN,
     );
-    return toItem(created);
   }
 
   async update(
@@ -49,17 +57,48 @@ export class BreedsService implements AuditableService {
     id: string,
     dto: UpdateBreedDto,
   ): Promise<BreedItem> {
-    await this.load(ctx, id);
-    const updated = await orConflict(
-      () => this.prisma.breed.update({ where: { id }, data: dto }),
+    const before = await this.load(ctx, id);
+    return orConflict(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          const updated = await tx.breed.update({ where: { id }, data: dto });
+          await this.auditBreed(tx, ctx, 'UPDATE', updated, before, updated);
+          return toItem(updated);
+        }),
       BREED_TAKEN,
     );
-    return toItem(updated);
   }
 
   async remove(ctx: RequestContext, id: string): Promise<void> {
-    await this.load(ctx, id);
-    await orConflict(() => this.prisma.breed.delete({ where: { id } }));
+    const before = await this.load(ctx, id);
+    await orConflict(() =>
+      this.prisma.$transaction(async (tx) => {
+        await tx.breed.delete({ where: { id } });
+        await this.auditBreed(tx, ctx, 'DELETE', before, before);
+      }),
+    );
+  }
+
+  /** Audited in the module of the breed's species (`lots` or `porcs`), in the writing transaction. */
+  private auditBreed(
+    tx: Prisma.TransactionClient,
+    ctx: RequestContext,
+    action: AuditAction,
+    breed: Breed,
+    before?: Breed,
+    after?: Breed,
+  ): Promise<void> {
+    return auditHerd(
+      this.audit,
+      tx,
+      ctx,
+      breed.species,
+      action,
+      breed.id,
+      breed.name,
+      before,
+      after,
+    );
   }
 
   findForAudit(id: string, ctx: RequestContext) {

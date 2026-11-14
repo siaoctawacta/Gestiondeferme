@@ -125,6 +125,37 @@ describe('Administration resources (e2e)', () => {
       expect(logs[0].farmId).toBe(farmA);
     });
 
+    it('refuses lowering the capacity below the current occupation', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const b = (
+        await http().post('/api/buildings').set(headers).send(building())
+      ).body as BuildingItem;
+      await http()
+        .post('/api/batches')
+        .set(headers)
+        .send({
+          species: 'AVICOLE',
+          type: 'CHAIR',
+          buildingId: b.id,
+          entryDate: '2026-01-01',
+          initialCount: 800,
+        })
+        .expect(201);
+      const res = await http()
+        .patch(`/api/buildings/${b.id}`)
+        .set(headers)
+        .send({ capacity: 799 })
+        .expect(400);
+      expect((res.body as { message: string }).message).toBe(
+        "La capacité ne peut pas être inférieure à l'occupation actuelle (800)",
+      );
+      await http()
+        .patch(`/api/buildings/${b.id}`)
+        .set(headers)
+        .send({ capacity: 800 })
+        .expect(200);
+    });
+
     it('lists with siteName, occupation 0, rate 0 and statusCounts', async () => {
       const { headers } = await actor('DIRECTEUR_FERME');
       await http().post('/api/buildings').set(headers).send(building());

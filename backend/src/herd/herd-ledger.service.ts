@@ -22,7 +22,10 @@ export const BATCH_NOT_FOUND = 'Lot introuvable';
 export const PARTIAL_TRANSFER =
   'Transfert partiel non pris en charge : créez un nouveau lot';
 
-/** +1 adds animals to the batch, -1 removes them. */
+/**
+ * ENTREE is an additional delivery after the opening count (initialCount);
+ * it adds to the live count like NAISSANCE.
+ * +1 adds animals to the batch, -1 removes them. */
 export const EVENT_SIGN: Record<BatchEventType, 1 | -1> = {
   ENTREE: 1,
   NAISSANCE: 1,
@@ -123,7 +126,15 @@ export class HerdLedgerService implements OccupationSource {
     batchId: string,
     farmIds?: string[],
   ): Promise<AnimalBatch> {
-    await tx.$queryRaw`SELECT id FROM "AnimalBatch" WHERE id = ${batchId} FOR UPDATE`;
+    // NO KEY UPDATE serialises writers of one batch against each other but not
+    // against the FOR KEY SHARE lock a referencing insert takes on this row,
+    // so a caller that inserted a child row first cannot deadlock here.
+    // The farm scope is part of the locking query: another farm's row is never locked.
+    if (farmIds) {
+      await tx.$queryRaw`SELECT id FROM "AnimalBatch" WHERE id = ${batchId} AND "farmId" = ANY(${farmIds}::text[]) FOR NO KEY UPDATE`;
+    } else {
+      await tx.$queryRaw`SELECT id FROM "AnimalBatch" WHERE id = ${batchId} FOR NO KEY UPDATE`;
+    }
     const batch = await tx.animalBatch.findFirst({
       where: { id: batchId, ...(farmIds ? { farmId: { in: farmIds } } : {}) },
     });
@@ -133,7 +144,7 @@ export class HerdLedgerService implements OccupationSource {
 
   /** Same lock on the building row, taken before an occupation check so two batches cannot overfill it together. */
   private async lockBuilding(tx: Tx, buildingId: string): Promise<void> {
-    await tx.$queryRaw`SELECT id FROM "Building" WHERE id = ${buildingId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "Building" WHERE id = ${buildingId} FOR NO KEY UPDATE`;
   }
 
   assertOpen(batch: Pick<AnimalBatch, 'status'>): void {

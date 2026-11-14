@@ -191,8 +191,17 @@ export class BuildingsService implements AuditableService {
     id: string,
     dto: UpdateBuildingDto,
   ): Promise<BuildingItem> {
-    await this.load(id, ctx);
+    const current = await this.load(id, ctx);
     if (dto.siteId) await this.assertSiteInFarm(dto.siteId, ctx.farmId!);
+    if (dto.capacity !== undefined) {
+      const occupied =
+        (await this.occupationOf([current.farmId], [id])).get(id) ?? 0;
+      if (dto.capacity < occupied) {
+        throw new BadRequestException(
+          `La capacité ne peut pas être inférieure à l'occupation actuelle (${occupied})`,
+        );
+      }
+    }
     const updated = await orConflict(() =>
       this.prisma.building.update({ where: { id }, data: dto, include }),
     );

@@ -20,6 +20,7 @@ import { mortalityRate } from '../indicators/indicators';
 import { nextBatchCode } from './batch-code';
 import {
   assertNotFuture,
+  BEFORE_ENTRY,
   daysBetween,
   formatDay,
   requireDay,
@@ -367,6 +368,10 @@ export class BatchesService {
         initialCount !== batch.initialCount
       ) {
         await this.ledger.assertConsistent(tx, id, initialCount, entryDate);
+        const early = await tx.weighing.count({
+          where: { batchId: id, date: { lt: entryDate } },
+        });
+        if (early > 0) throw new BadRequestException(BEFORE_ENTRY);
       }
       await this.assertRefs(tx, ctx, batch.species, dto);
       const updated = await tx.animalBatch.update({

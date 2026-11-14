@@ -55,6 +55,7 @@ enum BatchStatus {
 }
 
 enum BatchEventType {
+  /// An additional delivery after the opening count (initialCount); adds to the live count.
   ENTREE
   NAISSANCE
   MORTALITE

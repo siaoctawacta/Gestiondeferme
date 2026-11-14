@@ -1,8 +1,11 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
-import { migrateTestDb, resetDb } from '../../test/setup';
-import { PrismaService } from '../prisma/prisma.service';
-import { assertLedgerValid, HerdLedgerService } from './herd-ledger.service';
-import { OccupationRegistry } from './occupation';
+import { migrateTestDb, resetDb } from './setup';
+import { PrismaService } from '../src/prisma/prisma.service';
+import {
+  assertLedgerValid,
+  HerdLedgerService,
+} from '../src/herd/herd-ledger.service';
+import { OccupationRegistry } from '../src/herd/occupation';
 
 const day = (s: string) => new Date(`${s}T00:00:00.000Z`);
 

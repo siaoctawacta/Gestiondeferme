@@ -13,7 +13,6 @@ import { ApiTags } from '@nestjs/swagger';
 import { AnyAuthenticated, Ctx } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import { can } from '../access/permissions';
-import { Audited } from '../audit/audited.decorator';
 import { BreedsService } from './breeds.service';
 import { BreedQueryDto, CreateBreedDto, UpdateBreedDto } from './dto/breed.dto';
 
@@ -39,7 +38,6 @@ export class BreedsController {
 
   @Post()
   @AnyAuthenticated()
-  @Audited('lots', { entity: BreedsService })
   create(@Ctx() ctx: RequestContext, @Body() dto: CreateBreedDto) {
     this.assertAny(ctx, 'create');
     return this.breeds.create(ctx, dto);
@@ -47,7 +45,6 @@ export class BreedsController {
 
   @Patch(':id')
   @AnyAuthenticated()
-  @Audited('lots', { entity: BreedsService })
   update(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -59,7 +56,6 @@ export class BreedsController {
 
   @Delete(':id')
   @AnyAuthenticated()
-  @Audited('lots', { entity: BreedsService })
   remove(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     this.assertAny(ctx, 'create');
     return this.breeds.remove(ctx, id);

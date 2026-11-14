@@ -915,6 +915,112 @@ describe('Herd ledger and batches (e2e)', () => {
     });
   });
 
+  describe('sub-resources of another batch', () => {
+    it('answers 404 for events and weighings reached through the wrong batch or farm', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const one = await createLot(headers, { initialCount: 100 });
+      const two = await createLot(headers, {
+        type: 'PONDEUSE',
+        initialCount: 100,
+      });
+      const event = (
+        await http()
+          .post(`/api/batches/${one.id}/events`)
+          .set(headers)
+          .send({ type: 'MORTALITE', date: daysAgo(1), quantity: 1 })
+          .expect(201)
+      ).body as { id: string };
+      const weighing = (
+        await http()
+          .post(`/api/batches/${one.id}/weighings`)
+          .set(headers)
+          .send({ date: daysAgo(1), sampleSize: 5, averageWeightG: 100 })
+          .expect(201)
+      ).body as { id: string };
+      const theirs = await actor('DIRECTEUR_FERME', [farmB], farmB);
+      const foreign = await createLot(theirs.headers, {
+        buildingId: bldB,
+        initialCount: 100,
+      });
+
+      for (const other of [two.id, foreign.id]) {
+        await http()
+          .patch(`/api/batches/${other}/events/${event.id}`)
+          .set(headers)
+          .send({ quantity: 2 })
+          .expect(404);
+        await http()
+          .delete(`/api/batches/${other}/events/${event.id}`)
+          .set(headers)
+          .expect(404);
+        await http()
+          .patch(`/api/batches/${other}/weighings/${weighing.id}`)
+          .set(headers)
+          .send({ sampleSize: 6 })
+          .expect(404);
+        await http()
+          .delete(`/api/batches/${other}/weighings/${weighing.id}`)
+          .set(headers)
+          .expect(404);
+      }
+      // the foreign farm's own batch id with my event id, from the foreign farm
+      await http()
+        .patch(`/api/batches/${foreign.id}/events/${event.id}`)
+        .set(theirs.headers)
+        .send({ quantity: 2 })
+        .expect(404);
+      await http()
+        .delete(`/api/batches/${foreign.id}/weighings/${weighing.id}`)
+        .set(theirs.headers)
+        .expect(404);
+      expect(
+        await prisma.batchEvent.count({ where: { batchId: one.id } }),
+      ).toBe(1);
+      expect(await prisma.weighing.count({ where: { batchId: one.id } })).toBe(
+        1,
+      );
+    });
+
+    it('refuses moving the entry date after an existing weighing', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const { id } = await createLot(headers, { initialCount: 100 });
+      await http()
+        .post(`/api/batches/${id}/weighings`)
+        .set(headers)
+        .send({ date: daysAgo(20), sampleSize: 5, averageWeightG: 100 })
+        .expect(201);
+      const res = await http()
+        .patch(`/api/batches/${id}`)
+        .set(headers)
+        .send({ entryDate: daysAgo(10) })
+        .expect(400);
+      expect((res.body as Msg).message).toBe(
+        "La date est antérieure à l'entrée du lot",
+      );
+    });
+
+    it('audits a pig breed under porcs and a poultry breed under lots', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      await http()
+        .post('/api/breeds')
+        .set(headers)
+        .send({ name: 'Duroc', species: 'PORCIN' })
+        .expect(201);
+      await http()
+        .post('/api/breeds')
+        .set(headers)
+        .send({ name: 'Cobb', species: 'AVICOLE' })
+        .expect(201);
+      const logs = await prisma.auditLog.findMany({
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(logs.map((l) => `${l.module} ${l.label}`)).toEqual([
+        'porcs Duroc',
+        'lots Cobb',
+      ]);
+    });
+  });
+
   describe('permissions by species', () => {
     it('lets AGENT_ELEVAGE record a mortality but not delete the lot or edit it', async () => {
       const director = await actor('DIRECTEUR_FERME');
@@ -1215,6 +1321,88 @@ describe('Herd ledger and batches (e2e)', () => {
   });
 
   describe('ledger under concurrency', () => {
+    const post = (headers: Record<string, string>, body: unknown) =>
+      http()
+        .post('/api/batches')
+        .set(headers)
+        .send(body as object);
+
+    it('lets two lots of different types into one building together when they fit', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const results = await Promise.all([
+        post(headers, lot({ type: 'CHAIR', initialCount: 2500 })),
+        post(headers, lot({ type: 'PONDEUSE', initialCount: 2500 })),
+      ]);
+      expect(results.map((r) => r.status)).toEqual([201, 201]);
+    });
+
+    it('refuses exactly the overflowing one of two parallel creations, never a 500', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const results = await Promise.all([
+        post(headers, lot({ type: 'CHAIR', initialCount: 3000 })),
+        post(headers, lot({ type: 'PONDEUSE', initialCount: 3000 })),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([201, 400]);
+      const refused = results.find((r) => r.status === 400);
+      expect((refused?.body as Msg).message).toBe(
+        'Capacité du bâtiment dépassée (6000 / 5000)',
+      );
+    });
+
+    it('serialises a creation racing a transfer into the same building', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const moving = await createLot(headers, {
+        buildingId: bldA2,
+        initialCount: 3000,
+      });
+      const race = (creating: number) =>
+        Promise.all([
+          post(headers, lot({ type: 'PONDEUSE', initialCount: creating })),
+          http()
+            .post(`/api/batches/${moving.id}/transfer`)
+            .set(headers)
+            .send({ toBuildingId: bldA, date: daysAgo(1), quantity: 3000 }),
+        ]);
+      const overflow = await race(3000);
+      expect(overflow.some((r) => r.status >= 500)).toBe(false);
+      expect(overflow.filter((r) => r.status === 400)).toHaveLength(1);
+      const occupied = (await http().get(`/api/buildings/${bldA}`).set(headers))
+        .body as {
+        occupation: number;
+      };
+      expect(occupied.occupation).toBeLessThanOrEqual(5000);
+    });
+
+    it('serialises a creation racing a transfer when both fit', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const moving = await createLot(headers, {
+        buildingId: bldA2,
+        initialCount: 2000,
+      });
+      const results = await Promise.all([
+        post(headers, lot({ type: 'PONDEUSE', initialCount: 2000 })),
+        http()
+          .post(`/api/batches/${moving.id}/transfer`)
+          .set(headers)
+          .send({ toBuildingId: bldA, date: daysAgo(1), quantity: 2000 }),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([200, 201]);
+    });
+
+    it('handles parallel creations with explicit codes', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const distinct = await Promise.all([
+        post(headers, lot({ code: 'A-1', initialCount: 10 })),
+        post(headers, lot({ type: 'PONDEUSE', code: 'A-2', initialCount: 10 })),
+      ]);
+      expect(distinct.map((r) => r.status)).toEqual([201, 201]);
+      const same = await Promise.all([
+        post(headers, lot({ code: 'B-1', initialCount: 10 })),
+        post(headers, lot({ type: 'PONDEUSE', code: 'B-1', initialCount: 10 })),
+      ]);
+      expect(same.map((r) => r.status).sort()).toEqual([201, 409]);
+    });
+
     it('lets exactly one of two parallel mortalities through when together they exceed the live count', async () => {
       const { headers } = await actor('DIRECTEUR_FERME');
       const { id } = await createLot(headers, { initialCount: 100 });
