@@ -20,7 +20,7 @@ export class DashboardController {
   @Get('alerts')
   @RequirePermission('alertes', 'read')
   @ApiOkResponse({ type: AlertsDto })
-  alerts(): AlertsDto {
-    return this.dashboard.alerts();
+  alerts(@Ctx() ctx: RequestContext): Promise<AlertsDto> {
+    return this.dashboard.alerts(ctx);
   }
 }

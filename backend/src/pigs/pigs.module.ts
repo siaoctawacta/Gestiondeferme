@@ -10,6 +10,6 @@ import { HerdListService } from './herd-list.service';
   imports: [HerdModule],
   controllers: [AnimalsController, HerdListController],
   providers: [AnimalsService, HerdListService],
-  exports: [AnimalsService],
+  exports: [AnimalsService, HerdListService],
 })
 export class PigsModule {}

@@ -1,6 +1,10 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
-import type { AnimalCategory, BatchType } from '../generated/prisma/enums';
+import type {
+  AnimalCategory,
+  AnimalStatus,
+  BatchType,
+} from '../generated/prisma/enums';
 import { formatDay } from '../herd/days';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import type { ExportColumn } from '../listing/export';
@@ -53,6 +57,14 @@ const COUNT_KEYS = [
   'CLOTURE',
 ] as const;
 
+/** Animals housed: 1 for an animal still on the farm. */
+export const animalHeadcount = (status: AnimalStatus): number =>
+  LIVE_STATUSES.includes(status) ? 1 : 0;
+
+/** Animals housed: the live count for an open lot, else 0. */
+export const lotHeadcount = (status: string, alive: number): number =>
+  status === 'EN_COURS' ? alive : 0;
+
 export interface HerdRow {
   kind: 'ANIMAL' | 'LOT';
   id: string;
@@ -92,6 +104,30 @@ export class HerdListService {
     private readonly prisma: PrismaService,
     private readonly ledger: HerdLedgerService,
   ) {}
+
+  /** Pigs housed in `farmIds`: live animals plus the live count of open pig lots (the "cheptel porcin" total). */
+  async totalPigs(farmIds: string[]): Promise<number> {
+    const farmId = { in: farmIds };
+    const [animals, lots] = await Promise.all([
+      this.prisma.animal.groupBy({
+        by: ['status'],
+        where: { farmId },
+        _count: { _all: true },
+      }),
+      this.prisma.animalBatch.findMany({
+        where: { farmId, species: 'PORCIN', status: 'EN_COURS' },
+        select: { id: true, status: true },
+      }),
+    ]);
+    const alive = await this.ledger.liveCounts(lots.map((l) => l.id));
+    return (
+      animals.reduce(
+        (n, g) => n + animalHeadcount(g.status) * g._count._all,
+        0,
+      ) +
+      lots.reduce((n, l) => n + lotHeadcount(l.status, alive.get(l.id) ?? 0), 0)
+    );
+  }
 
   private async rows(ctx: RequestContext): Promise<Internal[]> {
     const farmId = { in: ctx.farmIds };
@@ -144,7 +180,7 @@ export class HerdListService {
           birthDate: a.birthDate ? formatDay(a.birthDate) : null,
           entryDate: null,
           weightKg: weights.get(a.id) ?? null,
-          headcount: LIVE_STATUSES.includes(a.status) ? 1 : 0,
+          headcount: animalHeadcount(a.status),
           status: a.status,
         },
       })),
@@ -162,7 +198,7 @@ export class HerdListService {
             birthDate: null,
             entryDate: formatDay(l.entryDate),
             weightKg: lotWeight.get(l.id) ?? null,
-            headcount: l.status === 'EN_COURS' ? (alive.get(l.id) ?? 0) : 0,
+            headcount: lotHeadcount(l.status, alive.get(l.id) ?? 0),
             status: l.status,
           },
         };

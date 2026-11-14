@@ -32,6 +32,6 @@ import { ZonesService } from './zones/zones.service';
     UsersService,
     SettingsService,
   ],
-  exports: [BuildingsService],
+  exports: [BuildingsService, SettingsService],
 })
 export class AdminModule {}
