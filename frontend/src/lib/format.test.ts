@@ -9,7 +9,9 @@ describe('format', () => {
   });
   it('formats percentages with a dot decimal', () => {
     expect(formatPct(3.6)).toBe('3.6%');
-    expect(formatPct(87)).toBe('87.0%');
+    expect(formatPct(87)).toBe('87%');
+    expect(formatPct(5)).toBe('5%');
+    expect(formatPct(1.66)).toBe('1.7%');
   });
   it('formats ISO dates as YYYY-MM-DD', () => {
     expect(formatDate('2026-10-22T00:00:00Z')).toBe('2026-10-22');

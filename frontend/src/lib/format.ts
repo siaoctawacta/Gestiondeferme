@@ -8,8 +8,8 @@ export function formatNumber(n: number): string {
 
 export const formatMoney = (n: number): string => `${formatNumber(n)} FCFA`;
 
-/** One decimal and no space before `%`. */
-export const formatPct = (n: number): string => `${n.toFixed(1)}%`;
+/** At most one decimal (a trailing `.0` is dropped) and no space before `%`: `87%`, `3.6%`. */
+export const formatPct = (n: number): string => `${Number(n.toFixed(1))}%`;
 
 const NO_DATE = '—';
 const pad = (n: number) => String(n).padStart(2, '0');
