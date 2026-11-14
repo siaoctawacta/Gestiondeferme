@@ -16,6 +16,7 @@ import type { ExportColumn } from '../listing/export';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { mortalityRate } from '../indicators/indicators';
 import { nextBatchCode } from './batch-code';
 import {
   assertNotFuture,
@@ -103,8 +104,6 @@ export const BATCH_COLUMNS: ExportColumn<BatchItem>[] = [
 const SORTABLE = ['code', 'entryDate', 'initialCount', 'status', 'createdAt'];
 const HISTORY = 'Ce lot a un historique ; clôturez-le plutôt';
 
-const round1 = (n: number) => Math.round(n * 10) / 10;
-
 @Injectable()
 export class BatchesService {
   constructor(
@@ -148,8 +147,7 @@ export class BatchesService {
         initialCount: r.initialCount,
         deaths: dead,
         alive: alive.get(r.id) ?? 0,
-        mortalityRate:
-          r.initialCount > 0 ? round1((dead / r.initialCount) * 100) : null,
+        mortalityRate: mortalityRate(dead, r.initialCount),
         averageWeightG: weight.get(r.id) ?? null,
         status: r.status,
         closedAt: r.closedAt ? formatDay(r.closedAt) : null,

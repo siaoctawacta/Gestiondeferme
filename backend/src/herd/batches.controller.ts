@@ -18,6 +18,7 @@ import type { RequestContext } from '../access/decorators';
 import type { Action } from '../access/permissions';
 import { sendList } from '../listing/list-helpers';
 import { ListQueryDto } from '../listing/list-query.dto';
+import { BatchPerformanceRegistry } from './batch-performance';
 import { BatchEventsService } from './batch-events.service';
 import { BATCH_COLUMNS, BatchesService } from './batches.service';
 import {
@@ -39,6 +40,7 @@ export class BatchesController {
     private readonly batches: BatchesService,
     private readonly events: BatchEventsService,
     private readonly access: AccessService,
+    private readonly performance: BatchPerformanceRegistry,
   ) {}
 
   /** Loads the batch's species (404 when out of scope), then checks the permission for it. */
@@ -80,7 +82,8 @@ export class BatchesController {
   @AnyAuthenticated()
   async get(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     await this.guard(ctx, id, 'read');
-    return this.batches.get(ctx, id);
+    const batch = await this.batches.get(ctx, id);
+    return { ...batch, performance: await this.performance.get(ctx, id) };
   }
 
   @Patch(':id')

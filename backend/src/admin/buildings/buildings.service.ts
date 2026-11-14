@@ -11,6 +11,7 @@ import { BuildingStatus, BuildingType } from '../../generated/prisma/enums';
 import type { ExportColumn } from '../../listing/export';
 import { ListQueryDto, orderBy } from '../../listing/list-query.dto';
 import { OccupationRegistry } from '../../herd/occupation';
+import { occupationRate } from '../../indicators/indicators';
 import { PrismaService } from '../../prisma/prisma.service';
 import { containsInsensitive, orConflict } from '../../listing/list-helpers';
 import type { CreateBuildingDto, UpdateBuildingDto } from './buildings.dto';
@@ -92,8 +93,7 @@ export class BuildingsService implements AuditableService {
         siteName: r.site.name,
         capacity: r.capacity,
         occupation: occ,
-        occupationRate:
-          r.capacity > 0 ? Math.round((occ / r.capacity) * 100) : 0,
+        occupationRate: occupationRate(occ, r.capacity) ?? 0,
         status: r.status,
         zones: r._count.zones,
       };

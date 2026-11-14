@@ -321,6 +321,33 @@ describe('Herd ledger and batches (e2e)', () => {
         .set(headers)
         .expect(200);
       expect(detail.body).toMatchObject({ alive: 4820, deaths: 180 });
+      const performance = (detail.body as { performance: object }).performance;
+      expect(Object.keys(performance).sort()).toEqual(
+        [
+          'ageDays',
+          'alive',
+          'deaths',
+          'dailyGainG',
+          'feedConversion',
+          'feedCost',
+          'feedKg',
+          'firstWeightG',
+          'lastWeightG',
+          'mortalityRate',
+        ].sort(),
+      );
+      expect(performance).toEqual({
+        ageDays: 30,
+        alive: 4820,
+        deaths: 180,
+        mortalityRate: 3.6,
+        firstWeightG: 800,
+        lastWeightG: 1450,
+        dailyGainG: 38.2, // (1450 - 800) / 17 days
+        feedKg: 0,
+        feedConversion: null,
+        feedCost: 0,
+      });
     });
 
     it('filters by status, type and search, validates the query, and reports statusCounts over the whole species', async () => {
