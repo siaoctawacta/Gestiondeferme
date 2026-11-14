@@ -45,6 +45,10 @@ describe('permissions', () => {
       expect(can(r, 'audit', 'read')).toBe(reads);
     }
     expect(can('DIRECTEUR_FERME', 'audit', 'create')).toBe(false);
+    for (const a of ['create', 'update', 'delete', 'validate'] as const) {
+      expect(can('SUPER_ADMIN', 'audit', a)).toBe(false);
+    }
+    expect(can('SUPER_ADMIN', 'audit', 'read')).toBe(true);
   });
 
   it('applies the per-role rows', () => {

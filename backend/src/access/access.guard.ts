@@ -43,6 +43,8 @@ export class AccessGuard implements CanActivate {
     }
     const claims = verifyAccessToken(token);
 
+    const user = await this.access.loadUser(claims);
+
     const allowedStages = meta<TokenStage[]>(ALLOW_STAGE_KEY) ?? ['full'];
     if (!allowedStages.includes(claims.stage)) {
       throw new ForbiddenException({
@@ -52,8 +54,6 @@ export class AccessGuard implements CanActivate {
         code: 'TWO_FACTOR_REQUIRED',
       });
     }
-
-    const user = await this.access.loadUser(claims);
 
     const required = meta<{ module: ModuleKey; action: Action }>(
       PERMISSION_KEY,
@@ -68,7 +68,9 @@ export class AccessGuard implements CanActivate {
       ? await this.access.resolveFarms(
           user,
           req.headers['x-farm-id'] as string | undefined,
-          !required || required.action === 'read',
+          required
+            ? required.action === 'read'
+            : ['GET', 'HEAD'].includes(req.method),
         )
       : { farmId: null, allFarms: false, farmIds: [] };
 

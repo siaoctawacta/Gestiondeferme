@@ -3,7 +3,7 @@ import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { App } from 'supertest/types';
 import { AppModule } from '../src/app.module';
-import { signAccessToken } from '../src/access/access-token';
+import { signAccessToken, verifyAccessToken } from '../src/access/access-token';
 import type { RequestContext } from '../src/access/decorators';
 import { configureApp } from '../src/configure-app';
 import { PrismaService } from '../src/prisma/prisma.service';
@@ -180,6 +180,42 @@ describe('Access guard (e2e)', () => {
     );
   });
 
+  it('refuses X-Farm-Id: all on an undecorated POST', async () => {
+    const post = await request(http())
+      .post('/api/_probe/undecorated')
+      .set('Authorization', `Bearer ${await tokenFor(auditeur)}`)
+      .set('X-Farm-Id', 'all');
+    expect(post.status).toBe(403);
+  });
+
+  it('401 (not 403) for a 2fa/setup token of a deleted or deactivated user', async () => {
+    const u = await createUser({ organizationId: orgId, role: 'RESP_AVICOLE' });
+    const token = await tokenFor(u.id, '2fa');
+    const prisma = new PrismaService();
+    try {
+      await prisma.user.update({
+        where: { id: u.id },
+        data: { active: false },
+      });
+    } finally {
+      await prisma.$disconnect();
+    }
+    const res = await request(http())
+      .get('/api/_probe/authed')
+      .set('Authorization', `Bearer ${token}`);
+    expect(res.status).toBe(401);
+    const ghost = signAccessToken({
+      sub: 'ghost',
+      role: 'AUDITEUR',
+      org: orgId,
+      stage: 'setup',
+    });
+    const res2 = await request(http())
+      .get('/api/_probe/authed')
+      .set('Authorization', `Bearer ${ghost}`);
+    expect(res2.status).toBe(401);
+  });
+
   it('ignores X-Farm-Id on @NoFarm routes', async () => {
     const res = await get('/_probe/nofarm', avicole, {
       'X-Farm-Id': otherOrgFarm,
@@ -240,7 +276,6 @@ describe('Access guard (e2e)', () => {
       expect((await get('/_probe', u.id, { 'X-Farm-Id': farmA })).status).toBe(
         401,
       );
-      await prisma.user.delete({ where: { id: u.id } }).catch(() => undefined);
     } finally {
       await prisma.$disconnect();
     }
@@ -278,5 +313,27 @@ describe('Access guard (e2e)', () => {
       .get('/api/_probe/setup')
       .set('Authorization', `Bearer ${await tokenFor(agent, 'full')}`);
     expect(full.status).toBe(403);
+  });
+});
+
+describe('JWT secret handling', () => {
+  it('reports a missing JWT_SECRET as an error, not an invalid token', () => {
+    const saved = process.env.JWT_SECRET;
+    delete process.env.JWT_SECRET;
+    try {
+      expect(() => verifyAccessToken('x.y.z')).toThrow('JWT_SECRET is not set');
+    } finally {
+      process.env.JWT_SECRET = saved;
+    }
+  });
+
+  it('configureApp refuses a missing or short JWT_SECRET', () => {
+    const saved = process.env.JWT_SECRET;
+    process.env.JWT_SECRET = 'short';
+    try {
+      expect(() => configureApp({} as INestApplication)).toThrow(/JWT_SECRET/);
+    } finally {
+      process.env.JWT_SECRET = saved;
+    }
   });
 });

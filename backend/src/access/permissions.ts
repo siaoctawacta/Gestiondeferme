@@ -130,6 +130,10 @@ function actionsFor(role: Role, module: ModuleKey): Action[] {
     if (role === 'SUPER_ADMIN') return V;
     return READ_ONLY_OVERRIDE_ROLES.includes(role) ? R : [];
   }
+  if (module === 'audit') {
+    // The audit log is immutable: read-only for every role, SUPER_ADMIN included.
+    return ROLE_GRANTS[role].audit?.includes('read') ? R : [];
+  }
   if (module === 'dashboard' || module === 'alertes') {
     return ROLE_GRANTS[role][module] ?? R;
   }

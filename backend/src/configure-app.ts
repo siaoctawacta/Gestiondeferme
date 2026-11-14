@@ -5,6 +5,10 @@ import helmet from 'helmet';
 
 /** Shared by main.ts and the e2e test app so both behave identically. */
 export function configureApp(app: INestApplication): void {
+  const secret = process.env.JWT_SECRET;
+  if (!secret || secret.length < 32) {
+    throw new Error('JWT_SECRET must be set and at least 32 characters long');
+  }
   app.setGlobalPrefix('api');
   app.use(helmet());
   app.use(cookieParser());

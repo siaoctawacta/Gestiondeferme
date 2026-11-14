@@ -1,4 +1,4 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, Post } from '@nestjs/common';
 import {
   AllowStage,
   Ctx,
@@ -13,6 +13,11 @@ export class ProbeController {
   @Get()
   @RequirePermission('lots', 'create')
   write(@Ctx() ctx: RequestContext): RequestContext {
+    return ctx;
+  }
+
+  @Post('undecorated')
+  undecorated(@Ctx() ctx: RequestContext): RequestContext {
     return ctx;
   }
 

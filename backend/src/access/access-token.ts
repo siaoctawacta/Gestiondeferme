@@ -34,9 +34,10 @@ export function signAccessToken(claims: AccessClaims): string {
 
 /** Throws UnauthorizedException when the token is malformed, forged or expired. */
 export function verifyAccessToken(token: string): AccessClaims {
+  const key = secret(); // outside the try: a missing secret is a server error, not a bad token
   let payload: unknown;
   try {
-    payload = jwt.verify(token, secret(), { algorithms: ['HS256'] });
+    payload = jwt.verify(token, key, { algorithms: ['HS256'] });
   } catch {
     throw new UnauthorizedException('Token invalide ou expiré');
   }
