@@ -28,14 +28,12 @@ const sites: ModuleConfig<Site> = {
     { key: 'buildings', header: 'BÂTIMENTS' },
   ],
   fields: [{ name: 'name', label: 'Nom', type: 'text', required: true }],
-  statTiles: 'totalOnly',
 };
 
 const farms: ModuleConfig<Farm> = {
   slug: 'fermes',
   group: 'Administration',
-  title: 'Fermes & sites',
-  tabLabel: 'Fermes',
+  title: 'Fermes',
   subtitle: 'Fermes de l’organisation et sites associés.',
   endpoint: '/farms',
   farmScoped: false,
@@ -56,8 +54,7 @@ const farms: ModuleConfig<Farm> = {
     { name: 'location', label: 'Lieu', type: 'text' },
     { name: 'active', label: 'Ferme active', type: 'checkbox', defaultValue: true },
   ],
-  statTiles: 'totalOnly',
-  tabs: [{ key: 'sites', label: 'Sites', element: <ModulePage config={sites} embedded /> }],
+  tabs: [{ key: 'sites', label: 'Sites', config: sites }],
 };
 
 export default function Farms() {

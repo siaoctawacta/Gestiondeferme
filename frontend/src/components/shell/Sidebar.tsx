@@ -28,13 +28,13 @@ export function Sidebar({ permissions, alertCount, footer, onNavigate }: Sidebar
 
       <nav aria-label="Navigation principale" className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
         {visibleNav(permissions).map((g, gi) => (
-          <div key={g.group ?? `g${gi}`} className={g.group ? (gi === 1 ? 'mt-3' : 'mt-3.5') : ''}>
+          <div key={g.group ?? `g${gi}`} className={g.group ? 'mt-3' : ''}>
             {g.group && (
-              <div className="px-3 pb-[7px] pt-1 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
+              <div className="px-3 pb-1 pt-1 text-[11px] font-medium uppercase tracking-wider text-ink-muted">
                 {g.group}
               </div>
             )}
-            <ul className="space-y-1">
+            <ul className={g.group ? '' : 'space-y-1'}>
               {g.items.map((item) => (
                 <li key={item.slug}>
                   <NavLink
@@ -42,7 +42,7 @@ export function Sidebar({ permissions, alertCount, footer, onNavigate }: Sidebar
                     end={item.to === '/'}
                     onClick={onNavigate}
                     className={({ isActive }) =>
-                      `group flex ${g.group ? 'h-10' : 'h-11'} items-center gap-3 rounded-xl px-3 text-sm transition-colors hover:bg-ink-soft/60 ${
+                      `group flex h-11 items-center gap-3 rounded-xl px-3 text-sm transition-colors hover:bg-ink-soft/60 ${
                         isActive ? 'bg-ink-soft font-semibold text-white' : 'text-ink-muted'
                       }`
                     }

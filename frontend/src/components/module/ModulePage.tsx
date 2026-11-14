@@ -11,49 +11,53 @@ import { Card } from '../ui/Card';
 import { SearchInput } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { ConfirmDialog } from './ConfirmDialog';
-import { DataTable, type SortState } from './DataTable';
+import { DataTable, type SortState, type TableAction } from './DataTable';
 import { errorMessage } from './errorMessage';
 import { ExportMenu } from './ExportMenu';
 import { PageHeader } from './PageHeader';
 import { RecordDialog } from './RecordDialog';
 import { StatTiles, type StatTile } from './StatTiles';
-import type { ListResponse, ModuleConfig } from './types';
+import type { FilterDef, ListResponse, ModuleConfig } from './types';
+import { useEndpointOptions } from './useEndpointOptions';
 
 const PAGE_SIZE = 25;
 const SEARCH_DEBOUNCE_MS = 300;
 
+type Notice = { tone: 'success' | 'error'; message: string };
+
+function FilterSelect({ def, value, onChange }: { def: FilterDef; value: string; onChange: (v: string) => void }) {
+  const options = useEndpointOptions(def.options);
+  return (
+    <Select className="h-9! pr-2!" aria-label={def.allLabel} value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{def.allLabel}</option>
+      {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+    </Select>
+  );
+}
+
 export interface ModulePageProps<T extends { id: string }> {
   config: ModuleConfig<T>;
-  /** Inside a tab of another page: no header and no tiles, actions above the card. */
-  embedded?: boolean;
 }
 
-function tiles<T extends { id: string }>(config: ModuleConfig<T>, data: ListResponse<T> | undefined): StatTile[] {
-  const counts = data?.[config.statusCountsKey ?? 'statusCounts'] as Record<string, number> | undefined;
-  const mode = config.statTiles ?? (config.statuses ? 'statuses' : 'totalOnly');
-  const fmt = (n: number | undefined) => (n === undefined ? '…' : formatNumber(n));
-  const total = counts ? Object.values(counts).reduce((a, b) => a + b, 0) : data?.total;
-  const out: StatTile[] = [{ label: 'Total enregistrements', value: fmt(total) }];
-  if (mode === 'statuses' && counts) {
-    for (const s of (config.statuses ?? []).slice(0, 3)) out.push({ label: s.label, value: fmt(counts[s.value] ?? 0) });
-  }
-  return out;
+/** The standard module screen: header, stat tiles, filterable / sortable table with add, edit, delete and export. */
+export function ModulePage<T extends { id: string }>({ config }: ModulePageProps<T>) {
+  return <ModuleView config={config} embedded={false} />;
 }
 
-export function ModulePage<T extends { id: string }>({ config, embedded = false }: ModulePageProps<T>) {
-  const { can, farmId } = useAuth();
+function ModuleView<T extends { id: string }>({ config, embedded }: { config: ModuleConfig<T>; embedded: boolean }) {
+  const { can, farmId, reload } = useAuth();
   const queryClient = useQueryClient();
 
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState('');
-  const [filterValue, setFilterValue] = useState('');
+  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
   const [sort, setSort] = useState<SortState | null>(null);
   const [page, setPage] = useState(1);
   const [tab, setTab] = useState('main');
   const [editing, setEditing] = useState<T | 'new' | null>(null);
   const [deleting, setDeleting] = useState<T | null>(null);
-  const [exportError, setExportError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<Notice | null>(null);
+  const onMain = tab === 'main';
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -66,11 +70,26 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
     return () => clearTimeout(timer);
   }, [searchInput]);
 
-  const filterParam = config.filter?.param;
-  const params = {
+  useEffect(() => {
+    if (!notice || notice.tone === 'error') return;
+    const timer = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(timer);
+  }, [notice]);
+
+  const filters: FilterDef[] = [
+    ...(config.statuses
+      ? [{
+          param: 'status',
+          allLabel: 'Tous les statuts',
+          options: config.statuses.map(({ value, label }) => ({ value, label })),
+        }]
+      : []),
+    ...(config.filters ?? []),
+  ];
+
+  const params: Record<string, string | undefined> = {
     search: search || undefined,
-    status: status || undefined,
-    ...(filterParam ? { [filterParam]: filterValue || undefined } : {}),
+    ...Object.fromEntries(filters.map((f) => [f.param, filterValues[f.param] || undefined])),
     sort: sort ? `${sort.key}:${sort.dir}` : undefined,
   };
   const listParams = { ...params, page, pageSize: PAGE_SIZE };
@@ -78,15 +97,20 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
   const list = useFarmQuery<ListResponse<T>>(
     [config.endpoint, 'list', listParams],
     () => api.get<ListResponse<T>>(config.endpoint, listParams),
-  );
-  const filterOptions = useFarmQuery<{ value: string; label: string }[]>(
-    [config.filter?.endpoint ?? '', 'options'],
-    async () => {
-      const f = config.filter!;
-      const res = await api.get<ListResponse<Record<string, unknown>>>(f.endpoint, { pageSize: 200 });
-      return res.items.map((r) => ({ value: String(r[f.valueKey ?? 'id']), label: String(r[f.labelKey ?? 'name']) }));
+    {
+      enabled: onMain,
+      // Keep the last page while the next loads, but never across a farm switch.
+      placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === farmId ? prev : undefined),
     },
-    { enabled: Boolean(config.filter) },
+  );
+
+  const counts = list.data?.[config.statusCountsKey ?? 'statusCounts'] as Record<string, number> | undefined;
+  const showTiles = !embedded && onMain;
+  // Without per-status totals the list total follows the filters, so count the unfiltered set apart.
+  const unfiltered = useFarmQuery<number>(
+    [config.endpoint, 'count'],
+    async () => (await api.get<ListResponse<T>>(config.endpoint, { page: 1, pageSize: 1 })).total,
+    { enabled: showTiles && list.data !== undefined && !counts },
   );
 
   const scoped = config.farmScoped !== false;
@@ -97,15 +121,56 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
   const readOnlyBecauseAllFarms =
     !writable && (can(config.slug, 'create') || can(config.slug, 'update') || can(config.slug, 'delete'));
 
+  const afterWrite = () => {
+    void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
+    // Farms and users feed `/auth/me` (farm switcher, farm list).
+    if (!scoped) void reload().catch(() => undefined);
+  };
+
+  const tableActions: TableAction<T>[] = (config.actions ?? [])
+    .filter((a) => {
+      const permission = a.permission ?? 'update';
+      return can(config.slug, permission) && (permission === 'read' || writable);
+    })
+    .map((a) => ({
+      key: a.key,
+      label: a.label,
+      icon: a.icon,
+      visible: a.visible,
+      run: (row) => {
+        void (async () => {
+          try {
+            await a.run(row, { refresh: afterWrite, notify: (message) => setNotice({ tone: 'success', message }) });
+          } catch (e) {
+            setNotice({ tone: 'error', message: errorMessage(e) });
+          }
+        })();
+      },
+    }));
+
   const onSort = (key: string) => {
     setPage(1);
     setSort((s) => (s?.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
   };
 
-  const afterWrite = () => queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
-
   const total = list.data?.total ?? 0;
   const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+
+  // The last row of the last page was deleted: go back to the new last page.
+  useEffect(() => {
+    if (list.data && !list.isPlaceholderData && page > pages) setPage(pages);
+  }, [list.data, list.isPlaceholderData, page, pages]);
+
+  const fmt = (n: number | undefined) => (n === undefined ? '…' : formatNumber(n));
+  const tiles: StatTile[] = [
+    {
+      label: 'Total enregistrements',
+      value: fmt(counts ? Object.values(counts).reduce((a, b) => a + b, 0) : unfiltered.data),
+    },
+    ...(counts && config.statuses
+      ? config.statuses.slice(0, 3).map((s) => ({ label: s.label, value: fmt(counts[s.value] ?? 0) }))
+      : []),
+  ];
 
   const actions: ReactNode = (
     <>
@@ -116,7 +181,7 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
         endpoint={config.endpoint}
         filename={config.slug}
         params={params}
-        onError={setExportError}
+        onError={(message) => setNotice({ tone: 'error', message })}
       />
       {canCreate && (
         <Button onClick={() => setEditing('new')}>
@@ -129,38 +194,24 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
 
   const body = (
     <>
-      {exportError && <Alert className="mb-4">{exportError}</Alert>}
+      {notice && <Alert tone={notice.tone} className="mb-4">{notice.message}</Alert>}
       <Card className="overflow-hidden">
         <div className="flex flex-wrap items-center gap-3 p-4">
           <SearchInput
-            className="min-w-48 flex-1 [&>input]:h-9"
+            className="min-w-48 flex-1 [&>input]:h-9 [&>input]:shadow-sm"
             aria-label="Rechercher"
             placeholder="Rechercher…"
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
-          {config.filter && (
-            <Select
-              className="h-9! pr-2!"
-              aria-label={config.filter.label}
-              value={filterValue}
-              onChange={(e) => { setFilterValue(e.target.value); setPage(1); }}
-            >
-              <option value="">{config.filter.label}</option>
-              {(filterOptions.data ?? []).map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-            </Select>
-          )}
-          {config.statuses && (
-            <Select
-              className="h-9! pr-2!"
-              aria-label="Filtrer par statut"
-              value={status}
-              onChange={(e) => { setStatus(e.target.value); setPage(1); }}
-            >
-              <option value="">Tous les statuts</option>
-              {config.statuses.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </Select>
-          )}
+          {filters.map((f) => (
+            <FilterSelect
+              key={f.param}
+              def={f}
+              value={filterValues[f.param] ?? ''}
+              onChange={(v) => { setFilterValues((s) => ({ ...s, [f.param]: v })); setPage(1); }}
+            />
+          ))}
         </div>
 
         {list.isError ? (
@@ -169,7 +220,10 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
             <Button variant="outline" onClick={() => list.refetch()}>Réessayer</Button>
           </div>
         ) : (
-          <div className="border-t border-border">
+          <div
+            aria-busy={list.isFetching}
+            className={`border-t border-border transition-opacity ${list.isPlaceholderData ? 'opacity-60' : ''}`}
+          >
             <DataTable
               columns={config.columns}
               rows={list.data?.items ?? []}
@@ -180,7 +234,7 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
               onSort={onSort}
               detailPath={config.detailPath}
               qr={config.qr}
-              extraActions={canUpdate ? config.rowActions : undefined}
+              actions={tableActions}
               onEdit={canUpdate ? setEditing : undefined}
               onDelete={canDelete ? setDeleting : undefined}
             />
@@ -203,7 +257,7 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
           config={config}
           row={editing === 'new' ? undefined : editing}
           onClose={() => setEditing(null)}
-          onSaved={() => { setEditing(null); void afterWrite(); }}
+          onSaved={() => { setEditing(null); afterWrite(); }}
         />
       )}
       {deleting && (
@@ -214,7 +268,7 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
           onConfirm={async () => {
             await api.del(`${config.endpoint}/${deleting.id}`);
             setDeleting(null);
-            void afterWrite();
+            afterWrite();
           }}
         />
       )}
@@ -230,14 +284,14 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
     );
   }
 
-  const extraTabs = config.tabs ?? [];
+  const extraTabs = (config.tabs ?? []).filter((t) => can(t.config.slug, 'read'));
   const activeTab = extraTabs.find((t) => t.key === tab);
   return (
     <>
-      <PageHeader group={config.group} title={config.title} subtitle={config.subtitle} actions={tab === 'main' ? actions : undefined} />
+      <PageHeader group={config.group} title={config.title} subtitle={config.subtitle} actions={onMain ? actions : undefined} />
       {extraTabs.length > 0 && (
         <div role="tablist" className="mb-6 inline-flex gap-1 rounded-full bg-muted p-1">
-          {[{ key: 'main', label: config.tabLabel ?? config.title }, ...extraTabs].map((t) => (
+          {[{ key: 'main', label: config.title }, ...extraTabs].map((t) => (
             <button
               key={t.key}
               type="button"
@@ -254,10 +308,10 @@ export function ModulePage<T extends { id: string }>({ config, embedded = false 
         </div>
       )}
       {activeTab ? (
-        activeTab.element
+        <ModuleView key={activeTab.key} config={activeTab.config} embedded />
       ) : (
         <>
-          <StatTiles tiles={tiles(config, list.data)} />
+          <StatTiles tiles={tiles} />
           {body}
         </>
       )}

@@ -1,5 +1,4 @@
 import type { ModuleConfig, StatusDef } from '../components/module/types';
-import { ModulePage } from '../components/module/ModulePage';
 import { Pill } from '../components/ui/Pill';
 import { formatNumber } from '../lib/format';
 
@@ -53,8 +52,7 @@ export const zones: ModuleConfig<Zone> = {
     { name: 'name', label: 'Nom', type: 'text', required: true },
     { name: 'capacity', label: 'Capacité', type: 'number', min: 1 },
   ],
-  statTiles: 'totalOnly',
-  filter: { param: 'buildingId', label: 'Tous les bâtiments', endpoint: '/buildings' },
+  filters: [{ param: 'buildingId', allLabel: 'Tous les bâtiments', options: { endpoint: '/buildings' } }],
 };
 
 export const batiments: ModuleConfig<Building> = {
@@ -89,6 +87,5 @@ export const batiments: ModuleConfig<Building> = {
   ],
   statuses: STATUSES,
   statusKey: 'status',
-  statTiles: 'statuses',
-  tabs: [{ key: 'zones', label: 'Zones', element: <ModulePage config={zones} embedded /> }],
+  tabs: [{ key: 'zones', label: 'Zones', config: zones }],
 };

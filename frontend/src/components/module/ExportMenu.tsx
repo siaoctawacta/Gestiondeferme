@@ -30,7 +30,7 @@ export function ExportMenu({ endpoint, filename, params, onError }: ExportMenuPr
 
   return (
     <div className="relative">
-      <Button variant="outline" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+      <Button variant="outline" className="shadow-sm!" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <Download aria-hidden className="size-4" />
         Exporter
       </Button>
