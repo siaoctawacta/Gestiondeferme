@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import type { RequestContext } from '../../access/decorators';
+import { ALL_FARMS_ROLES } from '../../access/roles';
 import { AuditService } from '../../audit/audit.service';
 import type { AuditableService } from '../../audit/audited.decorator';
 import { hashPassword } from '../../auth/password';
@@ -20,6 +21,11 @@ import type { CreateUserDto, UpdateUserDto } from './users.dto';
 
 const RESET_TTL_MS = 24 * 60 * 60 * 1000;
 const LAST_ADMIN = 'Au moins un Super Administrateur actif est requis';
+const FARM_REQUIRED = 'Au moins une ferme est requise pour ce rôle';
+
+/** A role outside `ALL_FARMS_ROLES` only sees its assigned farms, so it needs at least one. */
+const needsFarm = (role: Role, farmCount: number) =>
+  farmCount === 0 && !ALL_FARMS_ROLES.includes(role);
 
 const include = {
   farms: { include: { farm: { select: { id: true, name: true } } } },
@@ -189,6 +195,8 @@ export class UsersService implements AuditableService {
   }
 
   async create(ctx: RequestContext, dto: CreateUserDto): Promise<UserView> {
+    if (needsFarm(dto.role, dto.farmIds.length))
+      throw new BadRequestException(FARM_REQUIRED);
     const farmIds = await this.validFarmIds(ctx, dto.farmIds);
     const passwordHash = await hashPassword(dto.password);
     const user = await orConflict(
@@ -236,6 +244,11 @@ export class UsersService implements AuditableService {
             'Vous ne pouvez pas désactiver votre propre compte',
           );
         }
+        const farmCount = farmIds
+          ? farmIds.length
+          : await tx.userFarm.count({ where: { userId: id } });
+        if (needsFarm(role, farmCount))
+          throw new BadRequestException(FARM_REQUIRED);
         if (farmIds) {
           await tx.userFarm.deleteMany({ where: { userId: id } });
           await tx.userFarm.createMany({

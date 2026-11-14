@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -19,6 +19,7 @@ import { PageHeader } from './PageHeader';
 import { Pagination, pageCount } from './Pagination';
 import { RecordDialog } from './RecordDialog';
 import { StatTiles, type StatTile } from './StatTiles';
+import { TabBar, panelId, tabId } from './TabBar';
 import type { FilterDef, ListResponse, ModuleConfig } from './types';
 import { useEndpointOptions } from './useEndpointOptions';
 import { useListState } from './useListState';
@@ -43,10 +44,31 @@ export interface ModulePageProps<T extends { id: string }> {
 
 /** The standard module screen: header, stat tiles, filterable / sortable table with add, edit, delete and export. */
 export function ModulePage<T extends { id: string }>({ config }: ModulePageProps<T>) {
-  return <ModuleView config={config} embedded={false} />;
+  return <ModuleView config={config} layout="page" />;
 }
 
-function ModuleView<T extends { id: string }>({ config, embedded }: { config: ModuleConfig<T>; embedded: boolean }) {
+export interface ModuleListProps<T extends { id: string }> {
+  config: ModuleConfig<T>;
+  /** Fixed query parameters (merged over `config.scope`) for the list and the create payloads; never shown as filters. */
+  scope?: Record<string, string>;
+}
+
+/**
+ * The list of a module without its page header, tiles and tabs, for embedding in a detail page: search, filters,
+ * table, pagination, and the export / add buttons at the top right of the card.
+ */
+export function ModuleList<T extends { id: string }>({ config, scope }: ModuleListProps<T>) {
+  return <ModuleView config={config} layout="list" scope={scope} />;
+}
+
+/** `page`: header, tiles and tabs; `tab`: a further tab of a page (buttons above the card); `list`: card only. */
+type Layout = 'page' | 'tab' | 'list';
+
+function ModuleView<T extends { id: string }>({
+  config, layout, scope: scopeProp,
+}: { config: ModuleConfig<T>; layout: Layout; scope?: Record<string, string> }) {
+  const embedded = layout !== 'page';
+  const scope = config.scope || scopeProp ? { ...config.scope, ...scopeProp } : undefined;
   const { can, farmId, reload } = useAuth();
   const queryClient = useQueryClient();
   const tabBase = useId();
@@ -77,8 +99,8 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
   ];
 
   const list = useFarmQuery<ListResponse<T>>(
-    [config.endpoint, 'list', listParams],
-    () => api.get<ListResponse<T>>(config.endpoint, listParams),
+    [config.endpoint, 'list', listParams, scope],
+    () => api.get<ListResponse<T>>(config.endpoint, { ...listParams, ...scope }),
     {
       enabled: onMain,
       // Keep the last page while the next loads, but never across a farm switch.
@@ -90,8 +112,8 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
   const showTiles = !embedded && onMain;
   // Without per-status totals the list total follows the filters, so count the unfiltered set apart.
   const unfiltered = useFarmQuery<number>(
-    [config.endpoint, 'count'],
-    async () => (await api.get<ListResponse<T>>(config.endpoint, { page: 1, pageSize: 1 })).total,
+    [config.endpoint, 'count', scope],
+    async () => (await api.get<ListResponse<T>>(config.endpoint, { ...scope, page: 1, pageSize: 1 })).total,
     { enabled: showTiles && list.data !== undefined && !counts },
   );
 
@@ -157,7 +179,7 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
       <ExportMenu
         endpoint={config.endpoint}
         filename={config.slug}
-        params={params}
+        params={{ ...params, ...scope }}
         onError={(message) => setNotice({ tone: 'error', message })}
       />
       {canCreate && (
@@ -168,6 +190,9 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
       )}
     </>
   );
+
+  const detailPath = config.detailPath ?? (config.detail ? (row: T) => `/m/${config.slug}/${row.id}` : undefined);
+  const EditForm = config.form;
 
   const body = (
     <>
@@ -181,6 +206,7 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
             value={searchInput}
             onChange={(e) => setSearchInput(e.target.value)}
           />
+          {layout === 'list' && <div className="order-last ml-auto flex flex-wrap items-center gap-2 [&_button]:h-9!">{actions}</div>}
           {filters.map((f) => (
             <FilterSelect
               key={f.param}
@@ -208,11 +234,13 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
               statusKey={config.statusKey}
               sort={sort}
               onSort={toggleSort}
-              detailPath={config.detailPath}
+              detailPath={detailPath}
               qr={config.qr}
               actions={tableActions}
               onEdit={canUpdate ? setEditing : undefined}
               onDelete={canDelete ? setDeleting : undefined}
+              canEdit={config.canEdit}
+              canDelete={config.canDelete}
             />
           </div>
         )}
@@ -220,10 +248,18 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
         <Pagination page={page} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
       </Card>
 
-      {editing && (
+      {editing && EditForm && (
+        <EditForm
+          row={editing === 'new' ? undefined : editing}
+          onClose={() => setEditing(null)}
+          onSaved={() => { setEditing(null); afterWrite(); }}
+        />
+      )}
+      {editing && !EditForm && (
         <RecordDialog
           config={config}
           row={editing === 'new' ? undefined : editing}
+          scope={scope}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); afterWrite(); }}
         />
@@ -243,6 +279,7 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
     </>
   );
 
+  if (layout === 'list') return body;
   if (embedded) {
     return (
       <>
@@ -252,54 +289,21 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
     );
   }
 
-  const extraTabs = (config.tabs ?? []).filter((t) => can(t.config.slug, 'read'));
+  const extraTabs = (config.tabs ?? []).filter((t) => !('config' in t) || can(t.config.slug, 'read'));
   const activeTab = extraTabs.find((t) => t.key === tab);
   const allTabs = [{ key: 'main', label: config.title }, ...extraTabs];
-  const tabId = (key: string) => `${tabBase}-tab-${key}`;
-  const panelId = (key: string) => `${tabBase}-panel-${key}`;
-  const onTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    const at = allTabs.findIndex((t) => t.key === tab);
-    let next: number | null = null;
-    if (e.key === 'ArrowRight') next = (at + 1) % allTabs.length;
-    else if (e.key === 'ArrowLeft') next = (at - 1 + allTabs.length) % allTabs.length;
-    else if (e.key === 'Home') next = 0;
-    else if (e.key === 'End') next = allTabs.length - 1;
-    if (next === null) return;
-    e.preventDefault();
-    setTab(allTabs[next].key);
-    document.getElementById(tabId(allTabs[next].key))?.focus();
-  };
+  const activeKey = activeTab ? activeTab.key : 'main';
   return (
     <>
       <PageHeader group={config.group} title={config.title} subtitle={config.subtitle} actions={onMain ? actions : undefined} />
-      {extraTabs.length > 0 && (
-        <div role="tablist" onKeyDown={onTabKeyDown} className="mb-6 inline-flex gap-1 rounded-full bg-muted p-1">
-          {allTabs.map((t) => (
-            <button
-              key={t.key}
-              id={tabId(t.key)}
-              type="button"
-              role="tab"
-              aria-selected={tab === t.key}
-              aria-controls={panelId(t.key)}
-              tabIndex={tab === t.key ? 0 : -1}
-              onClick={() => setTab(t.key)}
-              className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
-                tab === t.key ? 'bg-card text-foreground shadow-card' : 'text-muted-foreground hover:text-foreground'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
-      )}
+      {extraTabs.length > 0 && <TabBar tabs={allTabs} active={activeKey} onChange={setTab} idBase={tabBase} />}
       <div
-        id={panelId(activeTab ? activeTab.key : 'main')}
+        id={panelId(tabBase, activeKey)}
         role={extraTabs.length > 0 ? 'tabpanel' : undefined}
-        aria-labelledby={extraTabs.length > 0 ? tabId(activeTab ? activeTab.key : 'main') : undefined}
+        aria-labelledby={extraTabs.length > 0 ? tabId(tabBase, activeKey) : undefined}
       >
         {activeTab ? (
-          <ModuleView key={activeTab.key} config={activeTab.config} embedded />
+          'config' in activeTab ? <ModuleView key={activeTab.key} config={activeTab.config} layout="tab" /> : activeTab.element
         ) : (
           <>
             <StatTiles tiles={tiles} />

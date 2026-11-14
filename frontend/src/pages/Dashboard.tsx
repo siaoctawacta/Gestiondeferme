@@ -1,10 +1,12 @@
-import { lazy, Suspense } from 'react';
+import { Suspense } from 'react';
 import { Link } from 'react-router';
 import { Bird, Egg, PiggyBank, Plus, Skull } from 'lucide-react';
 import { api } from '../lib/api';
 import { formatNumber } from '../lib/format';
 import { rateOrDash, type DashboardDto } from '../lib/dashboard';
 import { useFarmQuery } from '../lib/query';
+import { ErrorBoundary } from '../components/ErrorBoundary';
+import { lazyRetry } from '../components/lazyRetry';
 import { ErrorRetry } from '../components/module/ErrorRetry';
 import { errorMessage } from '../components/module/errorMessage';
 import { PageHeader } from '../components/module/PageHeader';
@@ -18,8 +20,8 @@ import { Skeleton } from './PageParts';
 
 // The chart components pull in Recharts: load them on demand so the login page and the
 // other screens do not download the chart library.
-const EggChart = lazy(() => import('./dashboard/EggChart').then((m) => ({ default: m.EggChart })));
-const RevenueBars = lazy(() => import('./dashboard/RevenueBars').then((m) => ({ default: m.RevenueBars })));
+const EggChart = lazyRetry(() => import('./dashboard/EggChart').then((m) => ({ default: m.EggChart })));
+const RevenueBars = lazyRetry(() => import('./dashboard/RevenueBars').then((m) => ({ default: m.RevenueBars })));
 
 function DashboardSkeleton() {
   return (
@@ -87,17 +89,23 @@ export default function Dashboard() {
             </div>
 
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <Suspense fallback={<Skeleton className="h-[340px] lg:col-span-2" />}>
-                <EggChart series={d.eggSeries} />
-              </Suspense>
+              <div className="lg:col-span-2">
+                <ErrorBoundary>
+                  <Suspense fallback={<Skeleton className="h-[340px]" />}>
+                    <EggChart series={d.eggSeries} />
+                  </Suspense>
+                </ErrorBoundary>
+              </div>
               <ProfitCard profit={d.profitability} />
             </div>
 
             <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
               <FarmTile activeBuildings={d.activeBuildings} feedDistributedKg={d.feedDistributedKg} waterConsumedL={d.waterConsumedL} />
-              <Suspense fallback={<Skeleton className="h-full min-h-[300px]" />}>
-                <RevenueBars rows={d.revenueVsExpenses} />
-              </Suspense>
+              <ErrorBoundary>
+                <Suspense fallback={<Skeleton className="h-full min-h-[300px]" />}>
+                  <RevenueBars rows={d.revenueVsExpenses} />
+                </Suspense>
+              </ErrorBoundary>
               <AlertsCard alerts={d.alerts} />
             </div>
 

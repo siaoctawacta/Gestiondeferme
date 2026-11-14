@@ -3,6 +3,7 @@ import { BrowserRouter, Route, Routes, useLocation } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAlerts } from './lib/alerts';
 import { AuthProvider, useAuth } from './lib/auth';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { AppLayout } from './components/shell/AppLayout';
 import { FarmSwitcher } from './components/shell/FarmSwitcher';
 import { MessageCard, RequireAuth, RequirePermission } from './components/shell/guards';
@@ -35,7 +36,7 @@ export function Shell({ children }: { children: ReactNode }) {
       {noFarm ? (
         <MessageCard title="Aucune ferme">Aucune ferme ne vous est attribuée. Contactez un administrateur.</MessageCard>
       ) : (
-        children
+        <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
       )}
     </AppLayout>
   );
@@ -60,6 +61,7 @@ export default function App() {
                       <Route path="/rapports" element={<RequirePermission module="rapports"><Reports /></RequirePermission>} />
                       <Route path="/audit" element={<RequirePermission module="audit"><Audit /></RequirePermission>} />
                       <Route path="/m/:module" element={<ModuleRoute />} />
+                      <Route path="/m/:module/:id" element={<ModuleRoute />} />
                       <Route path="/admin/fermes" element={<RequirePermission module="fermes"><Farms /></RequirePermission>} />
                       <Route path="/admin/utilisateurs" element={<RequirePermission module="utilisateurs"><Users /></RequirePermission>} />
                       <Route path="/admin/parametres" element={<RequirePermission module="parametres"><Settings /></RequirePermission>} />

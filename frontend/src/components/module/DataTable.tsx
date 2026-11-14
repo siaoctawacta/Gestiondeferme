@@ -36,6 +36,9 @@ export interface DataTableProps<T extends { id: string }> {
   emptyText?: string;
   onEdit?: (row: T) => void;
   onDelete?: (row: T) => void;
+  /** Per-row switches for the edit / delete buttons (default: shown on every row). */
+  canEdit?: (row: T) => boolean;
+  canDelete?: (row: T) => boolean;
 }
 
 const ICON_BUTTON =
@@ -62,7 +65,7 @@ function cell<T extends { id: string }>(
 const SKELETON_ROWS = 5;
 
 export function DataTable<T extends { id: string }>({
-  columns, rows, loading, statuses, statusKey, sort, onSort, detailPath, qr, actions, emptyText = 'Aucun enregistrement', onEdit, onDelete,
+  columns, rows, loading, statuses, statusKey, sort, onSort, detailPath, qr, actions, emptyText = 'Aucun enregistrement', onEdit, onDelete, canEdit, canDelete,
 }: DataTableProps<T>) {
   const hasActions = Boolean(qr || (actions && actions.length > 0) || onEdit || onDelete);
   const span = columns.length + (hasActions ? 1 : 0);
@@ -135,12 +138,12 @@ export function DataTable<T extends { id: string }>({
                         <QrCode aria-hidden className="size-4" />
                       </Link>
                     )}
-                    {onEdit && (
+                    {onEdit && (canEdit?.(row) ?? true) && (
                       <ActionButton label="Modifier" onClick={() => onEdit(row)}>
                         <Pencil aria-hidden className="size-4" />
                       </ActionButton>
                     )}
-                    {onDelete && (
+                    {onDelete && (canDelete?.(row) ?? true) && (
                       <ActionButton label="Supprimer" onClick={() => onDelete(row)}>
                         <Trash2 aria-hidden className="size-4" />
                       </ActionButton>

@@ -154,6 +154,66 @@ describe('Users and settings (e2e)', () => {
       }
     });
 
+    it('requires a farm for farm-limited roles, not for all-farms roles', async () => {
+      const admin = await actor('SUPER_ADMIN');
+      const res = await http()
+        .post('/api/users')
+        .set(admin.headers)
+        .send(newUser({ role: 'RESP_AVICOLE', farmIds: [] }))
+        .expect(400);
+      expect((res.body as { message: string }).message).toBe(
+        'Au moins une ferme est requise pour ce rôle',
+      );
+      await http()
+        .post('/api/users')
+        .set(admin.headers)
+        .send(
+          newUser({ email: 'aud@example.com', role: 'AUDITEUR', farmIds: [] }),
+        )
+        .expect(201);
+
+      const u = (
+        await http()
+          .post('/api/users')
+          .set(admin.headers)
+          .send(newUser({ email: 'agent@example.com' }))
+      ).body as UserView;
+      // Emptying the farms of a farm-limited role, or moving an unassigned user to one, is refused.
+      await http()
+        .patch(`/api/users/${u.id}`)
+        .set(admin.headers)
+        .send({ farmIds: [] })
+        .expect(400);
+      const aud = (
+        await http()
+          .post('/api/users')
+          .set(admin.headers)
+          .send(
+            newUser({
+              email: 'aud2@example.com',
+              role: 'AUDITEUR',
+              farmIds: [],
+            }),
+          )
+      ).body as UserView;
+      await http()
+        .patch(`/api/users/${aud.id}`)
+        .set(admin.headers)
+        .send({ role: 'COMMERCIAL' })
+        .expect(400);
+      await http()
+        .patch(`/api/users/${aud.id}`)
+        .set(admin.headers)
+        .send({ role: 'COMMERCIAL', farmIds: [farmA] })
+        .expect(200);
+      // Existing farms are kept when only the role changes.
+      await http()
+        .patch(`/api/users/${u.id}`)
+        .set(admin.headers)
+        .send({ role: 'COMMERCIAL' })
+        .expect(200);
+    });
+
     it('enforces permissions: DIRECTEUR_FERME 403, AUDITEUR read-only', async () => {
       const director = await actor('DIRECTEUR_FERME');
       await http().get('/api/users').set(director.headers).expect(403);

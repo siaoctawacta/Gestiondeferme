@@ -6,22 +6,31 @@ export type Option = { value: string; label: string };
 
 const PAGE_SIZE = 200;
 
-/** Options of a select: static, or every page of an endpoint (cached per farm). */
-export function useEndpointOptions(def: OptionsDef): Option[] {
+/**
+ * Options of a select: static, or every page of an endpoint (cached per farm).
+ * `extraParams` are added to the endpoint's own `params` (e.g. the value of a `dependsOn` parent);
+ * `enabled: false` skips the request and yields no options.
+ */
+export function useEndpointOptions(
+  def: OptionsDef,
+  extraParams?: Record<string, string>,
+  enabled = true,
+): Option[] {
   const remote = Array.isArray(def) ? null : def;
+  const params = { ...remote?.params, ...extraParams };
   const { data } = useFarmQuery<Option[]>(
-    [remote?.endpoint ?? '', 'options', remote?.valueKey, remote?.labelKey],
+    [remote?.endpoint ?? '', 'options', remote?.valueKey, remote?.labelKey, params],
     async () => {
       const out: Option[] = [];
       for (let page = 1; ; page++) {
-        const res = await api.get<ListResponse<Record<string, unknown>>>(remote!.endpoint, { page, pageSize: PAGE_SIZE });
+        const res = await api.get<ListResponse<Record<string, unknown>>>(remote!.endpoint, { ...params, page, pageSize: PAGE_SIZE });
         for (const r of res.items) {
           out.push({ value: String(r[remote!.valueKey ?? 'id']), label: String(r[remote!.labelKey ?? 'name']) });
         }
         if (res.items.length === 0 || out.length >= res.total) return out;
       }
     },
-    { enabled: remote !== null },
+    { enabled: remote !== null && enabled },
   );
-  return Array.isArray(def) ? def : (data ?? []);
+  return Array.isArray(def) ? def : enabled ? (data ?? []) : [];
 }

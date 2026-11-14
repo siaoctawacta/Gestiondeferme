@@ -29,7 +29,7 @@ function defaultPayload(fields: Field[], values: Values, mode: FormMode): Values
     const v = values[f.name];
     if (f.type === 'number') {
       if (v !== '') out[f.name] = Number(v);
-    } else if (f.type === 'select' || f.type === 'date') {
+    } else if (f.type === 'select' || f.type === 'date' || f.type === 'time') {
       if (v !== '') out[f.name] = v;
     } else if (f.type === 'text' || f.type === 'textarea') {
       out[f.name] = String(v).trim();
@@ -51,6 +51,9 @@ function validate(fields: Field[], values: Values, mode: FormMode): string | nul
     if (f.type === 'number' && !empty && f.min !== undefined && Number(v) < f.min) {
       return `Le champ « ${f.label} » doit être supérieur ou égal à ${f.min}`;
     }
+    if (f.type === 'number' && !empty && f.max !== undefined && Number(v) > f.max) {
+      return `Le champ « ${f.label} » doit être inférieur ou égal à ${f.max}`;
+    }
     if (f.type === 'password' && f.minLength && String(v).length < f.minLength) {
       return `Le champ « ${f.label} » doit contenir au moins ${f.minLength} caractères`;
     }
@@ -62,15 +65,17 @@ interface FieldInputProps {
   field: Field;
   value: unknown;
   onChange: (v: unknown) => void;
+  /** Label of the `dependsOn` parent field while it is still empty. */
+  waitingFor?: string;
 }
 
-function SelectInput({ field, value, onChange, options }: FieldInputProps & { options: Option[] }) {
+function SelectInput({ field, value, onChange, options, waitingFor }: FieldInputProps & { options: Option[] }) {
   const id = useId();
   return (
     <div className="space-y-1.5">
       <label htmlFor={id} className={`${LABEL} ${field.required ? "after:content-['*']" : ''}`}>{field.label}</label>
-      <Select id={id} className="w-full" value={String(value)} onChange={(e) => onChange(e.target.value)}>
-        <option value="">Sélectionner…</option>
+      <Select id={id} className="w-full" value={String(value)} disabled={waitingFor !== undefined} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{waitingFor !== undefined ? `Choisir d'abord ${waitingFor}` : 'Sélectionner…'}</option>
         {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </Select>
     </div>
@@ -102,10 +107,16 @@ function MultiSelectInput({ field, value, onChange, options }: FieldInputProps &
   );
 }
 
-function FieldInput(props: FieldInputProps) {
-  const { field, value, onChange } = props;
+function FieldInput(props: FieldInputProps & { parentValue?: string }) {
+  const { field, value, onChange, parentValue } = props;
   const id = useId();
-  const options = useEndpointOptions('options' in field ? field.options : []);
+  const dependsOn = field.type === 'select' ? field.dependsOn : undefined;
+  const parentReady = !dependsOn || Boolean(parentValue);
+  const options = useEndpointOptions(
+    'options' in field ? field.options : [],
+    dependsOn && parentValue ? { [dependsOn]: parentValue } : undefined,
+    parentReady,
+  );
   if (field.type === 'select') return <SelectInput {...props} options={options} />;
   if (field.type === 'multiselect') return <MultiSelectInput {...props} options={options} />;
   if (field.type === 'checkbox') {
@@ -137,6 +148,8 @@ function FieldInput(props: FieldInputProps) {
           id={id}
           type={field.type}
           min={field.type === 'number' ? field.min : undefined}
+          max={field.type === 'number' ? field.max : undefined}
+          step={field.type === 'number' ? field.step : undefined}
           autoComplete={field.type === 'password' ? 'new-password' : undefined}
           value={String(value)}
           onChange={(e) => onChange(e.target.value)}
@@ -150,12 +163,14 @@ export interface RecordDialogProps<T extends { id: string }> {
   config: ModuleConfig<T>;
   /** The row being edited; absent when creating. */
   row?: T;
+  /** Fixed values merged into the body when creating (the config's `scope`, or the one given to `ModuleList`). */
+  scope?: Record<string, string>;
   onClose: () => void;
   onSaved: () => void;
 }
 
 /** Add / edit form built from `config.fields`; server messages are shown under the form. */
-export function RecordDialog<T extends { id: string }>({ config, row, onClose, onSaved }: RecordDialogProps<T>) {
+export function RecordDialog<T extends { id: string }>({ config, row, scope, onClose, onSaved }: RecordDialogProps<T>) {
   const mode: FormMode = row ? 'update' : 'create';
   const fields = config.fields.filter((f) => !f.only || f.only === mode);
   const [values, setValues] = useState<Values>(() => {
@@ -164,6 +179,14 @@ export function RecordDialog<T extends { id: string }>({ config, row, onClose, o
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  /** Sets a field; every select depending on it is cleared. */
+  const setField = (name: string, v: unknown) =>
+    setValues((s) => {
+      const next = { ...s, [name]: v };
+      for (const f of fields) if (f.type === 'select' && f.dependsOn === name) next[f.name] = '';
+      return next;
+    });
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -177,7 +200,7 @@ export function RecordDialog<T extends { id: string }>({ config, row, onClose, o
     try {
       const body = config.toPayload ? config.toPayload(values, mode) : defaultPayload(fields, values, mode);
       if (row) await api.patch(`${config.endpoint}/${row.id}`, body);
-      else await api.post(config.endpoint, body);
+      else await api.post(config.endpoint, { ...(body as Values), ...scope });
       onSaved();
     } catch (err) {
       setError(errorMessage(err));
@@ -188,9 +211,20 @@ export function RecordDialog<T extends { id: string }>({ config, row, onClose, o
   return (
     <Dialog open onClose={onClose} title={`${row ? 'Modifier' : 'Ajouter'} — ${config.title}`}>
       <form onSubmit={submit} noValidate className="space-y-4">
-        {fields.map((f) => (
-          <FieldInput key={f.name} field={f} value={values[f.name]} onChange={(v) => setValues((s) => ({ ...s, [f.name]: v }))} />
-        ))}
+        {fields.map((f) => {
+          const parent = f.type === 'select' && f.dependsOn ? fields.find((p) => p.name === f.dependsOn) : undefined;
+          const parentValue = parent ? String(values[parent.name] ?? '') : undefined;
+          return (
+            <FieldInput
+              key={f.name}
+              field={f}
+              value={values[f.name]}
+              onChange={(v) => setField(f.name, v)}
+              parentValue={parentValue}
+              waitingFor={parent && !parentValue ? parent.label : undefined}
+            />
+          );
+        })}
         {error && <Alert>{error}</Alert>}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose}>Annuler</Button>

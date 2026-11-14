@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -9,7 +9,7 @@ import { Eye } from 'lucide-react';
 import { api } from '../../lib/api';
 import { batiments, type Building } from '../../modules/batiments';
 import type { ModuleConfig } from './types';
-import { ModulePage } from './ModulePage';
+import { ModuleList, ModulePage } from './ModulePage';
 
 function json(status: number, body?: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -31,7 +31,7 @@ const calls: Call[] = [];
 const fetchMock = vi.fn<typeof fetch>();
 let handler: (c: Call) => Response | undefined;
 
-function setup({ perms = ALL, farm, config = batiments }: { perms?: string[]; farm?: string; config?: ModuleConfig<Building> } = {}) {
+function setup({ perms = ALL, farm, config = batiments, list = false, scope }: { perms?: string[]; farm?: string; config?: ModuleConfig<Building>; list?: boolean; scope?: Record<string, string> } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
   handler = () => undefined;
   fetchMock.mockImplementation(async (input, init) => {
@@ -58,7 +58,7 @@ function setup({ perms = ALL, farm, config = batiments }: { perms?: string[]; fa
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter>
         <AuthProvider>
-          <ModulePage config={config} />
+          {list ? <ModuleList config={config} scope={scope} /> : <ModulePage config={config} />}
         </AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -359,5 +359,146 @@ describe('ModulePage keyboard accessibility', () => {
     await user.keyboard('{Escape}');
     expect(screen.queryByRole('menu')).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
+  });
+});
+
+describe('ModulePage kit extensions', () => {
+  it('links the first cell to the detail route when the config has a detail view', async () => {
+    setup({ config: { ...batiments, detail: () => null } });
+    expect(await screen.findByRole('link', { name: 'Poulailler A' })).toHaveAttribute('href', '/m/batiments/b1');
+  });
+
+  it('hides the edit button per row but keeps delete with canEdit / canDelete', async () => {
+    setup({ config: { ...batiments, canEdit: () => false, canDelete: () => true } });
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Supprimer' })).toHaveLength(2);
+  });
+
+  it('hides the delete button for the rows canDelete refuses', async () => {
+    setup({ config: { ...batiments, canDelete: (b) => b.id === 'b2' } });
+    await screen.findByText('Poulailler A');
+    expect(screen.getAllByRole('button', { name: 'Supprimer' })).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Modifier' })).toHaveLength(2);
+  });
+
+  it('renders a custom form instead of the generated dialog and refetches on save', async () => {
+    const form: NonNullable<ModuleConfig<Building>['form']> = ({ row, onSaved, onClose }) => (
+      <div role="dialog" aria-label="Formulaire perso">
+        <span>{row ? `edition ${row.name}` : 'creation'}</span>
+        <button onClick={onSaved}>Valider</button>
+        <button onClick={onClose}>Fermer</button>
+      </div>
+    );
+    setup({ config: { ...batiments, form } });
+    await screen.findByText('Poulailler A');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    expect(screen.getByRole('dialog', { name: 'Formulaire perso' })).toHaveTextContent('creation');
+    expect(screen.queryByRole('dialog', { name: 'Ajouter — Bâtiments' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Fermer' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+
+    await user.click(screen.getAllByRole('button', { name: 'Modifier' })[0]);
+    expect(screen.getByRole('dialog')).toHaveTextContent('edition Poulailler A');
+    const before = listCalls().length;
+    await user.click(screen.getByRole('button', { name: 'Valider' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    await waitFor(() => expect(listCalls().length).toBeGreaterThan(before));
+  });
+
+  it('sends the scope with the list request, the count request and create payloads, without showing it as a filter', async () => {
+    setup({ config: { ...batiments, scope: { batchId: 'b1' } } });
+    await screen.findByText('Poulailler A');
+    expect(listCalls().every((c) => c.url.includes('batchId=b1'))).toBe(true);
+    expect(screen.queryByLabelText('batchId')).not.toBeInTheDocument();
+    handler = (c) => (c.method === 'POST' ? json(201, { id: 'b3' }) : undefined);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.type(within(dialog).getByLabelText('Nom'), 'Poulailler D');
+    await user.selectOptions(within(dialog).getByLabelText('Type'), 'Avicole');
+    await user.selectOptions(await within(dialog).findByLabelText('Site'), 'Site Nord');
+    await user.type(within(dialog).getByLabelText('Capacité'), '10');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === '/api/buildings')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST' && c.url === '/api/buildings')?.body).toMatchObject({ name: 'Poulailler D', batchId: 'b1' });
+  });
+
+  it('ModuleList takes the scope as a prop and renders the list without page header or tiles', async () => {
+    setup({ list: true, scope: { buildingId: 'b9' } });
+    expect(await screen.findByText('Poulailler A')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { level: 1 })).not.toBeInTheDocument();
+    expect(screen.queryByText('Total enregistrements')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
+    expect(listCalls().every((c) => c.url.includes('buildingId=b9'))).toBe(true);
+  });
+
+  it('renders an element tab', async () => {
+    setup({ config: { ...batiments, tabs: [{ key: 'extra', label: 'Résumé', element: <p>Contenu libre</p> }] } });
+    await screen.findByText('Poulailler A');
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Résumé' }));
+    expect(screen.getByText('Contenu libre')).toBeInTheDocument();
+  });
+
+  describe('select dependsOn and time field', () => {
+    const dependent: ModuleConfig<Building> = {
+      ...batiments,
+      fields: [
+        { name: 'siteId', label: 'Site', type: 'select', options: { endpoint: '/sites' } },
+        { name: 'zoneId', label: 'Zone', type: 'select', dependsOn: 'siteId', options: { endpoint: '/zones', params: { kind: 'x' } } },
+        { name: 'at', label: 'Heure', type: 'time' },
+        { name: 'qty', label: 'Quantité', type: 'number', min: 0, max: 10, step: 0.5 },
+      ],
+    };
+    const zonesFor = (c: Call) => {
+      if (!c.url.startsWith('/api/zones')) return undefined;
+      const site = new URL(c.url, 'http://x').searchParams.get('siteId');
+      return json(200, { items: [{ id: `z-${site}`, name: `Zone ${site}` }], total: 1, page: 1, pageSize: 200 });
+    };
+
+    it('disables the dependent select until the parent has a value, requests with the parent value and clears on change', async () => {
+      setup({ config: dependent });
+      await screen.findByText('Poulailler A');
+      handler = zonesFor;
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+      const dialog = await screen.findByRole('dialog');
+      const zone = within(dialog).getByLabelText('Zone');
+      expect(zone).toBeDisabled();
+      expect(within(zone).getByText("Choisir d'abord Site")).toBeInTheDocument();
+      expect(calls.some((c) => c.url.startsWith('/api/zones'))).toBe(false);
+
+      await user.selectOptions(await within(dialog).findByLabelText('Site'), 'Site Nord');
+      await waitFor(() => expect(within(dialog).getByLabelText('Zone')).toBeEnabled());
+      await user.selectOptions(await within(dialog).findByRole('option', { name: 'Zone s1' }).then(() => within(dialog).getByLabelText('Zone')), 'Zone s1');
+      const zonesCall = calls.find((c) => c.url.startsWith('/api/zones'))!;
+      expect(zonesCall.url).toContain('siteId=s1');
+      expect(zonesCall.url).toContain('kind=x');
+      expect(within(dialog).getByLabelText('Zone')).toHaveValue('z-s1');
+
+      await user.selectOptions(within(dialog).getByLabelText('Site'), 'Site Sud');
+      expect(within(dialog).getByLabelText('Zone')).toHaveValue('');
+    });
+
+    it('submits a time field as HH:mm and passes max / step to number inputs', async () => {
+      setup({ config: dependent });
+      await screen.findByText('Poulailler A');
+      handler = (c) => (c.method === 'POST' ? json(201, { id: 'x' }) : undefined);
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+      const dialog = await screen.findByRole('dialog');
+      const qty = within(dialog).getByLabelText('Quantité');
+      expect(qty).toHaveAttribute('max', '10');
+      expect(qty).toHaveAttribute('step', '0.5');
+      fireEvent.change(within(dialog).getByLabelText('Heure'), { target: { value: '07:30' } });
+      fireEvent.change(qty, { target: { value: '11' } });
+      await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+      expect(await within(dialog).findByText(/inférieur ou égal à 10/)).toBeInTheDocument();
+      fireEvent.change(qty, { target: { value: '2.5' } });
+      await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+      await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === '/api/buildings')).toBe(true));
+      expect(calls.find((c) => c.method === 'POST' && c.url === '/api/buildings')?.body).toMatchObject({ at: '07:30', qty: 2.5 });
+    });
   });
 });
