@@ -356,7 +356,7 @@ export class IncubationsService {
             entryDate: dto.date,
             initialCount: dto.chicksHatched,
           },
-          tx,
+          { tx },
         );
         chickBatchId = batch.id;
       }

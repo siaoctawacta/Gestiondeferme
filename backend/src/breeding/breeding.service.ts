@@ -12,7 +12,7 @@ import { BatchesService } from '../herd/batches.service';
 import { assertNotFuture, formatDay, requireDay, today } from '../herd/days';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import type { ExportColumn } from '../listing/export';
-import { containsInsensitive } from '../listing/list-helpers';
+import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
@@ -200,8 +200,6 @@ export class BreedingService {
     const litters = records.filter((r) => r.farrowingDate !== null);
     return {
       records,
-      // Same list under the name the animal screen reads.
-      items: records,
       totals: {
         litters: litters.length,
         averageBornAlive: average(litters.map((r) => r.bornAlive ?? 0)),
@@ -225,6 +223,37 @@ export class BreedingService {
 
   private expected(serviceDate: Date, days: number): Date {
     return new Date(serviceDate.getTime() + days * MS_PER_DAY);
+  }
+
+  /** 400 unless the new service follows every step of the sow's other records. */
+  private async assertCycleOrder(
+    tx: Tx,
+    sowId: string,
+    serviceDate: Date,
+    exceptId?: string,
+  ): Promise<void> {
+    const others = await tx.breedingRecord.findMany({
+      where: { sowId, ...(exceptId ? { id: { not: exceptId } } : {}) },
+      select: {
+        serviceDate: true,
+        farrowingDate: true,
+        weaningDate: true,
+        failureDate: true,
+      },
+    });
+    const t = serviceDate.getTime();
+    const early = others.some(
+      (o) =>
+        t <= o.serviceDate.getTime() ||
+        [o.farrowingDate, o.weaningDate, o.failureDate].some(
+          (d) => d !== null && t < d.getTime(),
+        ),
+    );
+    if (early) {
+      throw new BadRequestException(
+        'La date de saillie est antérieure au cycle précédent',
+      );
+    }
   }
 
   /**
@@ -333,7 +362,10 @@ export class BreedingService {
           "La date est antérieure à la naissance de l'animal",
         );
       }
+      await this.assertCycleOrder(tx, sow.id, serviceDate);
       if (dto.boarId) {
+        // Keeps the boar from leaving the herd while this record points at him.
+        await tx.$queryRaw`SELECT id FROM "Animal" WHERE id = ${dto.boarId} AND "farmId" = ${farmId} FOR NO KEY UPDATE`;
         const boar = await tx.animal.findFirst({
           where: { id: dto.boarId, farmId, sex: 'M', status: 'ACTIF' },
           select: { id: true },
@@ -353,18 +385,22 @@ export class BreedingService {
           'Cette truie est déjà gestante ou allaitante',
         );
       }
-      const created = await tx.breedingRecord.create({
-        data: {
-          farmId,
-          sowId: sow.id,
-          method: dto.method,
-          boarId: dto.boarId,
-          semenLabel: dto.semenLabel,
-          serviceDate,
-          expectedFarrowingDate: this.expected(serviceDate, days),
-        },
-        include,
-      });
+      const created = await orConflict(
+        () =>
+          tx.breedingRecord.create({
+            data: {
+              farmId,
+              sowId: sow.id,
+              method: dto.method,
+              boarId: dto.boarId,
+              semenLabel: dto.semenLabel,
+              serviceDate,
+              expectedFarrowingDate: this.expected(serviceDate, days),
+            },
+            include,
+          }),
+        'Cette truie est déjà gestante ou allaitante',
+      );
       const item = toItem(created);
       await this.log(tx, ctx, 'CREATE', item, undefined, item);
       return item;
@@ -386,6 +422,7 @@ export class BreedingService {
           "La date est antérieure à la naissance de l'animal",
         );
       }
+      await this.assertCycleOrder(tx, sow.id, serviceDate, id);
       const days = await this.gestationDays(tx, ctx.user.organizationId);
       await tx.breedingRecord.update({
         where: { id },
@@ -445,11 +482,11 @@ export class BreedingService {
             species: 'PORCIN',
             type: 'PORCELET',
             buildingId: dto.buildingId!,
+            breedId: sow.breedId ?? undefined,
             entryDate: dto.date,
             initialCount: dto.bornAlive,
           },
-          tx,
-          sow.id,
+          { tx, motherAnimalId: sow.id },
         );
         litterBatchId = batch.id;
       }
@@ -486,6 +523,8 @@ export class BreedingService {
         throw new BadRequestException('La date est antérieure à la mise bas');
       }
       if (row.litterBatchId) {
+        // Serialises with any other change to the litter before its count is read.
+        await this.ledger.lockBatch(tx, row.litterBatchId, [row.farmId]);
         const alive =
           (await this.ledger.liveCounts([row.litterBatchId], date, tx)).get(
             row.litterBatchId,

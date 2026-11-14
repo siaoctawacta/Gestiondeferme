@@ -171,6 +171,6 @@ export class HerdListQueryDto extends ListQueryDto {
     description: 'Truie, Verrat, Cochette, Porcelets, Engraissement',
   })
   @IsOptional()
-  @IsString()
+  @IsString({ message: 'Catégorie invalide' })
   category?: string;
 }

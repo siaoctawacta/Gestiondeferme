@@ -436,6 +436,29 @@ export class AnimalsService implements OccupationSource {
       if (row.birthDate && date < row.birthDate) {
         throw new BadRequestException(BEFORE_BIRTH);
       }
+      const events = await tx.breedingRecord.findMany({
+        where: { sowId: id },
+        select: {
+          serviceDate: true,
+          farrowingDate: true,
+          weaningDate: true,
+          failureDate: true,
+        },
+      });
+      const last = events
+        .flatMap((e) => [
+          e.serviceDate,
+          e.farrowingDate,
+          e.weaningDate,
+          e.failureDate,
+        ])
+        .filter((d) => d !== null)
+        .reduce((max, d) => Math.max(max, d.getTime()), 0);
+      if (date.getTime() < last) {
+        throw new BadRequestException(
+          'La date de sortie est antérieure au dernier événement de reproduction',
+        );
+      }
       if (
         dto.reason !== 'MORT' &&
         (row.status === 'GESTANTE' || row.status === 'ALLAITANTE')

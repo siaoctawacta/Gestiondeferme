@@ -788,7 +788,8 @@ describe('Breeding (e2e)', () => {
         .set(headers)
         .send({
           date: daysAgo(1),
-        });
+        })
+        .expect(200);
       await http().delete(`/api/animals/${sow.id}`).set(headers).expect(409);
       await http().delete(`/api/animals/${boar.id}`).set(headers).expect(409);
     });
@@ -940,7 +941,6 @@ describe('Breeding (e2e)', () => {
         .expect(200);
       const body = res.body as {
         records: BreedingItem[];
-        items?: BreedingItem[];
         totals: Record<string, number | null>;
       };
       expect(body.records.map((r) => r.status)).toEqual([
@@ -962,7 +962,7 @@ describe('Breeding (e2e)', () => {
         averageBornAlive: 11.5,
         averageWeaned: 9.5,
       });
-      expect(body.items).toEqual(body.records);
+      expect(body).not.toHaveProperty('items');
     });
 
     it('averages with one decimal and ignores litters still nursing for the weaned figure', async () => {
@@ -1114,6 +1114,209 @@ describe('Breeding (e2e)', () => {
       await http()
         .get(`/api/animals/${sow.id}/breeding-history`)
         .set(vet.headers)
+        .expect(200);
+    });
+  });
+
+  describe('date order and races', () => {
+    async function farrowedLitter(headers: Record<string, string>) {
+      const { sow, boar } = await pair(headers);
+      const rec = await serve(headers, sow.id, boar.id);
+      const f = (await farrow(headers, rec.id).expect(200))
+        .body as BreedingItem;
+      return { sow, boar, rec: f };
+    }
+
+    it('weaning racing a death on the litter never leaves them out of step', async () => {
+      for (let i = 0; i < 3; i++) {
+        await resetDb();
+        orgId = (await createOrganization()).id;
+        farmA = (await createFarm(orgId, 'Ferme A')).id;
+        const site = await prisma.site.create({
+          data: { farmId: farmA, name: 'Site' },
+        });
+        bldA = (
+          await prisma.building.create({
+            data: {
+              farmId: farmA,
+              siteId: site.id,
+              name: 'Maternité',
+              type: 'PORCIN',
+              capacity: 500,
+            },
+          })
+        ).id;
+        const { headers } = await actor('RESP_PORCIN');
+        const { rec } = await farrowedLitter(headers);
+        const [wean, death] = await Promise.all([
+          http()
+            .post(`/api/breeding/${rec.id}/weaning`)
+            .set(headers)
+            .send({ date: daysAgo(1), weanedCount: 12 }),
+          http()
+            .post(`/api/batches/${rec.litterBatchId}/events`)
+            .set(headers)
+            .send({ type: 'MORTALITE', date: daysAgo(2), quantity: 1 }),
+        ]);
+        expect([200, 400]).toContain(wean.status);
+        expect([201, 400]).toContain(death.status);
+        const batch = (
+          await http()
+            .get(`/api/batches/${rec.litterBatchId}`)
+            .set(headers)
+            .expect(200)
+        ).body as BatchItem;
+        if (wean.status === 200) {
+          expect((wean.body as BreedingItem).weanedCount).toBe(12);
+          // the death landed first and the weaning saw it, or it is refused
+          expect(death.status).toBe(400);
+          expect(batch.alive).toBe(12);
+        } else {
+          expect(death.status).toBe(201);
+          expect(batch.alive).toBe(11);
+        }
+      }
+    });
+
+    it('requires a service after the sow previous cycle', async () => {
+      const { headers } = await actor('RESP_PORCIN');
+      const { sow, boar } = await pair(headers);
+      const r1 = await serve(headers, sow.id, boar.id, {
+        serviceDate: daysAgo(200),
+      });
+      await farrow(headers, r1.id, { date: daysAgo(86) }).expect(200);
+      await http()
+        .post(`/api/breeding/${r1.id}/weaning`)
+        .set(headers)
+        .send({ date: daysAgo(60), weanedCount: 12 })
+        .expect(200);
+      const post = (serviceDate: string) =>
+        http().post('/api/breeding').set(headers).send({
+          sowId: sow.id,
+          method: 'SAILLIE',
+          boarId: boar.id,
+          serviceDate,
+        });
+      const early = await post(daysAgo(61)).expect(400);
+      expect((early.body as Msg).message).toBe(
+        'La date de saillie est antérieure au cycle précédent',
+      );
+      await post(daysAgo(250)).expect(400);
+      const r2 = (await post(daysAgo(60)).expect(201)).body as BreedingItem;
+      const moved = await http()
+        .patch(`/api/breeding/${r2.id}`)
+        .set(headers)
+        .send({ serviceDate: daysAgo(70) })
+        .expect(400);
+      expect((moved.body as Msg).message).toBe(
+        'La date de saillie est antérieure au cycle précédent',
+      );
+      await http()
+        .patch(`/api/breeding/${r2.id}`)
+        .set(headers)
+        .send({ serviceDate: daysAgo(55) })
+        .expect(200);
+      // a failed record counts too
+      const s2 = await animal(headers);
+      const f1 = await serve(headers, s2.id, boar.id, {
+        serviceDate: daysAgo(30),
+      });
+      await http()
+        .post(`/api/breeding/${f1.id}/fail`)
+        .set(headers)
+        .send({ date: daysAgo(10) })
+        .expect(200);
+      await http()
+        .post('/api/breeding')
+        .set(headers)
+        .send({
+          sowId: s2.id,
+          method: 'IA',
+          semenLabel: 'X',
+          serviceDate: daysAgo(15),
+        })
+        .expect(400);
+    });
+
+    it('refuses an exit dated before the last breeding event', async () => {
+      const { headers } = await actor('RESP_PORCIN');
+      const { sow, boar } = await pair(headers);
+      await serve(headers, sow.id, boar.id, { serviceDate: daysAgo(10) });
+      const res = await http()
+        .post(`/api/animals/${sow.id}/exit`)
+        .set(headers)
+        .send({ date: daysAgo(11), reason: 'MORT' })
+        .expect(400);
+      expect((res.body as Msg).message).toBe(
+        'La date de sortie est antérieure au dernier événement de reproduction',
+      );
+      await http()
+        .post(`/api/animals/${sow.id}/exit`)
+        .set(headers)
+        .send({ date: daysAgo(10), reason: 'MORT' })
+        .expect(200);
+      const list = await http().get('/api/breeding').set(headers).expect(200);
+      expect((list.body as Page<BreedingItem>).items[0]).toMatchObject({
+        status: 'ECHEC',
+      });
+      // after a weaning, a sale before it is refused too
+      const { sow: s2, rec } = await farrowedLitter(headers);
+      await http()
+        .post(`/api/breeding/${rec.id}/weaning`)
+        .set(headers)
+        .send({ date: daysAgo(2), weanedCount: 12 })
+        .expect(200);
+      await http()
+        .post(`/api/animals/${s2.id}/exit`)
+        .set(headers)
+        .send({ date: daysAgo(3), reason: 'VENDU' })
+        .expect(400);
+      await http()
+        .post(`/api/animals/${s2.id}/exit`)
+        .set(headers)
+        .send({ date: daysAgo(2), reason: 'VENDU' })
+        .expect(200);
+    });
+
+    it('the litter inherits the sow breed', async () => {
+      const { headers } = await actor('RESP_PORCIN');
+      const breed = await prisma.breed.create({
+        data: { organizationId: orgId, species: 'PORCIN', name: 'Landrace' },
+      });
+      const sow = await animal(headers, { breedId: breed.id });
+      const boar = await animal(headers, { category: 'VERRAT' });
+      const rec = await serve(headers, sow.id, boar.id);
+      const f = (await farrow(headers, rec.id).expect(200))
+        .body as BreedingItem;
+      const batch = (
+        await http()
+          .get(`/api/batches/${f.litterBatchId}`)
+          .set(headers)
+          .expect(200)
+      ).body as BatchItem & { breedId: string | null };
+      expect(batch.breedId).toBe(breed.id);
+    });
+
+    it('the database allows one open record per sow', async () => {
+      const { headers } = await actor('RESP_PORCIN');
+      const { sow, boar } = await pair(headers);
+      const rec = await serve(headers, sow.id, boar.id);
+      await expect(
+        prisma.breedingRecord.create({
+          data: {
+            farmId: farmA,
+            sowId: sow.id,
+            method: 'IA',
+            semenLabel: 'X',
+            serviceDate: new Date(daysAgo(1)),
+            expectedFarrowingDate: new Date(daysAhead(100)),
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'P2002' });
+      await http()
+        .post(`/api/breeding/${rec.id}/fail`)
+        .set(headers)
+        .send({ date: daysAgo(1) })
         .expect(200);
     });
   });

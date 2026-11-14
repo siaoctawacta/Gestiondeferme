@@ -273,16 +273,16 @@ export class BatchesService {
   }
 
   /**
-   * Creates a batch. Pass `tx` to create it inside the caller's transaction
+   * Creates a batch. Pass `opts.tx` to create it inside the caller's transaction
    * (hatching, farrowing): then the audit row and the capacity check share it.
-   * `motherAnimalId` (the sow of a farrowing) is not part of the public body.
+   * `opts.motherAnimalId` (the sow of a farrowing) is not part of the public body.
    */
   create(
     ctx: RequestContext,
     dto: CreateBatchDto,
-    tx?: Tx,
-    motherAnimalId?: string,
+    opts: { tx?: Tx; motherAnimalId?: string } = {},
   ): Promise<BatchItem> {
+    const { tx, motherAnimalId } = opts;
     if (tx) return this.createIn(tx, ctx, dto, motherAnimalId);
     return this.prisma.$transaction((t) =>
       this.createIn(t, ctx, dto, motherAnimalId),

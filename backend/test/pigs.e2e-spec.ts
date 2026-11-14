@@ -746,7 +746,11 @@ describe('Pig herd (e2e)', () => {
         CLOTURE: 1,
       });
       await http().get('/api/pig-herd?status=NOPE').set(headers).expect(400);
-      await http().get('/api/pig-herd?category=NOPE').set(headers).expect(400);
+      const bad = await http()
+        .get('/api/pig-herd?category=NOPE')
+        .set(headers)
+        .expect(400);
+      expect((bad.body as Msg).message).toBe('Catégorie invalide');
     });
 
     it('does not list avian lots or other farms and exports CSV', async () => {
