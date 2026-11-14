@@ -3,6 +3,7 @@ import { Navigate, useLocation } from 'react-router';
 import { Loader2, ShieldAlert } from 'lucide-react';
 import { useAuth } from '../../lib/auth';
 import type { ModuleKey } from '../../lib/modules';
+import { useDocumentTitle } from '../../lib/useDocumentTitle';
 import { Card } from '../ui/Card';
 
 export function FullScreenLoader() {
@@ -35,6 +36,7 @@ export function RequireAuth({ children }: { children: ReactNode }) {
 }
 
 export function MessageCard({ title, children }: { title: string; children: ReactNode }) {
+  useDocumentTitle(title);
   return (
     <Card className="mx-auto max-w-md p-8 text-center">
       <ShieldAlert aria-hidden className="mx-auto mb-3 size-8 text-muted-foreground" />

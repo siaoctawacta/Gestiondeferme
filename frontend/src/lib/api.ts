@@ -163,6 +163,19 @@ async function request<T>(
   return (text ? JSON.parse(text) : undefined) as T;
 }
 
+/** Hands a blob to the browser as a download (link attached to the page, object URL freed after 30 s). */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
+}
+
 export const api = {
   get: <T>(path: string, params?: Params, opts?: RequestOptions) =>
     request<T>('GET', path, { params, ...opts }),
@@ -175,11 +188,6 @@ export const api = {
   async download(path: string, params: Params | undefined, filename: string): Promise<void> {
     const res = await sendWithRetry('GET', path, { params });
     if (!res.ok) throw await toError(res);
-    const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    saveBlob(await res.blob(), filename);
   },
 };

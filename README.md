@@ -184,9 +184,10 @@ Points d'attention :
   Pour un essai local avec Docker, utilisez Chrome ou Firefox, ou mettez HTTPS devant. Pour tout autre accès
   (autre machine, nom de domaine) il faut un proxy HTTPS (Caddy, Traefik, nginx + Let's
   Encrypt…) devant le port 8080. L'API tourne avec `TRUST_PROXY=1` pour que la limitation de débit voie la
-  vraie adresse IP du client derrière nginx.
+  vraie adresse IP du client derrière nginx. Si un autre proxy inverse (Caddy, Traefik…) se trouve devant le
+  conteneur `web`, mettez `TRUST_PROXY=2` dans le `.env` racine (un proxy de plus dans la chaîne).
 - Pas de caractères `@ : / ?` dans `POSTGRES_PASSWORD` (il est inséré dans l'URL de connexion).
-- Volumes : `db-data` (base) et `api-uploads` (fichiers téléversés, `/app/uploads`).
+- Volumes : `agripilot_db-data` (base) et `agripilot_api-uploads` (fichiers téléversés, `/app/uploads`).
 - Commandes utiles : `docker compose logs -f api`, `docker compose down` (conserve les volumes).
 
 ## Dépannage
@@ -223,6 +224,7 @@ Points d'attention :
 | `JWT_SECRET` | oui | Voir ci-dessus |
 | `TOTP_ENC_KEY` | oui | Voir ci-dessus |
 | `WEB_ORIGIN` | oui | Adresse publique de l'application, ex. `http://localhost:8080` |
+| `TRUST_PROXY` | non | Nombre de proxys devant l'API : `1` par défaut (nginx du conteneur `web`), `2` si un autre proxy inverse (Caddy, Traefik…) est devant `web` |
 | `SEED_ADMIN_EMAIL`, `SEED_ADMIN_PASSWORD` | pour le seed | Utilisés uniquement par `docker compose run --rm api npx prisma db seed` |
 
 ### Autres
@@ -255,7 +257,17 @@ cluster et crée le rôle et les trois bases. Ailleurs, créez-les : `createdb -
 (migrations + seed de comptes jetables), compile et lance l'API sur le port 3100 (avec `NODE_ENV=test`, ce qui
 désactive la limitation de débit de connexion) et Vite sur le port 5273, exécute les scénarios Playwright, puis
 arrête les serveurs. Il régénère aussi les captures de `docs/reference/built/`. Il requiert le paquet
-`playwright` (installation globale ou locale), Chromium et **Node 22.18 ou plus récent** (exécution directe du TypeScript) ; `E2E_CHROMIUM_PATH` permet d'en indiquer un.
+`playwright` (cherché dans le projet, puis dans l'installation globale `npm root -g`), Chromium et **Node 22.18 ou plus récent** (exécution directe du TypeScript) ; `E2E_CHROMIUM_PATH` permet d'en indiquer un.
+`E2E_DATABASE_URL` remplace l'URL de la base e2e (le nom de la base doit rester `agripilot_e2e`).
+
+Sur une machine de développement ordinaire, installez Playwright une seule fois (sans toucher à `package.json`) :
+
+```bash
+cd frontend
+npm install --no-save playwright
+npx playwright install chromium
+npm run e2e
+```
 Les scénarios sont écrits avec `node:test` et `playwright` (pas `@playwright/test`).
 
 Scénarios : connexion et 2FA obligatoire (`auth.spec.ts`), site et bâtiments, droits de l'auditeur et
@@ -288,10 +300,10 @@ docker compose exec -T db pg_restore -U agripilot -d agripilot --clean --if-exis
 docker compose start api web
 
 # Fichiers téléversés (volume api-uploads)
-docker run --rm -v gestiondeferme_api-uploads:/data -v "$PWD":/backup alpine tar czf /backup/uploads.tgz -C /data .
+docker run --rm -v agripilot_api-uploads:/data -v "$PWD":/backup alpine tar czf /backup/uploads.tgz -C /data .
 ```
 
-Le nom du volume est préfixé par le nom du dossier du projet (`docker volume ls` pour le vérifier).
+Le nom du volume est préfixé par le nom du projet Compose, `agripilot` (`name:` dans `docker-compose.yml` ; `docker volume ls` pour le vérifier).
 Testez régulièrement une restauration sur une base de test.
 
 ## Structure du dépôt

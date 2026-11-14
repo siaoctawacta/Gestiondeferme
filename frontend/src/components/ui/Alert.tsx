@@ -1,7 +1,8 @@
 import type { HTMLAttributes } from 'react';
 
 const TONES = {
-  error: 'bg-destructive/10 text-destructive border-destructive/30',
+  // Text is a darker red than --destructive: 6:1 on the tinted background (4.0:1 with --destructive itself).
+  error: 'bg-destructive/10 text-[oklch(48%_0.2_25)] border-destructive/30',
   success: 'bg-primary-soft text-accent-foreground border-primary/30',
 } as const;
 

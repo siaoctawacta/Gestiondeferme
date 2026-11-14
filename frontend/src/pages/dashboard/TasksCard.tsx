@@ -3,6 +3,7 @@ import { Card } from '../../components/ui/Card';
 import { Pill, type PillTone } from '../../components/ui/Pill';
 import { EmptyData } from '../PageParts';
 import type { DashboardDto, Priority } from '../../lib/dashboard';
+import { formatDate } from '../../lib/format';
 
 const PRIORITY: Record<Priority, { label: string; tone: PillTone }> = {
   NORMALE: { label: 'Normale', tone: 'success' },
@@ -30,7 +31,7 @@ export function TasksCard({ tasks }: { tasks: DashboardDto['upcomingTasks'] }) {
               <tr key={t.id} className="border-t border-border">
                 <td className="truncate px-5 py-3 font-medium">{t.title}</td>
                 <td className="truncate px-5 py-3 text-muted-foreground">{t.assignee}</td>
-                <td className="px-5 py-3">{t.dueDate.slice(0, 10)}</td>
+                <td className="px-5 py-3">{formatDate(t.dueDate)}</td>
                 <td className="px-5 py-3"><Pill tone={PRIORITY[t.priority].tone}>{PRIORITY[t.priority].label}</Pill></td>
               </tr>
             ))}

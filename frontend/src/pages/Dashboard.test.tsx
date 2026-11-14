@@ -236,7 +236,7 @@ describe('Shell alert indicators', () => {
     shell(14);
     const sidebarLink = await screen.findByRole('link', { name: /^Alertes\s*14$/ });
     expect(sidebarLink).toBeInTheDocument();
-    const bell = document.querySelector('a[aria-label="Alertes"]')!;
+    const bell = screen.getByRole('link', { name: 'Alertes (14 ouvertes)' });
     expect(bell.querySelector('.bg-destructive')).not.toBeNull();
   });
 
@@ -302,6 +302,18 @@ describe('buildCsv', () => {
     expect(lines[1]).toBe('"Marge ""nette""";-1135000;"FCFA"');
     expect(lines[2]).toBe('"\'=SOMME(A1)";"";""');
     expect(csv.endsWith('\r\n')).toBe(true);
+  });
+
+  it('writes non-integers with a decimal comma and integers bare', () => {
+    const csv = buildCsv([
+      { label: 'Taux de mortalité', display: '', value: 3.6, unit: '%' },
+      { label: 'Marge', display: '', value: -2.5, unit: 'FCFA' },
+      { label: 'Œufs', display: '', value: 2480, unit: '' },
+    ]);
+    const lines = csv.slice(1).split('\r\n');
+    expect(lines[1]).toBe('"Taux de mortalité";3,6;"%"');
+    expect(lines[2]).toBe('"Marge";-2,5;"FCFA"');
+    expect(lines[3]).toBe('"Œufs";2480;""');
   });
 });
 

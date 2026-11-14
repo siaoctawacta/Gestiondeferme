@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { Copy } from 'lucide-react';
 import { useAuth, type TwoFactorSetup } from '../lib/auth';
+import { errorMessage } from './module/errorMessage';
 import { Alert } from './ui/Alert';
 import { Button } from './ui/Button';
 import { Field } from './ui/Field';
@@ -23,7 +24,7 @@ export function TwoFactorEnroll({ onFinished }: TwoFactorEnrollProps) {
 
   useEffect(() => {
     request.current ??= setupTwoFactor();
-    request.current.then(setSetup, (e: Error) => setError(e.message));
+    request.current.then(setSetup, (e: unknown) => setError(errorMessage(e)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -33,7 +34,7 @@ export function TwoFactorEnroll({ onFinished }: TwoFactorEnrollProps) {
     try {
       await fn();
     } catch (e) {
-      setError((e as Error).message);
+      setError(errorMessage(e));
     } finally {
       setBusy(false);
     }

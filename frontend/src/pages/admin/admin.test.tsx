@@ -123,6 +123,38 @@ describe('Users page', () => {
   });
 });
 
+describe('Users page, farm assignment', () => {
+  const fill = async (role: string) => {
+    mount(<Users />, (c) => {
+      if (c.url.startsWith('/api/farms')) return json(200, { items: [{ id: 'f1', name: 'Ferme A' }], total: 1, page: 1, pageSize: 200 });
+      if (c.method === 'POST' && c.url === '/api/users') return json(201, {});
+      return c.url.startsWith('/api/users') ? json(200, USERS) : undefined;
+    });
+    await screen.findByText('Koffi Mensah');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Utilisateurs' });
+    await user.type(within(dialog).getByLabelText('Nom'), 'Ama');
+    await user.type(within(dialog).getByLabelText('E-mail'), 'ama@x.tg');
+    await user.selectOptions(within(dialog).getByLabelText('Rôle'), role);
+    await user.type(within(dialog).getByLabelText('Mot de passe'), 'un-long-secret');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    return dialog;
+  };
+
+  it('requires at least one farm for a farm-bound role', async () => {
+    const dialog = await fill('Comptable');
+    expect(await within(dialog).findByText(/sélectionnez au moins une ferme/)).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'POST' && c.url === '/api/users')).toBe(false);
+  });
+
+  it.each(['Super Administrateur', 'Propriétaire / Direction', 'Auditeur'])('lets %s be created without a farm', async (role) => {
+    await fill(role);
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === '/api/users')).toBe(true));
+    expect(calls.find((c) => c.method === 'POST' && c.url === '/api/users')?.body).toMatchObject({ farmIds: [] });
+  });
+});
+
 describe('Settings page', () => {
   const SETTINGS = {
     currency: 'FCFA', mortalityDailyPct: 0.5, mortalityCumulPct: 3, consumptionDeviationPct: 25,
@@ -155,6 +187,20 @@ describe('Settings page', () => {
     fail = true;
     await user.click(within(card).getByRole('button', { name: 'Enregistrer' }));
     expect(await within(card).findByText('La durée de gestation doit être un nombre supérieur à 0')).toBeInTheDocument();
+  });
+
+  it('does not send a cleared number field as 0', async () => {
+    mount(<Settings />, (c) => {
+      if (c.method === 'GET' && c.url === '/api/settings') return json(200, SETTINGS);
+      if (c.method === 'PUT') return json(200, {});
+      return undefined;
+    });
+    const card = (await screen.findByRole('heading', { name: 'Reproduction' })).closest('form')!;
+    const user = userEvent.setup();
+    await user.clear(within(card).getByLabelText('Durée de gestation (jours)'));
+    await user.click(within(card).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(card).findByText(/Durée de gestation \(jours\) » est requis/)).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
   });
 
   it('sends the legal fields as one object', async () => {

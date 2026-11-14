@@ -1,10 +1,30 @@
+import { execFileSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import { createRequire } from 'node:module';
+import { join } from 'node:path';
 import type { Browser, BrowserContext, Page } from 'playwright';
 import { ADMINS, API_URL, PASSWORD, WEB_URL } from './config.ts';
 
-// ESM imports ignore NODE_PATH; require() honours it, so a global Playwright install works.
-const { chromium } = createRequire(import.meta.url)('playwright') as typeof import('playwright');
+// ESM imports ignore NODE_PATH; require() honours it. Look in the project first, then in the global root.
+function loadPlaywright(): typeof import('playwright') {
+  const req = createRequire(import.meta.url);
+  try {
+    return req('playwright');
+  } catch {
+    /* not installed in the project */
+  }
+  try {
+    const root = execFileSync('npm', ['root', '-g'], { encoding: 'utf8' }).trim();
+    return createRequire(join(root, 'noop.js'))('playwright');
+  } catch {
+    /* not installed globally either */
+  }
+  throw new Error(
+    "Playwright introuvable / Playwright not found. Install it from frontend/ (without touching package.json):\n" +
+      '  npm install --no-save playwright && npx playwright install chromium',
+  );
+}
+const { chromium } = loadPlaywright();
 
 export { PASSWORD, WEB_URL };
 export type AdminKey = keyof typeof ADMINS;

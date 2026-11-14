@@ -25,6 +25,7 @@ describe('authentification et double authentification obligatoire', () => {
     await page.getByRole('button', { name: 'Se connecter' }).click();
     await page.getByText(/incorrect|invalide/i).first().waitFor();
     assert.match(page.url(), /\/login$/);
+    assert.equal(await page.title(), 'Connexion — AgriPilot');
   });
 
   it('le premier accès du super admin impose l’activation de la 2FA, puis affiche le tableau de bord', async () => {

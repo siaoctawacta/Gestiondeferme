@@ -60,7 +60,7 @@ if [ -z "$DATABASE_URL" ] || ! DATABASE_URL="$DATABASE_URL" node -e 'new URL(pro
     DATABASE_URL=\"postgresql://agripilot:agripilot@localhost:5432/agripilot\"
   (voir README, section « Base de données »)"
 fi
-if command -v pg_ctlcluster >/dev/null 2>&1; then
+if command -v pg_ctlcluster >/dev/null 2>&1 && { [ "$(id -u)" = "0" ] || [ "${AGRIPILOT_DEV_DB:-}" = "1" ]; }; then
   say "Démarrage de PostgreSQL local / Starting local PostgreSQL (scripts/dev-db.sh)"
   "$ROOT/scripts/dev-db.sh"
 else

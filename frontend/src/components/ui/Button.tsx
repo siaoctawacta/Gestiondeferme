@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes } from 'react';
+import type { ComponentProps } from 'react';
 
 const VARIANTS = {
   primary: 'bg-primary text-primary-foreground hover:bg-primary/90',
@@ -12,7 +12,7 @@ const SIZES = {
   sm: 'h-8 px-3 text-xs gap-1.5',
 } as const;
 
-export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
+export interface ButtonProps extends ComponentProps<'button'> {
   variant?: keyof typeof VARIANTS;
   size?: keyof typeof SIZES;
 }

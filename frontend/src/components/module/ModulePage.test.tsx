@@ -322,3 +322,42 @@ describe('ModulePage with the batiments config', () => {
     await waitFor(() => expect(listCalls().filter((c) => c.url.includes('page=1')).length).toBeGreaterThan(1));
   });
 });
+
+describe('ModulePage keyboard accessibility', () => {
+  it('exposes the tabs as a tablist with arrow-key navigation and a labelled tabpanel', async () => {
+    setup();
+    await screen.findByText('Poulailler A');
+    const user = userEvent.setup();
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual(['Bâtiments', 'Zones']);
+    const panel = screen.getByRole('tabpanel');
+    expect(tabs[0]).toHaveAttribute('aria-controls', panel.id);
+    expect(panel).toHaveAttribute('aria-labelledby', tabs[0].id);
+    expect(tabs[1]).toHaveAttribute('tabindex', '-1');
+
+    tabs[0].focus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getAllByRole('tab')[1]).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByRole('tab')[1]).toHaveFocus();
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', screen.getAllByRole('tab')[1].id);
+    await user.keyboard('{Home}');
+    expect(screen.getAllByRole('tab')[0]).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('moves focus into the export menu, walks it with arrows, and Escape restores focus', async () => {
+    setup();
+    await screen.findByText('Poulailler A');
+    const user = userEvent.setup();
+    const trigger = screen.getByRole('button', { name: 'Exporter' });
+    await user.click(trigger);
+    const items = screen.getAllByRole('menuitem');
+    expect(items[0]).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(items[1]).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(items[0]).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+});

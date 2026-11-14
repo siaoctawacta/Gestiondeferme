@@ -88,6 +88,7 @@ describe('rendu : captures et comparaison avec la référence', () => {
     await page.getByRole('row', { name: /Poulailler A/ }).waitFor();
     await settle(page);
     await page.screenshot({ path: join(BUILT, 'm_batiments.png') });
+    assert.equal(await page.title(), 'Bâtiments — AgriPilot');
     assert.deepEqual(foreignRequests, [], 'every asset (fonts included) is served locally');
   });
 

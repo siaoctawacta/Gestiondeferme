@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useId, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -11,17 +11,19 @@ import { Card } from '../ui/Card';
 import { SearchInput } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { ConfirmDialog } from './ConfirmDialog';
-import { DataTable, type SortState, type TableAction } from './DataTable';
+import { DataTable, type TableAction } from './DataTable';
+import { ErrorRetry } from './ErrorRetry';
 import { errorMessage } from './errorMessage';
 import { ExportMenu } from './ExportMenu';
 import { PageHeader } from './PageHeader';
+import { Pagination, pageCount } from './Pagination';
 import { RecordDialog } from './RecordDialog';
 import { StatTiles, type StatTile } from './StatTiles';
 import type { FilterDef, ListResponse, ModuleConfig } from './types';
 import { useEndpointOptions } from './useEndpointOptions';
+import { useListState } from './useListState';
 
 const PAGE_SIZE = 25;
-const SEARCH_DEBOUNCE_MS = 300;
 
 type Notice = { tone: 'success' | 'error'; message: string };
 
@@ -47,28 +49,15 @@ export function ModulePage<T extends { id: string }>({ config }: ModulePageProps
 function ModuleView<T extends { id: string }>({ config, embedded }: { config: ModuleConfig<T>; embedded: boolean }) {
   const { can, farmId, reload } = useAuth();
   const queryClient = useQueryClient();
+  const tabBase = useId();
 
-  const [searchInput, setSearchInput] = useState('');
-  const [search, setSearch] = useState('');
-  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
-  const [sort, setSort] = useState<SortState | null>(null);
-  const [page, setPage] = useState(1);
+  const { searchInput, setSearchInput, filters: filterValues, setFilter, sort, toggleSort, page, setPage, params, listParams } =
+    useListState(PAGE_SIZE);
   const [tab, setTab] = useState('main');
   const [editing, setEditing] = useState<T | 'new' | null>(null);
   const [deleting, setDeleting] = useState<T | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const onMain = tab === 'main';
-
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      const next = searchInput.trim();
-      setSearch((prev) => {
-        if (prev !== next) setPage(1);
-        return next;
-      });
-    }, SEARCH_DEBOUNCE_MS);
-    return () => clearTimeout(timer);
-  }, [searchInput]);
 
   useEffect(() => {
     if (!notice || notice.tone === 'error') return;
@@ -86,13 +75,6 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
       : []),
     ...(config.filters ?? []),
   ];
-
-  const params: Record<string, string | undefined> = {
-    search: search || undefined,
-    ...Object.fromEntries(filters.map((f) => [f.param, filterValues[f.param] || undefined])),
-    sort: sort ? `${sort.key}:${sort.dir}` : undefined,
-  };
-  const listParams = { ...params, page, pageSize: PAGE_SIZE };
 
   const list = useFarmQuery<ListResponse<T>>(
     [config.endpoint, 'list', listParams],
@@ -148,13 +130,8 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
       },
     }));
 
-  const onSort = (key: string) => {
-    setPage(1);
-    setSort((s) => (s?.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
-  };
-
   const total = list.data?.total ?? 0;
-  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const pages = pageCount(total, PAGE_SIZE);
 
   // The last row of the last page was deleted: go back to the new last page.
   useEffect(() => {
@@ -209,15 +186,14 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
               key={f.param}
               def={f}
               value={filterValues[f.param] ?? ''}
-              onChange={(v) => { setFilterValues((s) => ({ ...s, [f.param]: v })); setPage(1); }}
+              onChange={(v) => setFilter(f.param, v)}
             />
           ))}
         </div>
 
         {list.isError ? (
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border p-4">
-            <Alert className="flex-1">{errorMessage(list.error)}</Alert>
-            <Button variant="outline" onClick={() => list.refetch()}>Réessayer</Button>
+          <div className="border-t border-border p-4">
+            <ErrorRetry message={errorMessage(list.error)} onRetry={() => list.refetch()} />
           </div>
         ) : (
           <div
@@ -231,7 +207,7 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
               statuses={config.statuses}
               statusKey={config.statusKey}
               sort={sort}
-              onSort={onSort}
+              onSort={toggleSort}
               detailPath={config.detailPath}
               qr={config.qr}
               actions={tableActions}
@@ -241,15 +217,7 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
           </div>
         )}
 
-        {total > PAGE_SIZE && (
-          <div className="flex items-center justify-between border-t border-border p-4 text-sm">
-            <span className="text-muted-foreground">Page {page} sur {pages}</span>
-            <div className="flex gap-2">
-              <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>Précédent</Button>
-              <Button variant="outline" size="sm" disabled={page >= pages} onClick={() => setPage(page + 1)}>Suivant</Button>
-            </div>
-          </div>
-        )}
+        <Pagination page={page} total={total} pageSize={PAGE_SIZE} onPage={setPage} />
       </Card>
 
       {editing && (
@@ -286,17 +254,35 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
 
   const extraTabs = (config.tabs ?? []).filter((t) => can(t.config.slug, 'read'));
   const activeTab = extraTabs.find((t) => t.key === tab);
+  const allTabs = [{ key: 'main', label: config.title }, ...extraTabs];
+  const tabId = (key: string) => `${tabBase}-tab-${key}`;
+  const panelId = (key: string) => `${tabBase}-panel-${key}`;
+  const onTabKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    const at = allTabs.findIndex((t) => t.key === tab);
+    let next: number | null = null;
+    if (e.key === 'ArrowRight') next = (at + 1) % allTabs.length;
+    else if (e.key === 'ArrowLeft') next = (at - 1 + allTabs.length) % allTabs.length;
+    else if (e.key === 'Home') next = 0;
+    else if (e.key === 'End') next = allTabs.length - 1;
+    if (next === null) return;
+    e.preventDefault();
+    setTab(allTabs[next].key);
+    document.getElementById(tabId(allTabs[next].key))?.focus();
+  };
   return (
     <>
       <PageHeader group={config.group} title={config.title} subtitle={config.subtitle} actions={onMain ? actions : undefined} />
       {extraTabs.length > 0 && (
-        <div role="tablist" className="mb-6 inline-flex gap-1 rounded-full bg-muted p-1">
-          {[{ key: 'main', label: config.title }, ...extraTabs].map((t) => (
+        <div role="tablist" onKeyDown={onTabKeyDown} className="mb-6 inline-flex gap-1 rounded-full bg-muted p-1">
+          {allTabs.map((t) => (
             <button
               key={t.key}
+              id={tabId(t.key)}
               type="button"
               role="tab"
               aria-selected={tab === t.key}
+              aria-controls={panelId(t.key)}
+              tabIndex={tab === t.key ? 0 : -1}
               onClick={() => setTab(t.key)}
               className={`rounded-full px-4 py-1.5 text-sm font-medium transition-colors ${
                 tab === t.key ? 'bg-card text-foreground shadow-card' : 'text-muted-foreground hover:text-foreground'
@@ -307,14 +293,20 @@ function ModuleView<T extends { id: string }>({ config, embedded }: { config: Mo
           ))}
         </div>
       )}
-      {activeTab ? (
-        <ModuleView key={activeTab.key} config={activeTab.config} embedded />
-      ) : (
-        <>
-          <StatTiles tiles={tiles} />
-          {body}
-        </>
-      )}
+      <div
+        id={panelId(activeTab ? activeTab.key : 'main')}
+        role={extraTabs.length > 0 ? 'tabpanel' : undefined}
+        aria-labelledby={extraTabs.length > 0 ? tabId(activeTab ? activeTab.key : 'main') : undefined}
+      >
+        {activeTab ? (
+          <ModuleView key={activeTab.key} config={activeTab.config} embedded />
+        ) : (
+          <>
+            <StatTiles tiles={tiles} />
+            {body}
+          </>
+        )}
+      </div>
     </>
   );
 }

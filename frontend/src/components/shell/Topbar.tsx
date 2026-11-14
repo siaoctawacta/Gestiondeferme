@@ -71,7 +71,7 @@ export function Topbar({ permissions, alertCount, onMenu }: TopbarProps) {
 
       <Link
         to="/alertes"
-        aria-label="Alertes"
+        aria-label={alertCount > 0 ? `Alertes (${alertCount} ${alertCount > 1 ? 'ouvertes' : 'ouverte'})` : 'Alertes'}
         className="relative flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-card"
       >
         <Bell className="size-4" />

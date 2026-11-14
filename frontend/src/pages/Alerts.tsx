@@ -1,11 +1,11 @@
 import { AlertTriangle, CircleAlert } from 'lucide-react';
-import { NAV } from '../components/shell/nav';
+import { MODULE_LABEL } from '../components/shell/nav';
+import { ErrorRetry } from '../components/module/ErrorRetry';
 import { errorMessage } from '../components/module/errorMessage';
+import { PageHeader } from '../components/module/PageHeader';
 import { Card } from '../components/ui/Card';
 import { useAlerts } from '../lib/alerts';
-import { EmptyData, ErrorRetry, PageTitle, Skeleton } from './PageParts';
-
-const MODULE_LABEL = new Map(NAV.flatMap((g) => g.items).map((i) => [i.slug as string, i.label]));
+import { EmptyData, Skeleton } from './PageParts';
 
 export default function Alerts() {
   const query = useAlerts();
@@ -13,7 +13,7 @@ export default function Alerts() {
 
   return (
     <div className="mx-auto w-full max-w-[1440px]">
-      <PageTitle
+      <PageHeader
         title="Alertes & notifications"
         subtitle={data ? `${data.total} ${data.total > 1 ? 'alertes ouvertes' : 'alerte ouverte'}, calculées automatiquement à partir de vos données.` : undefined}
       />

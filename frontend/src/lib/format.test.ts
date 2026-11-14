@@ -1,4 +1,4 @@
-import { formatDate, formatMoney, formatNumber, formatPct } from './format';
+import { formatDate, formatDateFr, formatDateTime, formatDateTimeFr, formatMoney, formatNumber, formatPct } from './format';
 
 describe('format', () => {
   it('formats numbers with a no-break space as thousands separator', () => {
@@ -12,5 +12,13 @@ describe('format', () => {
   });
   it('formats ISO dates as YYYY-MM-DD', () => {
     expect(formatDate('2026-10-22T00:00:00Z')).toBe('2026-10-22');
+  });
+  it('formats local dates and times as dd/mm/yyyy [hh:mm]', () => {
+    const d = new Date(2026, 10, 4, 9, 5);
+    expect(formatDateFr(d)).toBe('04/11/2026');
+    expect(formatDateTime(d)).toBe('04/11/2026 09:05');
+  });
+  it('returns a dash for an invalid date instead of throwing', () => {
+    for (const f of [formatDate, formatDateFr, formatDateTime, formatDateTimeFr]) expect(f('pas une date')).toBe('—');
   });
 });

@@ -4,7 +4,8 @@ export const API_PORT = 3100;
 export const WEB_PORT = 5273;
 export const API_URL = `http://localhost:${API_PORT}`;
 export const WEB_URL = `http://localhost:${WEB_PORT}`;
-export const DATABASE_URL = 'postgresql://agripilot:agripilot@localhost:5432/agripilot_e2e';
+// Overridable (E2E_DATABASE_URL), but the runner refuses anything not named agripilot_e2e.
+export const DATABASE_URL = process.env.E2E_DATABASE_URL || 'postgresql://agripilot:agripilot@localhost:5432/agripilot_e2e';
 
 export const PASSWORD = 'E2e-Throwaway-Passw0rd!';
 // One seeded SUPER_ADMIN per spec file, so specs never depend on each other's 2FA state.

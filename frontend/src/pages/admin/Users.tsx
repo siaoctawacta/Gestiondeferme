@@ -3,13 +3,13 @@ import { KeyRound, ShieldOff } from 'lucide-react';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { errorMessage } from '../../components/module/errorMessage';
 import { ModulePage } from '../../components/module/ModulePage';
-import type { ModuleConfig } from '../../components/module/types';
+import type { FormMap, FormMode, ModuleConfig } from '../../components/module/types';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { Input } from '../../components/ui/Input';
 import { Pill } from '../../components/ui/Pill';
-import { api } from '../../lib/api';
+import { ApiError, api } from '../../lib/api';
 import { formatDateTimeFr } from '../../lib/format';
 import { ROLE_LABELS, ROLE_OPTIONS } from '../../lib/roles';
 
@@ -60,6 +60,22 @@ function ResetLinkDialog({ state, onClose }: { state: LinkState; onClose: () => 
   );
 }
 
+// Roles that work across farms: every other role needs at least one assigned farm, or it sees nothing.
+const FARMLESS_ROLES = ['SUPER_ADMIN', 'PROPRIETAIRE', 'AUDITEUR'];
+
+function toPayload(values: FormMap, mode: FormMode): unknown {
+  const role = String(values.role);
+  const farmIds = values.farmIds as string[];
+  if (!FARMLESS_ROLES.includes(role) && farmIds.length === 0) {
+    // The form dialog shows the message of an ApiError.
+    throw new ApiError(400, `Le champ « Fermes » est requis : sélectionnez au moins une ferme pour le rôle « ${ROLE_LABELS[role] ?? role} »`);
+  }
+  const common = { name: String(values.name).trim(), role, farmIds };
+  return mode === 'create'
+    ? { ...common, email: String(values.email).trim(), password: values.password }
+    : { ...common, active: values.active };
+}
+
 export const users: ModuleConfig<User> = {
   slug: 'utilisateurs',
   group: 'Administration',
@@ -92,6 +108,7 @@ export const users: ModuleConfig<User> = {
     { name: 'password', label: 'Mot de passe', type: 'password', required: true, minLength: 10, only: 'create' },
     { name: 'active', label: 'Compte actif', type: 'checkbox', only: 'update' },
   ],
+  toPayload,
   toForm: (u) => ({ name: u.name, role: u.role, active: u.active, farmIds: u.farms.map((f) => f.id) }),
   rowLabel: (u) => u.name,
 };

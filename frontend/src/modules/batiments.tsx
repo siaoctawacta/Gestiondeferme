@@ -72,7 +72,7 @@ export const batiments: ModuleConfig<Building> = {
       key: 'occupationRate',
       header: 'TAUX OCC.',
       render: (b) => (
-        <Pill tone={b.occupationRate >= 90 ? 'warning' : b.occupationRate === 0 ? 'neutral' : 'success'}>
+        <Pill strong tone={b.occupationRate >= 90 ? 'warning' : b.occupationRate === 0 ? 'neutral' : 'success'}>
           {b.occupationRate}%
         </Pill>
       ),

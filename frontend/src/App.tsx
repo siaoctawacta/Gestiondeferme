@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
-import { BrowserRouter, Route, Routes } from 'react-router';
+import { BrowserRouter, Route, Routes, useLocation } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAlerts } from './lib/alerts';
 import { AuthProvider, useAuth } from './lib/auth';
 import { AppLayout } from './components/shell/AppLayout';
 import { FarmSwitcher } from './components/shell/FarmSwitcher';
-import { RequireAuth, RequirePermission } from './components/shell/guards';
+import { MessageCard, RequireAuth, RequirePermission } from './components/shell/guards';
 import Account from './pages/Account';
 import Alerts from './pages/Alerts';
 import Audit from './pages/Audit';
@@ -24,11 +24,19 @@ const queryClient = new QueryClient({
 });
 
 export function Shell({ children }: { children: ReactNode }) {
-  const { permissions } = useAuth();
+  const { permissions, farmId, canSeeAllFarms } = useAuth();
+  const { pathname } = useLocation();
   const alerts = useAlerts();
+  // Farm data queries stay disabled without a farm: say so instead of showing skeletons forever.
+  // The account page does not depend on a farm and stays reachable.
+  const noFarm = farmId === null && !canSeeAllFarms && pathname !== '/compte';
   return (
     <AppLayout permissions={permissions!} alertCount={alerts.data?.total ?? 0} sidebarFooter={<FarmSwitcher />}>
-      {children}
+      {noFarm ? (
+        <MessageCard title="Aucune ferme">Aucune ferme ne vous est attribuée. Contactez un administrateur.</MessageCard>
+      ) : (
+        children
+      )}
     </AppLayout>
   );
 }

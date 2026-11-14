@@ -8,6 +8,10 @@ export default defineConfig(({ mode }) => {
   const apiTarget = loadEnv(mode, '.', 'VITE_').VITE_API_TARGET ?? 'http://localhost:3000';
   return {
     plugins: [react(), tailwindcss()],
+    build: {
+      // The CSP (nginx.conf) only allows fonts from the same origin: never inline them as data: URIs.
+      assetsInlineLimit: (file: string) => (/\.woff2?$/.test(file) ? false : undefined),
+    },
     server: {
       port: 5173,
       proxy: { '/api': apiTarget },

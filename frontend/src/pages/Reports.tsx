@@ -1,14 +1,17 @@
 import { Download, Printer } from 'lucide-react';
 import { api } from '../lib/api';
 import { rateOrDash, type DashboardDto } from '../lib/dashboard';
-import { formatMoney, formatNumber } from '../lib/format';
+import { saveBlob } from '../lib/api';
+import { formatDate, formatDateFr, formatMoney, formatNumber } from '../lib/format';
 import { useFarmQuery } from '../lib/query';
+import { ErrorRetry } from '../components/module/ErrorRetry';
 import { errorMessage } from '../components/module/errorMessage';
+import { PageHeader } from '../components/module/PageHeader';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Table, TD, TH, THead, TR } from '../components/ui/Table';
 import { buildCsv, type IndicatorRow } from './reportCsv';
-import { ErrorRetry, PageTitle, Skeleton } from './PageParts';
+import { Skeleton } from './PageParts';
 
 function indicators(d: DashboardDto): IndicatorRow[] {
   const num = (label: string, value: number, unit = ''): IndicatorRow => ({
@@ -33,17 +36,8 @@ function indicators(d: DashboardDto): IndicatorRow[] {
   ];
 }
 
-const frDate = (d: Date) =>
-  `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
-
 function downloadCsv(rows: IndicatorRow[], today: Date) {
-  const blob = new Blob([buildCsv(rows)], { type: 'text/csv;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `rapport-${today.toISOString().slice(0, 10)}.csv`;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  saveBlob(new Blob([buildCsv(rows)], { type: 'text/csv;charset=utf-8' }), `rapport-${formatDate(today)}.csv`);
 }
 
 export default function Reports() {
@@ -54,9 +48,9 @@ export default function Reports() {
 
   return (
     <div className="mx-auto w-full max-w-[1440px]">
-      <PageTitle
+      <PageHeader
         title="Rapports"
-        subtitle={`Synthèse au ${frDate(today)}`}
+        subtitle={`Synthèse au ${formatDateFr(today)}`}
         actions={
           <>
             <Button variant="outline" disabled={!d} onClick={() => downloadCsv(rows, today)}>

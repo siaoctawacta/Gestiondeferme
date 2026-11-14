@@ -9,10 +9,10 @@ const TONES = {
 
 export type PillTone = keyof typeof TONES;
 
-export function Pill({ tone = 'neutral', children }: { tone?: PillTone; children: ReactNode }) {
+export function Pill({ tone = 'neutral', strong = false, children }: { tone?: PillTone; /** Semibold text (the occupation-rate pill). */ strong?: boolean; children: ReactNode }) {
   return (
     <span
-      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs font-medium ${TONES[tone]}`}
+      className={`inline-flex items-center gap-1 rounded-full px-2.5 py-0.5 text-xs ${strong ? 'font-semibold' : 'font-medium'} ${TONES[tone]}`}
     >
       <span aria-hidden className="size-1.5 rounded-full bg-current" />
       {children}

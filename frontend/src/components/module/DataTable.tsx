@@ -26,8 +26,9 @@ export interface DataTableProps<T extends { id: string }> {
   loading: boolean;
   statuses?: StatusDef[];
   statusKey?: keyof T;
-  sort: SortState | null;
-  onSort: (key: string) => void;
+  /** Only needed when a column is `sortable`. */
+  sort?: SortState | null;
+  onSort?: (key: string) => void;
   detailPath?: (row: T) => string;
   qr?: boolean;
   actions?: TableAction<T>[];
@@ -79,7 +80,7 @@ export function DataTable<T extends { id: string }>({
                 aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : undefined}
               >
                 {c.sortable ? (
-                  <button type="button" onClick={() => onSort(c.key)} className="inline-flex items-center gap-1 uppercase tracking-wider">
+                  <button type="button" onClick={() => onSort?.(c.key)} className="inline-flex items-center gap-1 uppercase tracking-wider">
                     {c.header}
                     {active && (sort!.dir === 'asc' ? <ChevronUp aria-hidden className="size-3" /> : <ChevronDown aria-hidden className="size-3" />)}
                   </button>
