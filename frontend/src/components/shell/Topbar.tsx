@@ -29,7 +29,7 @@ export function Topbar({ permissions, alertCount, onMenu }: TopbarProps) {
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-[65px] items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur md:px-8">
+    <header className="sticky top-0 z-30 flex print:hidden h-[65px] items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur md:px-8">
       <button
         type="button"
         aria-label="Ouvrir le menu"
