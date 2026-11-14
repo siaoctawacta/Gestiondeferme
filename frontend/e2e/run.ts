@@ -50,6 +50,10 @@ process.on('SIGINT', () => {
 
 let code = 1;
 try {
+  // The reset below drops the whole schema: never let it near any other database.
+  if (new URL(BACKEND_ENV.DATABASE_URL).pathname !== '/agripilot_e2e') {
+    throw new Error('Refusing to reset: the e2e database must be named exactly agripilot_e2e');
+  }
   // Fresh database: migrate, wipe, seed one SUPER_ADMIN per spec.
   sh(
     'node',

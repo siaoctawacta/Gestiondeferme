@@ -43,7 +43,6 @@ if [ -z "$SEED_ADMIN_EMAIL" ] || [ -z "$SEED_ADMIN_PASSWORD" ]; then
   SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (min. 10 characters) are required: set them in the
   environment or in backend/.env (see the example above)."
 fi
-export SEED_ADMIN_EMAIL SEED_ADMIN_PASSWORD
 
 # --- dependencies ----------------------------------------------------------------------
 for dir in "$BACKEND" "$FRONTEND"; do
@@ -55,6 +54,12 @@ done
 
 # --- database --------------------------------------------------------------------------
 DATABASE_URL="${DATABASE_URL:-$(env_value DATABASE_URL)}"
+if [ -z "$DATABASE_URL" ] || ! DATABASE_URL="$DATABASE_URL" node -e 'new URL(process.env.DATABASE_URL)' 2>/dev/null; then
+  die "DATABASE_URL est vide ou invalide dans backend/.env / DATABASE_URL is empty or invalid.
+  Format attendu / Expected format :
+    DATABASE_URL=\"postgresql://agripilot:agripilot@localhost:5432/agripilot\"
+  (voir README, section « Base de données »)"
+fi
 if command -v pg_ctlcluster >/dev/null 2>&1; then
   say "Démarrage de PostgreSQL local / Starting local PostgreSQL (scripts/dev-db.sh)"
   "$ROOT/scripts/dev-db.sh"
@@ -67,19 +72,31 @@ else
     s.on("error", () => process.exit(1));
     s.on("timeout", () => process.exit(1));
   '; then
-    die "PostgreSQL est injoignable (DATABASE_URL de backend/.env) / PostgreSQL is not reachable.
+    die "PostgreSQL est injoignable à l'adresse de DATABASE_URL (backend/.env) / PostgreSQL is not reachable.
   Démarrez-le avec Docker / Start one with Docker:
     docker run -d --name agripilot-db -p 5432:5432 \\
       -e POSTGRES_USER=agripilot -e POSTGRES_PASSWORD=agripilot -e POSTGRES_DB=agripilot \\
       -v agripilot-db:/var/lib/postgresql/data postgres:16
-  puis relancez ce script / then run this script again."
+  Port 5432 déjà pris ? Utilisez -p 5433:5432 et mettez 5433 dans DATABASE_URL.
+  Autres options (Postgres.app, Homebrew, Windows, base hébergée) : README, section « Base de données ».
+  Puis relancez ce script / then run this script again."
   fi
 fi
 
 say "Migrations / Migrations"
-(cd "$BACKEND" && npx prisma migrate deploy)
+if ! (cd "$BACKEND" && npx prisma migrate deploy); then
+  die "Les migrations ont échoué / Migrations failed.
+  Cause probable : le rôle, le mot de passe ou la base de DATABASE_URL ne correspondent pas au serveur
+  PostgreSQL (erreur « Authentication failed » / « credentials ... are not valid » ou « database does not exist »).
+  Corrigez avec psql (adaptez le mot de passe à celui de DATABASE_URL) :
+    psql postgres -c \"CREATE ROLE agripilot WITH LOGIN PASSWORD 'agripilot' CREATEDB;\"
+    psql postgres -c \"CREATE DATABASE agripilot OWNER agripilot;\"
+  Le rôle existe déjà avec un autre mot de passe ?
+    psql postgres -c \"ALTER ROLE agripilot WITH LOGIN PASSWORD 'agripilot';\"
+  Détails et autres cas (Docker, Windows, base hébergée) : README, sections « Base de données » et « Dépannage »."
+fi
 say "Administrateur initial / Seeding the first administrator"
-(cd "$BACKEND" && npx prisma db seed)
+(cd "$BACKEND" && SEED_ADMIN_EMAIL="$SEED_ADMIN_EMAIL" SEED_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" npx prisma db seed)
 
 # --- servers ---------------------------------------------------------------------------
 set -m # each background job gets its own process group, so Ctrl-C can stop whole trees
@@ -99,5 +116,5 @@ API_PID=$!
 (cd "$FRONTEND" && exec npm run dev) &
 WEB_PID=$!
 echo "Ouvrez / Open http://localhost:5173 — Ctrl-C pour arrêter / to stop."
-# Return as soon as either server dies; the EXIT trap then stops the other one.
-wait -n
+# Return as soon as either server dies (bash 3.2 compatible: no `wait -n`); the EXIT trap stops the other.
+while kill -0 "$API_PID" 2>/dev/null && kill -0 "$WEB_PID" 2>/dev/null; do sleep 1; done

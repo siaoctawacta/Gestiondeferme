@@ -14,6 +14,11 @@ function loadKey(): Buffer {
   const raw = process.env.TOTP_ENC_KEY?.trim();
   if (!raw)
     throw new Error('TOTP_ENC_KEY must be set (32 bytes, base64 or hex)');
+  if (raw.startsWith('change-me')) {
+    throw new Error(
+      'TOTP_ENC_KEY is still the placeholder: generate a real one (openssl rand -base64 32)',
+    );
+  }
   const key = /^[0-9a-fA-F]{64}$/.test(raw)
     ? Buffer.from(raw, 'hex')
     : Buffer.from(raw, 'base64');

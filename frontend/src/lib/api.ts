@@ -63,7 +63,10 @@ function buildUrl(path: string, params?: Params): string {
   return `${BASE}${path}${q ? `?${q}` : ''}`;
 }
 
+const UNREACHABLE = "Le serveur est injoignable. Vérifiez que l'API est démarrée, puis réessayez.";
+
 async function toError(res: Response): Promise<ApiError> {
+  if (res.status === 502 || res.status === 503 || res.status === 504) return new ApiError(res.status, UNREACHABLE);
   let body: Record<string, unknown> | undefined;
   try {
     body = await res.json();
@@ -94,6 +97,8 @@ function send(
     headers,
     credentials: 'include',
     body: body === undefined ? undefined : JSON.stringify(body),
+  }).catch(() => {
+    throw new ApiError(0, UNREACHABLE);
   });
 }
 

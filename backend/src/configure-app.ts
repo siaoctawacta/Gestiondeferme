@@ -5,12 +5,21 @@ import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
 import { assertEncryptionKey } from './auth/crypto';
 
-/** Shared by main.ts and the e2e test app so both behave identically. */
-export function configureApp(app: INestApplication): void {
-  const secret = process.env.JWT_SECRET;
+/** Fail-fast check; also rejects the placeholder shipped in .env.example. */
+export function assertJwtSecret(secret: string | undefined): void {
   if (!secret || secret.length < 32) {
     throw new Error('JWT_SECRET must be set and at least 32 characters long');
   }
+  if (secret.startsWith('change-me')) {
+    throw new Error(
+      'JWT_SECRET is still the placeholder: generate a real one (openssl rand -base64 48)',
+    );
+  }
+}
+
+/** Shared by main.ts and the e2e test app so both behave identically. */
+export function configureApp(app: INestApplication): void {
+  assertJwtSecret(process.env.JWT_SECRET);
   assertEncryptionKey();
   const webOrigin = process.env.WEB_ORIGIN;
   if (!webOrigin) {
