@@ -135,4 +135,9 @@ describe('api client', () => {
     expect(headersOf(0).has('X-Farm-Id')).toBe(false);
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('DELETE');
   });
+
+  it('returns undefined on a 200 with an empty body (Nest DELETE handlers)', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 200 }));
+    await expect(api.del('/buildings/1')).resolves.toBeUndefined();
+  });
 });

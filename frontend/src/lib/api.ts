@@ -153,7 +153,9 @@ async function request<T>(
   const res = await sendWithRetry(method, path, opts);
   if (!res.ok) throw await toError(res);
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  // Nest answers DELETE with 200 and no body: only parse when there is something to parse.
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
 }
 
 export const api = {
