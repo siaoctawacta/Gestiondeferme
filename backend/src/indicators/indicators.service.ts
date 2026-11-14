@@ -33,7 +33,11 @@ export class IndicatorsService implements OnModuleInit {
     this.performance.register(this);
   }
 
-  /** 404 when the batch is outside the caller's farm scope. */
+  /**
+   * 404 when the batch is outside the caller's farm scope. The caller must
+   * check the species permission (`lots` / `porcs`) itself. `feedConversion`
+   * is null when no feed was recorded, or when the lot's gain is not positive.
+   */
   async batchPerformance(
     ctx: RequestContext,
     batchId: string,

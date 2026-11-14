@@ -5,12 +5,14 @@ type Num = number | null | undefined;
 const isNum = (n: Num): n is number => typeof n === 'number' && isFinite(n);
 
 /** Rounds half away from zero to `decimals`; never returns -0. */
-function round(value: number, decimals: number): number {
+function round(value: number, decimals: number): number | null {
+  if (!isFinite(value)) return null;
   const f = 10 ** decimals;
   const abs = Math.abs(value);
   const text = String(abs);
   const scaled = text.includes('e') ? abs * f : Number(`${text}e${decimals}`);
   const out = (Math.sign(value) * Math.round(scaled)) / f;
+  if (!isFinite(out)) return null;
   return out === 0 ? 0 : out;
 }
 
@@ -20,8 +22,9 @@ export function ratio(n: Num, d: Num, decimals = 1): number | null {
   return round(n / d, decimals);
 }
 
+/** Count-based rate: a negative count is bad data, so the rate is null. */
 const percent = (n: Num, d: Num, decimals = 1): number | null =>
-  isNum(n) ? ratio(n * 100, d, decimals) : null;
+  isNum(n) && n >= 0 ? ratio(n * 100, d, decimals) : null;
 
 /** deaths / initial count × 100. */
 export const mortalityRate = (deaths: Num, initialCount: Num) =>
@@ -39,7 +42,7 @@ export function dailyGain(
 
 /** Feed consumed / weight gained (both in kg), two decimals. */
 export const feedConversion = (feedKg: Num, gainKg: Num) =>
-  ratio(feedKg, gainKg, 2);
+  isNum(feedKg) && feedKg >= 0 ? ratio(feedKg, gainKg, 2) : null;
 
 export const layingRate = (eggs: Num, hens: Num) => percent(eggs, hens);
 export const breakageRate = (broken: Num, collected: Num) =>

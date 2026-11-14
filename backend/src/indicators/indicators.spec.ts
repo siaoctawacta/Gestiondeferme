@@ -62,4 +62,21 @@ describe('indicators', () => {
     expect(Object.is(dailyGain(100, 99.99, 5), 0)).toBe(true);
     expect(Object.is(mortalityRate(0, 100), 0)).toBe(true);
   });
+
+  it('returns null instead of NaN when the quotient overflows', () => {
+    expect(ratio(1, 1e-320)).toBeNull();
+    expect(ratio(1e308, 0.001)).toBeNull();
+    expect(ratio(1e300, 1e-10)).toBeNull();
+  });
+
+  it('returns null for a negative count, but keeps a negative daily gain', () => {
+    expect(mortalityRate(-1, 100)).toBeNull();
+    expect(layingRate(-1, 100)).toBeNull();
+    expect(breakageRate(-1, 100)).toBeNull();
+    expect(hatchRate(-1, 100)).toBeNull();
+    expect(occupationRate(-1, 100)).toBeNull();
+    expect(feedConversion(-1, 100)).toBeNull();
+    expect(dailyGain(1500, 1400, 10)).toBe(-10);
+    expect(ratio(-1, 4)).toBe(-0.3);
+  });
 });
