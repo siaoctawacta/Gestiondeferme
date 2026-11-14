@@ -1,0 +1,46 @@
+/* Design tokens: :root block copied verbatim from docs/reference/reference-styles.css */
+:root {
+  --radius:.875rem;
+  --background:oklch(96.5% .008 140);
+  --foreground:oklch(20% .02 150);
+  --card:oklch(100% 0 0);
+  --card-foreground:oklch(20% .02 150);
+  --popover:oklch(100% 0 0);
+  --popover-foreground:oklch(20% .02 150);
+  --primary:oklch(60% .17 145);
+  --primary-foreground:oklch(99% .01 140);
+  --primary-soft:oklch(93% .06 145);
+  --secondary:oklch(95% .01 140);
+  --secondary-foreground:oklch(25% .03 150);
+  --muted:oklch(95.5% .008 140);
+  --muted-foreground:oklch(52% .02 150);
+  --accent:oklch(93% .05 145);
+  --accent-foreground:oklch(30% .08 150);
+  --destructive:oklch(60% .2 25);
+  --destructive-foreground:oklch(99% 0 0);
+  --warning:oklch(85% .15 90);
+  --warning-foreground:oklch(35% .08 70);
+  --success:oklch(60% .17 145);
+  --border:oklch(91% .012 140);
+  --input:oklch(91% .012 140);
+  --ring:oklch(60% .17 145);
+  --ink:oklch(19% .02 155);
+  --ink-foreground:oklch(97% .01 140);
+  --ink-muted:oklch(68% .03 150);
+  --ink-soft:oklch(26% .025 155);
+  --chart-1:oklch(60% .17 145);
+  --chart-2:oklch(75% .14 140);
+  --chart-3:oklch(85% .08 140);
+  --chart-4:oklch(82% .15 90);
+  --chart-5:oklch(45% .1 155);
+  --gradient-hero:linear-gradient(135deg, oklch(50% .14 148), oklch(68% .16 140));
+  --gradient-heat:repeating-linear-gradient(110deg, oklch(80% .2 140) 0 4px, oklch(70% .2 140) 4px 6px);
+  --shadow-card:0 1px 2px oklch(20% .02 150/.04), 0 8px 24px -12px oklch(20% .02 150/.12);
+  --sidebar:var(--ink);
+  --sidebar-foreground:var(--ink-foreground);
+  --sidebar-primary:var(--primary);
+  --sidebar-primary-foreground:var(--primary-foreground);
+  --sidebar-accent:var(--ink-soft);
+  --sidebar-accent-foreground:var(--ink-foreground);
+  --sidebar-border:oklch(100% 0 0/.08);
+  --sidebar-ring:var(--primary)}
