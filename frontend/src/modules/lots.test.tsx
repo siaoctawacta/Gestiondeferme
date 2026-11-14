@@ -41,7 +41,7 @@ let handler: (c: Call) => Response | undefined;
 
 const page = (items: unknown[], extra: object = {}) => json(200, { items, total: items.length, page: 1, pageSize: 25, ...extra });
 
-function mount(ui: React.ReactNode, { perms = ALL, farm, path = '/' }: { perms?: string[]; farm?: string; path?: string } = {}) {
+function mount(ui: React.ReactNode, { perms = ALL, farm, path = '/', porcs = [] }: { perms?: string[]; farm?: string; path?: string; porcs?: string[] } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
   handler = () => undefined;
   fetchMock.mockImplementation(async (input, init) => {
@@ -49,7 +49,7 @@ function mount(ui: React.ReactNode, { perms = ALL, farm, path = '/' }: { perms?:
     calls.push(call);
     if (call.url === '/api/auth/refresh') return json(200, { accessToken: 'acc', user: USER });
     if (call.url === '/api/auth/me') {
-      return json(200, { user: USER, farms: [{ id: 'f1', name: 'Ferme' }], canSeeAllFarms: true, permissions: { lots: perms } });
+      return json(200, { user: USER, farms: [{ id: 'f1', name: 'Ferme' }], canSeeAllFarms: true, permissions: { lots: perms, porcs } });
     }
     const custom = handler(call);
     if (custom) return custom;
@@ -184,6 +184,7 @@ describe('lot detail', () => {
     expect(screen.queryByRole('tab', { name: 'Ponte' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clôturer' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Transférer' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Exporter' })).not.toBeInTheDocument();
     expect(await screen.findByText('Chaleur')).toBeInTheDocument();
     expect(calls.some((c) => c.url.startsWith('/api/batches/l1/events'))).toBe(true);
   });
@@ -285,5 +286,30 @@ describe('lot detail', () => {
     mountDetail('zz');
     handler = (c) => (c.url.startsWith('/api/batches/zz') ? json(404, { message: 'Lot introuvable' }) : undefined);
     expect(await screen.findByText('Page introuvable')).toBeInTheDocument();
+  });
+});
+
+describe('lot detail of a pig lot', () => {
+  const pigs = (c: Call) =>
+    c.method === 'GET' && /^\/api\/batches\/l1(\?|$)/.test(c.url) ? json(200, { ...detailOf(OPEN), species: 'PORCIN' }) : undefined;
+
+  it('follows the porcs permissions and back link', async () => {
+    mountDetail('l1', { perms: ['read'], porcs: ['read', 'update', 'create'] });
+    handler = pigs;
+    expect(await screen.findByRole('button', { name: 'Clôturer' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Transférer' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Exporter' })).not.toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Cheptel porcin/ })).toHaveAttribute('href', '/m/porcs');
+  });
+
+  it('ignores the lots permissions', async () => {
+    mountDetail('l1', { perms: ['read', 'update', 'create'], porcs: ['read'] });
+    handler = pigs;
+    await screen.findByRole('link', { name: /Cheptel porcin/ });
+    await screen.findByText('Chaleur');
+    for (const n of ['Clôturer', 'Transférer', 'Ajouter']) {
+      expect(screen.queryByRole('button', { name: n })).not.toBeInTheDocument();
+    }
   });
 });

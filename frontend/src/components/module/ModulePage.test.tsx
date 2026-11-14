@@ -185,6 +185,13 @@ describe('ModulePage with the batiments config', () => {
     expect(screen.getByRole('button', { name: 'Exporter' })).toBeInTheDocument();
   });
 
+  it('hides the export control when the config is not exportable', async () => {
+    setup({ config: { ...batiments, exportable: false } });
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('button', { name: 'Exporter' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
+  });
+
   it('hides writes and explains why when all farms are selected', async () => {
     setup({ farm: 'all' });
     await screen.findByText('Poulailler A');

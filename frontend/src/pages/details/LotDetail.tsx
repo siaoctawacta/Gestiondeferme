@@ -1,6 +1,7 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
+import type { ModuleKey } from '../../lib/modules';
 import { useAuth } from '../../lib/auth';
 import { formatNumber } from '../../lib/format';
 import { farmKey, useFarmQuery } from '../../lib/query';
@@ -18,10 +19,10 @@ import { Dialog } from '../../components/ui/Dialog';
 import { Input } from '../../components/ui/Input';
 import { Pill } from '../../components/ui/Pill';
 import { Select } from '../../components/ui/Select';
-import { MODULES } from '../../modules';
+import { MODULES } from '../../modules/registry';
 import {
   TYPE_LABELS, batchEvents, batchWeighings, type BatchDetail, type Weighing,
-} from '../../modules/lots';
+} from '../../modules/lotsShared';
 import NotFound from '../NotFound';
 import { DetailLayout } from './DetailLayout';
 
@@ -78,8 +79,8 @@ function TransferDialog({ batch, onClose, onDone }: { batch: BatchDetail; onClos
   );
 }
 
-function WeighingsTab({ batch, readOnly }: { batch: BatchDetail; readOnly: boolean }) {
-  const config = useMemo(() => batchWeighings(batch.id), [batch.id]);
+function WeighingsTab({ batch, readOnly, moduleKey }: { batch: BatchDetail; readOnly: boolean; moduleKey: ModuleKey }) {
+  const config = useMemo(() => batchWeighings(batch.id, moduleKey), [batch.id, moduleKey]);
   const points = useFarmQuery<ListResponse<Weighing>>(
     [`/batches/${batch.id}/weighings`, 'curve'],
     () => api.get<ListResponse<Weighing>>(`/batches/${batch.id}/weighings`, { page: 1, pageSize: 200 }),
@@ -111,7 +112,6 @@ export function LotDetail({ id }: { id: string }) {
   const [notice, setNotice] = useState<string | null>(null);
 
   const query = useFarmQuery<BatchDetail>(['/batches', 'detail', id], () => api.get<BatchDetail>(`/batches/${id}`));
-  const events = useMemo(() => batchEvents(id), [id]);
 
   if (query.isPending) return <div aria-busy className="h-40 animate-pulse rounded-3xl bg-muted" />;
   if (query.isError) {
@@ -120,8 +120,10 @@ export function LotDetail({ id }: { id: string }) {
   }
 
   const batch = query.data;
+  const moduleKey: ModuleKey = batch.species === 'PORCIN' ? 'porcs' : 'lots';
+  const events = batchEvents(id, moduleKey);
   const closed = batch.status === 'CLOTURE';
-  const canManage = can('lots', 'update') && farmId !== 'all';
+  const canManage = can(moduleKey, 'update') && farmId !== 'all';
   const perf = batch.performance;
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
   const avian = batch.species !== 'PORCIN';
@@ -141,7 +143,7 @@ export function LotDetail({ id }: { id: string }) {
 
   const tabs = [
     { key: 'events', label: 'Mouvements', content: <ModuleList config={events} readOnly={closed} /> },
-    { key: 'weighings', label: 'Pesées', content: <WeighingsTab batch={batch} readOnly={closed} /> },
+    { key: 'weighings', label: 'Pesées', content: <WeighingsTab batch={batch} readOnly={closed} moduleKey={moduleKey} /> },
     ...(feeding
       ? [{ key: 'feeding', label: 'Alimentation', content: <ModuleList config={feeding} scope={{ batchId: id }} readOnly={closed} /> }]
       : []),
@@ -153,7 +155,7 @@ export function LotDetail({ id }: { id: string }) {
   return (
     <>
       <DetailLayout
-        back={{ to: '/m/lots', label: avian ? 'Lots avicoles' : 'Lots porcins' }}
+        back={avian ? { to: '/m/lots', label: 'Lots avicoles' } : { to: '/m/porcs', label: 'Cheptel porcin' }}
         title={batch.code}
         subtitle={[TYPE_LABELS[batch.type] ?? batch.type, batch.breedName, batch.buildingName].filter(Boolean).join(' · ')}
         status={closed ? <Pill tone="success">Clôturé</Pill> : <Pill tone="warning">En cours</Pill>}

@@ -158,6 +158,8 @@ export type ModuleConfig<T extends { id: string }> = {
    * read permission on its `slug`; an `element` tab is any content and always shown.
    */
   tabs?: ModuleTab[];
+  /** False when the endpoint has no export route: the Exporter control is not rendered. Default true. */
+  exportable?: boolean;
   /** False for data outside any farm (farms, users): writes stay possible under "all farms". Default true. */
   farmScoped?: boolean;
 };

@@ -178,12 +178,14 @@ function ModuleView<T extends { id: string }>({
       {readOnlyBecauseAllFarms && (
         <p className="text-xs text-muted-foreground">Sélectionnez une ferme pour modifier les données.</p>
       )}
-      <ExportMenu
-        endpoint={config.endpoint}
-        filename={config.slug}
-        params={{ ...params, ...scope }}
-        onError={(message) => setNotice({ tone: 'error', message })}
-      />
+      {config.exportable !== false && (
+        <ExportMenu
+          endpoint={config.endpoint}
+          filename={config.slug}
+          params={{ ...params, ...scope }}
+          onError={(message) => setNotice({ tone: 'error', message })}
+        />
+      )}
       {canCreate && (
         <Button onClick={() => setEditing('new')}>
           <Plus aria-hidden className="size-4" />
