@@ -56,7 +56,7 @@ export class AuthController {
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
   ): Promise<void> {
-    await this.tokens.revokePresented(req, res);
+    await this.auth.logout(req, res);
   }
 
   @Get('me')

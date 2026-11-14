@@ -7,6 +7,10 @@ import { configureApp } from '../src/configure-app';
 import { signAccessToken } from '../src/access/access-token';
 import { PrismaService } from '../src/prisma/prisma.service';
 import type { Role } from '../src/generated/prisma/enums';
+import {
+  AuditProbeController,
+  ProbeItemsService,
+} from './audit-probe.controller';
 import { ProbeController } from './probe.controller';
 
 let migrated = false;
@@ -25,7 +29,8 @@ export async function createTestApp(): Promise<INestApplication> {
   migrateTestDb();
   const moduleRef = await Test.createTestingModule({
     imports: [AppModule],
-    controllers: [ProbeController],
+    controllers: [ProbeController, AuditProbeController],
+    providers: [ProbeItemsService],
   }).compile();
   const app = moduleRef.createNestApplication();
   configureApp(app);

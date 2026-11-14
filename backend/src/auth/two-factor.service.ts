@@ -99,10 +99,9 @@ export class TwoFactorService {
       );
     }
     if (stage === 'setup') {
-      const session = await this.tokens.issueSession(
-        { ...user, totpEnabledAt: enabledAt },
-        res,
-      );
+      const sessionUser = { ...user, totpEnabledAt: enabledAt };
+      const session = await this.tokens.issueSession(sessionUser, res);
+      await this.auth.auditLogin(sessionUser);
       return { backupCodes, ...session };
     }
     return { backupCodes };
@@ -151,7 +150,9 @@ export class TwoFactorService {
       throw this.auth.lockedError(current.lockedUntil ?? new Date());
     }
     await this.auth.log(user.email, true, user.id, req);
-    return this.tokens.issueSession(user, res);
+    const session = await this.tokens.issueSession(user, res);
+    await this.auth.auditLogin(user);
+    return session;
   }
 
   async disable(userId: string, password: string, code: string) {

@@ -45,16 +45,17 @@ enum AuditAction {
 }
 
 model Organization {
-  id        String    @id @default(cuid())
+  id        String     @id @default(cuid())
   name      String
-  currency  String    @default("FCFA")
+  currency  String     @default("FCFA")
   legalId   String?
   address   String?
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime   @default(now())
+  updatedAt DateTime   @updatedAt
   farms     Farm[]
   users     User[]
   settings  Setting[]
+  auditLogs AuditLog[]
 }
 
 model Farm {
@@ -185,19 +186,23 @@ model LoginLog {
 }
 
 model AuditLog {
-  id        String      @id @default(cuid())
-  userId    String?
-  user      User?       @relation(fields: [userId], references: [id])
-  userName  String
-  farmId    String?
-  module    String
-  action    AuditAction
-  recordId  String?
-  label     String?
-  before    Json?
-  after     Json?
-  createdAt DateTime    @default(now())
-  updatedAt DateTime    @updatedAt
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  userId         String?
+  user           User?        @relation(fields: [userId], references: [id])
+  userName       String
+  farmId         String?
+  module         String
+  action         AuditAction
+  recordId       String?
+  label          String?
+  before         Json?
+  after          Json?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+
+  @@index([organizationId, createdAt])
 }
 
 model Setting {

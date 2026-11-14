@@ -8,6 +8,7 @@ import {
 import type { Request, Response } from 'express';
 import { permissionsFor } from '../access/permissions';
 import { ALL_FARMS_ROLES, Role } from '../access/roles';
+import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword } from './password';
 import {
@@ -53,6 +54,7 @@ export class AuthService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly tokens: TokensService,
+    private readonly audit: AuditService,
   ) {}
 
   private getDummyHash(): Promise<string> {
@@ -157,9 +159,39 @@ export class AuthService {
           twoFactorSetupRequired: true,
           setupToken: this.tokens.setupToken(session),
         };
-      default:
-        return this.tokens.issueSession(session, res);
+      default: {
+        const result = await this.tokens.issueSession(session, res);
+        await this.auditLogin(session);
+        return result;
+      }
     }
+  }
+
+  /** A full session was issued: record it (public route, so no RequestContext). */
+  async auditLogin(user: SessionUser): Promise<void> {
+    await this.audit.log({
+      userId: user.id,
+      userName: user.name,
+      organizationId: user.organizationId,
+      module: 'auth',
+      action: 'LOGIN',
+      recordId: user.id,
+      label: user.email,
+    });
+  }
+
+  async logout(req: Request, res: Response): Promise<void> {
+    const owner = await this.tokens.revokePresented(req, res);
+    if (!owner) return;
+    await this.audit.log({
+      userId: owner.id,
+      userName: owner.name,
+      organizationId: owner.organizationId,
+      module: 'auth',
+      action: 'LOGOUT',
+      recordId: owner.id,
+      label: owner.email,
+    });
   }
 
   lockedError(lockedUntil: Date): HttpException {

@@ -164,18 +164,34 @@ export class TokensService {
     };
   }
 
-  /** Revokes the presented refresh token (if any) and clears the cookie. */
-  async revokePresented(req: Request, res: Response): Promise<void> {
+  /**
+   * Revokes the presented refresh token (if any) and clears the cookie.
+   * Returns the token's owner when this call actually ended a live session.
+   */
+  async revokePresented(
+    req: Request,
+    res: Response,
+  ): Promise<SessionUser | null> {
     const raw = (req.cookies as Record<string, string> | undefined)?.[
       REFRESH_COOKIE
     ];
+    let owner: SessionUser | null = null;
     if (raw) {
-      await this.prisma.refreshToken.updateMany({
-        where: { tokenHash: sha256(raw), revokedAt: null },
+      const tokenHash = sha256(raw);
+      const revoked = await this.prisma.refreshToken.updateMany({
+        where: { tokenHash, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      if (revoked.count === 1) {
+        const token = await this.prisma.refreshToken.findUnique({
+          where: { tokenHash },
+          include: { user: true },
+        });
+        owner = token?.user ?? null;
+      }
     }
     this.clearCookie(res);
+    return owner;
   }
 
   /** Revokes the user's active refresh tokens, optionally sparing one (by raw value). */
