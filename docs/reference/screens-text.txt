@@ -1,0 +1,599 @@
+===== alertes
+Alertes & notifications
+
+14 alertes ouvertes, calculées automatiquement à partir de vos données.
+
+Stock faible : Aliment ponte
+900 kg (seuil 1500)
+Stocks
+Stock critique : Aliment engraissement porc
+600 kg (seuil 1500)
+Stocks
+Mortalité élevée LC-2026-14
+3.6% sur 5000 sujets
+Lots avicoles
+Mortalité élevée LP-2026-03
+5% sur 3000 sujets
+Lots avicoles
+Mise bas TR-014
+Dépassée depuis 18 j (2026-10-27)
+Reproduction
+Vaccination en retard
+LC-2026-15 — Gumboro
+Santé & biosécurité
+Désinfection en retard
+Porcherie 2 — Virkon S
+Santé & biosécurité
+Tâche en retard
+Pesée hebdomadaire LC-2026-14 (Kodjo A.)
+Tâches & personnel
+Tâche en retard
+Vaccination Gumboro LC-2026-15 (Dr Koffi)
+Tâches & personnel
+Tâche en retard
+Nettoyage Porcherie 2 (Yawa M.)
+Tâches & personnel
+Maintenance due
+Groupe électrogène 20 kVA
+Équipements
+Maintenance due
+Couveuse 1200 œufs
+Équipements
+Équipement en panne
+Ventilateur Poulailler B #3
+Équipements
+Créance FA-0309
+Marché Hédzranawoé — Mme Afi — 400 000 FCFA
+Ventes
+===== audit
+Journal d'audit
+
+Utilisateur, date, heure, action et module.
+
+Exporter
+Réinitialiser les données
+DATE	UTILISATEUR	ACTION	MODULE	ÉLÉMENT
+Aucune action enregistrée pour le moment.
+===== home
+Bonjour 👋 — Ferme Kpalimé
+
+Tableau de bord
+Tâches terminées 1
+En attente 3
+Nouvelle tâche
+Volailles vivantes
+11 570
+3 lots en cours
+Porcs
+245
+Cheptel actif
+Œufs (dernier jour)
+2 480
+Taux de ponte 87%
+Mortalité lots
+3.6%
+Lots avicoles en cours
+Production d'œufs
+Voir tout
+10-18
+10-19
+10-20
+10-21
+10-22
+2450
+2475
+2500
+2525
+2550
+Rentabilité du mois
+Marge
+29%
+Chiffre d'affaires
+3 970 000 FCFA
+Dépenses
+2 835 000 FCFA
+Marge
+1 135 000 FCFA
+5 bâtiments actifs
+Aliment distribué
+1 800 kg
+Eau consommée
+4 370 L
+Recettes vs dépenses
+Avicole
+Porcin
+Général
+0M
+0.55M
+1.1M
+1.65M
+2.2M
+Alertes ouvertes (14)
+Stock faible : Aliment ponte
+900 kg (seuil 1500)
+À voir
+Stock critique : Aliment engraissement porc
+600 kg (seuil 1500)
+Urgent
+Mortalité élevée LC-2026-14
+3.6% sur 5000 sujets
+À voir
+Mortalité élevée LP-2026-03
+5% sur 3000 sujets
+À voir
+Mise bas TR-014
+Dépassée depuis 18 j (2026-10-27)
+Urgent
+Tâches à venir
+Gérer
+Pesée hebdomadaire LC-2026-14	Kodjo A.	2026-10-23	
+Normale
+Vaccination Gumboro LC-2026-15	Dr Koffi	2026-10-24	
+Haute
+Nettoyage Porcherie 2	Yawa M.	2026-10-18	
+Urgente
+===== m_achats
+Commercial
+
+Achats
+
+Demandes, validation, bons de commande et réception.
+
+Exporter
+Ajouter
+Total enregistrements
+3
+Demande
+1
+Validée
+0
+Commandée
+1
+Tous les statuts
+Demande
+Validée
+Commandée
+Reçue
+Payée
+DATE	RÉFÉRENCE	FOURNISSEUR	ARTICLE	QUANTITÉ	STATUT	MONTANT	
+2026-10-20	BC-0142	Agro Provende SA	Aliment ponte	3 000	
+Commandée	930 000 FCFA	
+
+2026-10-15	BC-0141	VetoPlus	Vaccin Gumboro	10	
+Reçue	120 000 FCFA	
+
+2026-10-22	DA-0089	Agro Provende SA	Aliment engraissement porc	4 000	
+Demande	1 120 000 FCFA	
+===== m_alimentation
+Production
+
+Alimentation & eau
+
+Distributions d'aliment et consommation d'eau par lot.
+
+Exporter
+Ajouter
+Total enregistrements
+4
+DATE	LOT / BÂTIMENT	ALIMENT	ALIMENT (KG)	EAU (L)	COÛT	
+2026-10-22	LC-2026-14	Croissance chair	620	1 250	210 800 FCFA	
+
+2026-10-22	LP-2026-03	Ponte phase 1	360	720	111 600 FCFA	
+
+2026-10-22	Porcherie 1	Engraissement porc	540	1 800	151 200 FCFA	
+
+2026-10-21	LC-2026-15	Démarrage chair	280	600	106 400 FCFA	
+===== m_batiments
+Administration
+
+Bâtiments
+
+Sites, bâtiments, zones et capacités.
+
+Exporter
+Ajouter
+Total enregistrements
+6
+Actif
+5
+Vide sanitaire
+1
+Maintenance
+0
+Tous les statuts
+Actif
+Vide sanitaire
+Maintenance
+NOM	TYPE	SITE	CAPACITÉ	OCCUPATION	STATUT	TAUX OCC.	
+Poulailler A	Avicole	Site Nord	5 000	4 820	
+Actif	
+96%	
+
+Poulailler B	Avicole	Site Nord	5 000	3 900	
+Actif	
+78%	
+
+Pondoir C	Avicole	Site Nord	3 000	2 850	
+Actif	
+95%	
+
+Porcherie 1	Porcin	Site Sud	300	248	
+Actif	
+83%	
+
+Porcherie 2	Porcin	Site Sud	300	0	
+Vide sanitaire	
+0%	
+
+Maternité	Porcin	Site Sud	40	32	
+Actif	
+80%	
+===== m_clients
+Commercial
+
+Clients
+
+Particuliers, revendeurs, restaurants et grossistes.
+
+Exporter
+Ajouter
+Total enregistrements
+3
+NOM	TYPE	TÉLÉPHONE	VILLE	
+Restaurant Le Palmier	Restaurant	+228 93 12 34 56	Lomé	
+
+Marché Hédzranawoé — Mme Afi	Revendeur	+228 98 65 43 21	Lomé	
+
+SuperMarché Ramco	Grossiste	+228 22 21 00 00	Lomé	
+===== m_equipements
+Opérations
+
+Équipements
+
+Couveuses, balances, pompes, groupes et maintenance.
+
+Exporter
+Ajouter
+Total enregistrements
+4
+Bon
+2
+À surveiller
+1
+En panne
+1
+Tous les statuts
+Bon
+À surveiller
+En panne
+ÉQUIPEMENT	TYPE	EMPLACEMENT	PROCHAINE MAINTENANCE	ÉTAT	
+Groupe électrogène 20 kVA	Groupe électrogène	Site Nord	2026-10-30	
+Bon	
+
+Couveuse 1200 œufs	Couveuse	Incubation	2026-10-25	
+À surveiller	
+
+Pompe forage	Pompe	Site Sud	2026-11-15	
+Bon	
+
+Ventilateur Poulailler B #3	Ventilateur	Poulailler B	2026-10-20	
+En panne	
+===== m_finance
+Finance
+
+Dépenses & recettes
+
+Recettes, dépenses, coûts et rentabilité par activité.
+
+Exporter
+Ajouter
+Total enregistrements
+5
+DATE	LIBELLÉ	TYPE	ACTIVITÉ	CATÉGORIE	MONTANT	
+2026-10-01	Salaires septembre	Dépense	Général	Salaires	
+950 000 FCFA	
+
+2026-10-03	Aliment chair 6 t	Dépense	Avicole	Aliment	
+1 020 000 FCFA	
+
+2026-10-08	Électricité CEET	Dépense	Général	Énergie	
+185 000 FCFA	
+
+2026-10-10	Vaccins & médicaments	Dépense	Avicole	Santé	
+120 000 FCFA	
+
+2026-10-14	Aliment porc 2 t	Dépense	Porcin	Aliment	
+560 000 FCFA	
+===== m_fournisseurs
+Commercial
+
+Fournisseurs
+
+Fiches fournisseurs, produits et soldes.
+
+Exporter
+Ajouter
+Total enregistrements
+3
+NOM	PRODUITS FOURNIS	TÉLÉPHONE	EMAIL	SOLDE	
+Agro Provende SA	Aliments volaille & porc	+228 90 11 22 33	ventes@agroprovende.tg	850 000 FCFA	
+
+VetoPlus	Vaccins, médicaments	+228 91 44 55 66	contact@vetoplus.tg	120 000 FCFA	
+
+Couvoir du Golfe	Poussins d'un jour	+228 92 77 88 99	info@couvoirgolfe.tg	0 FCFA	
+===== m_lots
+Production
+
+Lots avicoles
+
+Poulets de chair, pondeuses, poussins et reproducteurs.
+
+Exporter
+Ajouter
+Total enregistrements
+4
+En cours
+3
+Clôturé
+1
+Tous les statuts
+En cours
+Clôturé
+CODE LOT	TYPE	SOUCHE	BÂTIMENT	DATE D'ENTRÉE	EFFECTIF INITIAL	MORTALITÉ CUMULÉE	POIDS MOYEN (G)	STATUT	VIVANTS	MORTALITÉ	
+LC-2026-14	Chair	Cobb 500	Poulailler A	2026-09-20	5 000	180	1 450	
+En cours	4820	
+3.6%	
+
+LC-2026-15	Chair	Ross 308	Poulailler B	2026-10-05	4 000	100	620	
+En cours	3900	
+2.5%	
+
+LP-2026-03	Pondeuse	ISA Brown	Pondoir C	2026-03-12	3 000	150	1 900	
+En cours	2850	
+5%	
+
+LC-2026-12	Chair	Cobb 500	Poulailler A	2026-07-10	5 000	320	2 300	
+Clôturé	4680	
+6.4%	
+===== m_ponte
+Production
+
+Ponte & œufs
+
+Production d'œufs journalière, casse et incubation.
+
+Exporter
+Ajouter
+Total enregistrements
+5
+DATE	LOT	ŒUFS COLLECTÉS	ŒUFS CASSÉS	MIS EN INCUBATION	TAUX DE CASSE	
+2026-10-22	LP-2026-03	2 480	42	0	
+1.7%	
+
+2026-10-21	LP-2026-03	2 510	35	300	
+1.4%	
+
+2026-10-20	LP-2026-03	2 455	88	0	
+3.6%	
+
+2026-10-19	LP-2026-03	2 530	30	0	
+1.2%	
+
+2026-10-18	LP-2026-03	2 490	40	250	
+1.6%	
+===== m_porcs
+Production
+
+Cheptel porcin
+
+Truies, verrats, porcelets, croissance et engraissement.
+
+Exporter
+Ajouter
+Total enregistrements
+5
+Actif
+3
+Gestante
+1
+Allaitante
+1
+Tous les statuts
+Actif
+Gestante
+Allaitante
+Vendu
+Mort
+IDENTIFIANT	CATÉGORIE	RACE	BÂTIMENT	DATE DE NAISSANCE	POIDS (KG)	STATUT	
+TR-014	Truie	Large White	Maternité	2024-02-10	210	
+Gestante	
+
+TR-021	Truie	Landrace	Maternité	2024-05-03	195	
+Allaitante	
+
+TR-027	Truie	Large White	Maternité	2024-08-19	180	
+Actif	
+
+VR-002	Verrat	Duroc	Porcherie 1	2023-11-01	260	
+Actif	
+
+LOT-ENG-07	Engraissement	Croisé	Porcherie 1	2026-05-15	68	
+Actif	
+===== m_reproduction
+Production
+
+Reproduction
+
+Saillies, gestations, mises bas et sevrages.
+
+Exporter
+Ajouter
+Total enregistrements
+3
+Gestation
+2
+Mise bas
+1
+Sevrage
+0
+Tous les statuts
+Gestation
+Mise bas
+Sevrage
+Échec
+TRUIE	VERRAT / IA	DATE SAILLIE	NÉS TOTAUX	NÉS VIVANTS	SEVRÉS	STATUT	MISE BAS PRÉVUE	
+TR-014	VR-002	2026-07-05	0	0	0	
+Gestation	
+2026-10-27	
+
+TR-021	IA Duroc	2026-05-20	13	12	0	
+Mise bas	
+2026-09-11	
+
+TR-027	VR-002	2026-10-10	0	0	0	
+Gestation	
+2027-02-01	
+===== m_sante
+Santé
+
+Santé & biosécurité
+
+Vaccinations, traitements, diagnostics et délais d'attente.
+
+Exporter
+Ajouter
+Total enregistrements
+4
+Planifié
+1
+Réalisé
+2
+En retard
+1
+Tous les statuts
+Planifié
+Réalisé
+En retard
+DATE	LOT / ANIMAL	TYPE	PRODUIT	DOSE	VÉTÉRINAIRE	STATUT	
+2026-10-24	LC-2026-15	Vaccination	Gumboro	1 goutte	Dr Koffi	
+Planifié	
+
+2026-10-18	LC-2026-14	Vaccination	Newcastle	Eau de boisson	Dr Koffi	
+Réalisé	
+
+2026-10-20	TR-021	Traitement	Fer injectable porcelets	1 ml	Dr Amah	
+Réalisé	
+
+2026-10-15	Porcherie 2	Désinfection	Virkon S	1%	Équipe	
+En retard	
+===== m_stocks
+Logistique
+
+Stocks
+
+Aliments, médicaments, matériel et consommables.
+
+Exporter
+Ajouter
+Total enregistrements
+5
+ARTICLE	CATÉGORIE	QUANTITÉ	UNITÉ	SEUIL MINIMUM	NIVEAU	JOURS DE STOCK	
+Aliment croissance chair	Aliment	4 200	kg	2 000	
+ok	6	
+
+Aliment ponte	Aliment	900	kg	1 500	
+faible	2	
+
+Aliment engraissement porc	Aliment	600	kg	1 500	
+critique	1	
+
+Vaccin Gumboro	Médicament	12	flacons	5	
+ok	—	
+
+Copeaux litière	Consommable	80	sacs	40	
+ok	13	
+===== m_taches
+Opérations
+
+Tâches & personnel
+
+Planification des tâches, responsables et priorités.
+
+Exporter
+Ajouter
+Total enregistrements
+4
+À faire
+2
+En cours
+1
+Terminée
+1
+Tous les statuts
+À faire
+En cours
+Terminée
+TÂCHE	RESPONSABLE	ÉCHÉANCE	PRIORITÉ	STATUT	
+Pesée hebdomadaire LC-2026-14	Kodjo A.	2026-10-23	Normale	
+À faire	
+
+Vaccination Gumboro LC-2026-15	Dr Koffi	2026-10-24	Haute	
+À faire	
+
+Nettoyage Porcherie 2	Yawa M.	2026-10-18	Urgente	
+En cours	
+
+Collecte des œufs	Ama K.	2026-10-22	Normale	
+Terminée	
+===== m_ventes
+Commercial
+
+Ventes
+
+Factures, paiements comptants, partiels ou à crédit.
+
+Exporter
+Ajouter
+Total enregistrements
+4
+DATE	N° FACTURE	CLIENT	PRODUIT	QUANTITÉ	TOTAL	RESTE DÛ	
+2026-10-21	FA-0310	Restaurant Le Palmier	Poulets de chair	300	1 050 000 FCFA	
+0 FCFA	
+
+2026-10-20	FA-0309	Marché Hédzranawoé — Mme Afi	Œufs (plateau)	400	1 000 000 FCFA	
+400 000 FCFA	
+
+2026-10-12	FA-0305	SuperMarché Ramco	Porcs	12	1 620 000 FCFA	
+0 FCFA	
+
+2026-10-05	FA-0301	Restaurant Le Palmier	Porcelets	10	300 000 FCFA	
+0 FCFA	
+===== rapports
+Rapports
+
+Synthèse au 14/11/2026
+
+CSV
+Imprimer / PDF
+INDICATEUR	VALEUR
+Volailles vivantes	11 570
+Porcs (cheptel)	245
+Taux de mortalité (lots en cours)	3.6%
+Œufs produits (dernier jour)	2 480
+Taux de ponte	87%
+Aliment distribué	1 800 kg
+Eau consommée	4 370 L
+Chiffre d'affaires	3 970 000 FCFA
+Dépenses	2 835 000 FCFA
+Marge indicative	1 135 000 FCFA
+Créances clients	400 000 FCFA
+Alertes ouvertes	14
+Activité Avicole
+910 000 FCFA
+Recettes 2 050 000 FCFA · Dépenses 1 140 000 FCFA
+Activité Porcin
+1 360 000 FCFA
+Recettes 1 920 000 FCFA · Dépenses 560 000 FCFA
+Activité Général
+-1 135 000 FCFA
+Recettes 0 FCFA · Dépenses 1 135 000 FCFA
