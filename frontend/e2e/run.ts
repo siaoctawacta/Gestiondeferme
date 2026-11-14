@@ -85,7 +85,12 @@ try {
     console.log(`E2E servers up: ${WEB_URL} (Ctrl-C to stop)`);
     await new Promise(() => {});
   }
-  const specs = readdirSync(here).filter((f) => f.endsWith('.spec.ts')).sort().map((f) => join('e2e', f));
+  // `npm run e2e -- production` runs only the specs whose file name contains one of the words.
+  const only = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+  const specs = readdirSync(here)
+    .filter((f) => f.endsWith('.spec.ts') && (only.length === 0 || only.some((w) => f.includes(w))))
+    .sort()
+    .map((f) => join('e2e', f));
   const r = spawnSync(
     'node',
     ['--disable-warning=ExperimentalWarning', '--test', '--test-concurrency=1', '--test-timeout=120000', ...specs],

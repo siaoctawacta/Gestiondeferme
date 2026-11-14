@@ -348,13 +348,30 @@ Livraison en cinq tranches ; chacune se termine par une application qui tourne e
   rendu responsive.
 - Tests : unitaires et d'intégration backend, unitaires frontend, bout en bout Playwright, captures comparées.
 
+**Tranche 2 — Production : terminée.**
+
+- Lots avicoles (chair, pondeuses, poussins, reproducteurs) : effectifs, mortalité cumulée et taux, pesées, GMD et
+  indice de consommation, transfert entre bâtiments, clôture et réouverture ; l'effectif et l'occupation d'un
+  bâtiment sont toujours des sommes de mouvements, jamais des champs saisis.
+- Ponte et œufs : production journalière, taux de ponte et de casse ; incubation avec mirage, éclosion (qui crée le
+  lot de poussins) et échec.
+- Cheptel porcin : animaux individuels (truies, verrats, cochettes) et lots de porcelets ou d'engraissement dans une
+  même liste, pesées, sorties, fiche de l'animal avec son historique de reproduction.
+- Reproduction : saillie ou IA, mise bas prévue à la date de saillie + 114 jours (réglable), mise bas (qui crée le
+  lot de porcelets), sevrage, échec, chaleurs.
+- Alimentation et eau : aliments et formules (pourcentages totalisant 100 %, coût au kg), distributions par lot ou
+  bâtiment avec leur coût, eau du jour enregistrée avec la distribution.
+- Tableau de bord et alertes alimentés par ces données : volailles vivantes, porcs, œufs du dernier jour, taux de ponte
+  et de mortalité, aliment et eau, alertes « Mortalité élevée », « Mise bas » et consommation anormale.
+- Tests : bout en bout Playwright du parcours de production (lot, mortalité, ponte, saillie, mise bas, distribution,
+  droits d'un agent d'élevage, audit) et captures des écrans comparées à la maquette (`docs/reference/built/`).
+
 **À venir**
 
-2. Production : lots avicoles, pesées, ponte, incubation, cheptel porcin, reproduction, alimentation et eau.
-3. Santé et biosécurité, stocks et inventaires, fournisseurs et achats.
-4. Clients et ventes (devis → paiement), finance et rentabilité.
-5. Personnel et tâches, équipements et maintenance, rapports, alertes, QR, exports, jeu de données de
-   démonstration (« Ferme Kpalimé »), documentation.
+3. Santé et biosécurité, stocks et inventaires (décrément du stock à chaque distribution), fournisseurs et achats.
+4. Clients et ventes (devis → paiement, sorties de lots), finance et rentabilité.
+5. Personnel et tâches, équipements et maintenance, rapports, alertes complètes, QR, calendrier des chaleurs, exports,
+   jeu de données de démonstration (« Ferme Kpalimé »), documentation.
 
-Les modules des tranches 2 à 5 apparaissent dans le menu avec la mention « Module en cours de construction » tant qu'ils
+Les modules des tranches 3 à 5 apparaissent dans le menu avec la mention « Module en cours de construction » tant qu'ils
 ne sont pas livrés.

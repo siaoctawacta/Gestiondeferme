@@ -48,7 +48,7 @@ function BreedingTab({ animalId }: { animalId: string }) {
   );
   if (query.isPending) return <div aria-busy className="h-24 animate-pulse rounded-3xl bg-muted" />;
   if (query.isError) return <ErrorRetry message={errorMessage(query.error)} onRetry={() => query.refetch()} />;
-  const { items, totals } = query.data;
+  const { records, totals } = query.data;
   return (
     <>
       <div className="mb-4 grid grid-cols-3 gap-3">
@@ -71,10 +71,10 @@ function BreedingTab({ animalId }: { animalId: string }) {
             </TR>
           </THead>
           <tbody>
-            {items.length === 0 && (
+            {records.length === 0 && (
               <TR><TD colSpan={7} className="py-10 text-center text-muted-foreground">Aucune saillie</TD></TR>
             )}
-            {items.map((r) => (
+            {records.map((r) => (
               <TR key={r.id}>
                 <TD className="font-semibold">{r.serviceDate}</TD>
                 <TD>{r.sire}</TD>

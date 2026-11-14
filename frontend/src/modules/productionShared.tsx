@@ -8,7 +8,7 @@ import type { Option } from '../components/module/useEndpointOptions';
 
 const PAGE_SIZE = 200;
 
-async function allPages<T>(endpoint: string, params: Record<string, string>): Promise<T[]> {
+export async function allPages<T>(endpoint: string, params: Record<string, string>): Promise<T[]> {
   const out: T[] = [];
   for (let page = 1; ; page++) {
     const res = await api.get<ListResponse<T>>(endpoint, { ...params, page, pageSize: PAGE_SIZE });

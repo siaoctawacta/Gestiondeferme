@@ -1,4 +1,4 @@
-const NBSP = ' ';
+const NBSP = '\u202f'; // narrow no-break space, as the reference's French grouping
 
 export function formatNumber(n: number): string {
   const [int, dec] = String(Math.abs(n)).split('.');

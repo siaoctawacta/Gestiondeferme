@@ -1,6 +1,7 @@
 import { Baby, HeartCrack, Milk } from 'lucide-react';
 import { ActionDialog } from '../components/module/ActionDialog';
 import type { Field, ModuleConfig, RowAction } from '../components/module/types';
+import { Pill, type PillTone } from '../components/ui/Pill';
 import { api } from '../lib/api';
 import { formatNumber } from '../lib/format';
 import { today } from './lotsShared';
@@ -30,6 +31,13 @@ export interface BreedingRecord {
 }
 
 /* --------------------------------------------------------------------------------------------- */
+
+/** Warning days of the `farrowingWarningDays` setting's default: a gestation due within a week, or overdue, reads yellow. */
+const FARROWING_WARNING_DAYS = 7;
+
+/** Tone of the expected-date pill: yellow while a gestation is due soon or overdue, green otherwise. */
+export const farrowingTone = (r: Pick<BreedingRecord, 'status' | 'daysToFarrowing'>): PillTone =>
+  r.status === 'GESTATION' && r.daysToFarrowing !== null && r.daysToFarrowing <= FARROWING_WARNING_DAYS ? 'warning' : 'success';
 
 const METHODS = [
   { value: 'SAILLIE', label: 'Saillie' },
@@ -75,12 +83,13 @@ function FarrowingDialog({ row, onClose, onDone }: DialogProps) {
   return (
     <ActionDialog
       title={`Mise bas — ${row.sowTag}`}
-      fields={[
+      fields={(values) => [
         { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: today() },
         count('bornTotal', 'Nés totaux'),
         count('bornAlive', 'Nés vivants'),
         count('stillborn', 'Mort-nés'),
-        { name: 'buildingId', label: 'Bâtiment de la portée', type: 'select', required: true, options: buildings },
+        // The API wants the litter's building only when piglets are born alive.
+        { name: 'buildingId', label: 'Bâtiment de la portée', type: 'select', required: Number(values.bornAlive) > 0, options: buildings },
       ]}
       onSubmit={(body) => api.post(`/breeding/${row.id}/farrowing`, body)}
       onClose={onClose}
@@ -143,12 +152,7 @@ export const reproduction: ModuleConfig<BreedingRecord> = {
     {
       key: 'expectedFarrowingDate',
       header: 'MISE BAS PRÉVUE',
-      render: (r) =>
-        r.status === 'GESTATION' && r.daysToFarrowing !== null && r.daysToFarrowing < 0 ? (
-          <span className="font-medium text-destructive">{r.expectedFarrowingDate}</span>
-        ) : (
-          r.expectedFarrowingDate
-        ),
+      render: (r) => <Pill tone={farrowingTone(r)}>{r.expectedFarrowingDate}</Pill>,
     },
   ],
   fields: [],

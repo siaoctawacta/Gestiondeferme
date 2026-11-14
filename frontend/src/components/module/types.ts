@@ -118,8 +118,10 @@ export type ModuleConfig<T extends { id: string }> = {
   slug: ModuleKey;
   /** Small label above the title (e.g. `Administration`). */
   group: string;
-  /** Page title; also the label of the first tab and the dialog title suffix. */
+  /** Page title; also the label of the first tab (unless `tabLabel`) and the dialog title suffix. */
   title: string;
+  /** Label of the first tab when it should differ from the page title (e.g. `Distributions`). */
+  tabLabel?: string;
   subtitle: string;
   /** List endpoint (`GET {items,total,page,pageSize}`), also used for create / patch / delete. */
   endpoint: string;
@@ -150,6 +152,8 @@ export type ModuleConfig<T extends { id: string }> = {
   detail?: ComponentType<{ id: string }>;
   /** Per-row switch for the built-in edit button, on top of the `update` permission (default: always). */
   canEdit?: (row: T) => boolean;
+  /** `DELETE` target of the built-in delete button when it is not `{endpoint}/{id}` (a list that merges several record kinds). */
+  deletePath?: (row: T) => string;
   /** Per-row switch for the built-in delete button, on top of the `delete` permission (default: always). */
   canDelete?: (row: T) => boolean;
   /**

@@ -7,7 +7,10 @@ import { clean, num, text, today } from './lotsShared';
  * If the real backend names a field differently, this is the only place to adjust.
  * ------------------------------------------------------------------------------------------- */
 
-/** `GET /pig-herd`: animals and pig lots in one list; ids are unique across kinds. */
+/**
+ * `GET /pig-herd`: animals and pig lots in one list; ids are unique across kinds. The response also carries
+ * `statusCounts` (a lot in progress counts as `ACTIF`) and `totalPigs` (the sum of `headcount`).
+ */
 export interface HerdRow {
   id: string;
   kind: 'ANIMAL' | 'LOT';
@@ -17,11 +20,12 @@ export interface HerdRow {
   category: string;
   breedName: string | null;
   buildingName: string;
-  /** Animals. */
-  birthDate?: string | null;
-  /** Lots. */
-  entryDate?: string | null;
+  /** Animals (`null` for a lot). */
+  birthDate: string | null;
+  /** Lots (`null` for an animal). */
+  entryDate: string | null;
   weightKg: number | null;
+  /** Animals housed: 1 for an animal still on the farm, the live count of an open lot, 0 for an exited animal or a closed lot. */
   headcount: number;
   /** Animal: `ACTIF`… `REFORME`; lot: `EN_COURS` or `CLOTURE`. */
   status: string;
@@ -63,9 +67,9 @@ export interface Heat {
   note: string | null;
 }
 
-/** `GET /animals/:id/breeding-history`: the sow's records with their litter figures, and the totals. */
+/** `GET /animals/:id/breeding-history`: the sow's records (newest first) with their litter figures, and the totals. */
 export interface BreedingHistory {
-  items: {
+  records: {
     id: string;
     serviceDate: string;
     sire: string;

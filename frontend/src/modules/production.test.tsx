@@ -7,7 +7,7 @@ import { AuthProvider } from '../lib/auth';
 import { setAccessToken, setFarmHeader } from '../lib/api';
 import { ModuleList, ModulePage } from '../components/module/ModulePage';
 import type { ModuleConfig } from '../components/module/types';
-import { ponte } from './ponte';
+import { breakageTone, ponte } from './ponte';
 import { porcs } from './porcs';
 import { reproduction } from './reproduction';
 
@@ -82,7 +82,7 @@ function mount(
     if (/^\/api\/animals\/a1\/heats/.test(url)) return page([{ id: 'h1', date: '2026-04-01', note: 'Nette' }]);
     if (/^\/api\/animals\/a1\/breeding-history/.test(url)) {
       return json(200, {
-        items: [{ id: 'b0', serviceDate: '2025-05-01', sire: 'VR-002', farrowingDate: '2025-08-23', bornTotal: 13, bornAlive: 12, weanedCount: 11, status: 'SEVRAGE' }],
+        records: [{ id: 'b0', serviceDate: '2025-05-01', sire: 'VR-002', farrowingDate: '2025-08-23', bornTotal: 13, bornAlive: 12, weanedCount: 11, status: 'SEVRAGE' }],
         totals: { litters: 1, averageBornAlive: 12, averageWeaned: 11 },
       });
     }
@@ -133,6 +133,10 @@ afterEach(() => {
 const headers = (names: string[]) => names.forEach((h) => expect(screen.getByRole('columnheader', { name: h })).toBeInTheDocument());
 
 describe('ponte', () => {
+  it('tones the breakage rate: green under 3 %, yellow up to 5 %, red above', () => {
+    expect([1.2, 2.99, 3, 3.6, 5, 5.1].map(breakageTone)).toEqual(['success', 'success', 'warning', 'warning', 'warning', 'danger']);
+  });
+
   it('renders the reference headers, a row and the breakage pills', async () => {
     mountPage(ponte);
     expect(await screen.findByText('2026-10-22')).toBeInTheDocument();
@@ -142,8 +146,8 @@ describe('ponte', () => {
     const row = screen.getByText('2026-10-22').closest('tr')!;
     for (const t of ['LP-2026-03', '2 480', '42', '0', '1.7%']) expect(within(row).getAllByText(t).length).toBeGreaterThan(0);
     expect(within(row).getByText('1.7%').className).toContain('bg-primary-soft');
-    expect(within(screen.getByText('2026-10-19').closest('tr')!).getByText('2.1%').className).toContain('bg-warning');
-    expect(within(screen.getByText('2026-10-20').closest('tr')!).getByText('3.6%').className).toContain('bg-destructive');
+    expect(within(screen.getByText('2026-10-19').closest('tr')!).getByText('2.1%').className).toContain('bg-primary-soft');
+    expect(within(screen.getByText('2026-10-20').closest('tr')!).getByText('3.6%').className).toContain('bg-warning');
     expect(screen.getByRole('tab', { name: 'Incubation' })).toBeInTheDocument();
   });
 
@@ -472,10 +476,10 @@ describe('reproduction', () => {
     const row = screen.getByText('TR-014').closest('tr')!;
     for (const t of ['VR-002', '2026-07-05', 'Gestation']) expect(within(row).getByText(t)).toBeInTheDocument();
     expect(within(row).getAllByText('0')).toHaveLength(3);
-    expect(screen.getByText('2026-10-27').className).toContain('text-destructive');
-    expect(screen.getByText('2027-01-23').className).not.toContain('text-destructive');
-    // Overdue but already farrowed: not red.
-    expect(screen.getByText('2026-09-23').className).not.toContain('text-destructive');
+    expect(screen.getByText('2026-10-27').className).toContain('bg-warning');
+    expect(screen.getByText('2027-01-23').className).toContain('bg-primary-soft');
+    // Overdue but already farrowed: green.
+    expect(screen.getByText('2026-09-23').className).toContain('bg-primary-soft');
   });
 
   it('offers each action only on its statuses and hides edit and delete once farrowed', async () => {
@@ -512,6 +516,21 @@ describe('reproduction', () => {
       url: '/api/breeding/b1/farrowing',
       body: { date: '2026-10-29', bornTotal: 13, bornAlive: 12, stillborn: 1, buildingId: 'b2' },
     });
+  });
+
+  it('needs no litter building when no piglet is born alive', async () => {
+    mountPage(reproduction);
+    await screen.findByText('TR-014');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('TR-014').closest('tr')!).getByRole('button', { name: 'Mise bas' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Mise bas — TR-014' });
+    fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: '2026-10-29' } });
+    await user.type(within(dialog).getByLabelText('Nés totaux'), '2');
+    await user.type(within(dialog).getByLabelText('Nés vivants'), '0');
+    await user.type(within(dialog).getByLabelText('Mort-nés'), '2');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({ date: '2026-10-29', bornTotal: 2, bornAlive: 0, stillborn: 2 });
   });
 
   it('records a weaning and a failure', async () => {

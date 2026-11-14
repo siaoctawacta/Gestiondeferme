@@ -287,7 +287,7 @@ function ModuleView<T extends { id: string }>({
           message={`Supprimer « ${(config.rowLabel ?? ((r: T) => String((r as Record<string, unknown>).name ?? r.id)))(deleting)} » ? Cette action est irréversible.`}
           onClose={() => setDeleting(null)}
           onConfirm={async () => {
-            await api.del(`${config.endpoint}/${deleting.id}`);
+            await api.del(config.deletePath?.(deleting) ?? `${config.endpoint}/${deleting.id}`);
             setDeleting(null);
             afterWrite();
           }}
@@ -308,7 +308,7 @@ function ModuleView<T extends { id: string }>({
 
   const extraTabs = (config.tabs ?? []).filter((t) => !('config' in t) || can(t.config.slug, 'read'));
   const activeTab = extraTabs.find((t) => t.key === tab);
-  const allTabs = [{ key: 'main', label: config.title }, ...extraTabs];
+  const allTabs = [{ key: 'main', label: config.tabLabel ?? config.title }, ...extraTabs];
   const activeKey = activeTab ? activeTab.key : 'main';
   return (
     <>

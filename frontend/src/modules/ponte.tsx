@@ -47,8 +47,8 @@ export interface Incubation {
 
 /* --------------------------------------------------------------------------------------------- */
 
-/** Breakage pill tone: under 2 % success, 2 to 3 % warning, above 3 % danger. */
-export const breakageTone = (rate: number): PillTone => (rate < 2 ? 'success' : rate <= 3 ? 'warning' : 'danger');
+/** Breakage pill tone (as the reference shows 1.2 to 1.7 % green and 3.6 % yellow): under 3 % success, 3 to 5 % warning, above 5 % danger. */
+export const breakageTone = (rate: number): PillTone => (rate < 3 ? 'success' : rate <= 5 ? 'warning' : 'danger');
 
 const INCUBATION_STATUSES: StatusDef[] = [
   { value: 'EN_COURS', label: 'En cours', tone: 'warning' },

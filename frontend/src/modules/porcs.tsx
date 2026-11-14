@@ -1,8 +1,6 @@
 import { useState } from 'react';
-import { Trash2 } from 'lucide-react';
-import { ConfirmDialog } from '../components/module/ConfirmDialog';
 import { errorMessage } from '../components/module/errorMessage';
-import type { ModuleConfig, RowAction } from '../components/module/types';
+import type { ModuleConfig } from '../components/module/types';
 import { Alert } from '../components/ui/Alert';
 import { Button } from '../components/ui/Button';
 import { Dialog } from '../components/ui/Dialog';
@@ -168,26 +166,6 @@ function PigForm({ row, onSaved, onClose }: FormProps) {
   );
 }
 
-/** Deleting goes to `/animals/:id` (the list endpoint is `/pig-herd`), so it is a row action, not the built-in button. */
-const deleteAnimal: RowAction<HerdRow> = {
-  key: 'delete-animal',
-  label: 'Supprimer',
-  icon: Trash2,
-  permission: 'delete',
-  visible: (r) => r.kind === 'ANIMAL',
-  dialog: ({ row, onClose, onDone }) => (
-    <ConfirmDialog
-      title="Confirmer la suppression"
-      message={`Supprimer « ${row.identifier} » ? Cette action est irréversible.`}
-      onClose={onClose}
-      onConfirm={async () => {
-        await api.del(`/animals/${row.id}`);
-        onDone();
-      }}
-    />
-  ),
-};
-
 export const porcs: ModuleConfig<HerdRow> = {
   slug: 'porcs',
   group: 'Production',
@@ -199,7 +177,7 @@ export const porcs: ModuleConfig<HerdRow> = {
     { key: 'category', header: 'CATÉGORIE' },
     { key: 'breedName', header: 'RACE', render: (r) => r.breedName ?? '' },
     { key: 'buildingName', header: 'BÂTIMENT' },
-    { key: 'birthDate', header: 'DATE DE NAISSANCE', render: (r) => (r.kind === 'LOT' ? r.entryDate : r.birthDate) ?? '' },
+    { key: 'birthDate', header: 'DATE DE NAISSANCE', render: (r) => r.birthDate ?? r.entryDate ?? '' },
     { key: 'weightKg', header: 'POIDS (KG)', render: (r) => orDash(r.weightKg) },
     {
       key: 'status',
@@ -217,10 +195,10 @@ export const porcs: ModuleConfig<HerdRow> = {
   // Pig lots reuse the species-aware lot detail, under this module's route so `porcs` permissions apply.
   detailPath: (r) => (r.kind === 'LOT' ? `/m/porcs/${LOT_PREFIX}${r.id}` : `/m/porcs/${r.id}`),
   detail: PigDetail,
-  // Lots are edited from their detail page; animals through `/animals/:id`.
+  // Lots are edited from their detail page; animals are edited and deleted through `/animals/:id`.
   canEdit: (r) => r.kind === 'ANIMAL',
-  canDelete: () => false,
-  actions: [deleteAnimal],
+  canDelete: (r) => r.kind === 'ANIMAL',
+  deletePath: (r) => `/animals/${r.id}`,
   form: PigForm,
 };
 

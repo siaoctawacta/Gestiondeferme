@@ -9,7 +9,7 @@ export function Table({ className = '', ...props }: HTMLAttributes<HTMLTableElem
 }
 
 export function THead({ className = '', ...props }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={`bg-secondary ${className}`} {...props} />;
+  return <thead className={`bg-muted ${className}`} {...props} />;
 }
 
 export function TR({ className = '', ...props }: HTMLAttributes<HTMLTableRowElement>) {
@@ -19,7 +19,7 @@ export function TR({ className = '', ...props }: HTMLAttributes<HTMLTableRowElem
 export function TH({ className = '', ...props }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
-      className={`px-4 py-3 text-xs font-medium uppercase leading-[18px] tracking-wider text-foreground/70 ${className}`}
+      className={`px-4 py-3 text-xs font-medium uppercase leading-4 tracking-wider text-foreground/70 ${className}`}
       {...props}
     />
   );

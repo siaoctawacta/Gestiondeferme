@@ -73,7 +73,8 @@ export function DataTable<T extends { id: string }>({
   return (
     <Table>
       <THead>
-        <TR>
+        {/* The reference rules a line under the header too. */}
+        <TR className="border-b!">
           {columns.map((c) => {
             const active = sort?.key === c.key;
             return (
@@ -127,7 +128,7 @@ export function DataTable<T extends { id: string }>({
               })}
               {hasActions && (
                 <TD>
-                  <div className="flex items-center justify-end">
+                  <div className="flex min-h-8 items-center justify-end">
                     {actions?.filter((a) => a.visible?.(row) ?? true).map((a) => (
                       <ActionButton key={a.key} label={a.label} onClick={() => a.run(row)}>
                         <a.icon aria-hidden className="size-4" />

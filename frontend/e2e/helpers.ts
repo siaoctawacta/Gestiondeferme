@@ -95,9 +95,15 @@ export interface EnrolledAdmin {
   farmId: string;
 }
 
-/** Enrols a freshly seeded SUPER_ADMIN in 2FA through the API (no UI) and returns a session. */
-export async function enrollAdmin(key: AdminKey): Promise<EnrolledAdmin> {
-  const email = ADMINS[key];
+export interface EnrolledUser {
+  email: string;
+  secret: string;
+  backupCodes: string[];
+  token: string;
+}
+
+/** Enrols a user whose role makes 2FA mandatory (it has only a stage token before enrolment) through the API (no UI). */
+export async function enrollUser(email: string): Promise<EnrolledUser> {
   const login = await api<{ setupToken?: string }>('/auth/login', {
     method: 'POST',
     body: { email, password: PASSWORD },
@@ -110,8 +116,20 @@ export async function enrollAdmin(key: AdminKey): Promise<EnrolledAdmin> {
     token: stage,
     body: { code: totp(setup.secret) },
   });
-  const me = await api<{ farms: { id: string }[] }>('/auth/me', { token: enabled.accessToken });
-  return { email, secret: setup.secret, backupCodes: enabled.backupCodes, token: enabled.accessToken, farmId: me.farms[0].id };
+  return { email, secret: setup.secret, backupCodes: enabled.backupCodes, token: enabled.accessToken };
+}
+
+export interface EnrolledAdmin extends EnrolledUser {
+  /** The seeded farm (`Ferme Kpalimé`), even once a spec has created other farms. */
+  farmId: string;
+}
+
+/** Enrols a freshly seeded SUPER_ADMIN in 2FA through the API (no UI) and returns a session. */
+export async function enrollAdmin(key: AdminKey): Promise<EnrolledAdmin> {
+  const enrolled = await enrollUser(ADMINS[key]);
+  const me = await api<{ farms: { id: string; name: string }[] }>('/auth/me', { token: enrolled.token });
+  const farm = me.farms.find((f) => f.name === 'Ferme Kpalimé') ?? me.farms[0];
+  return { ...enrolled, farmId: farm.id };
 }
 
 /** Logs in through the UI with the credentials form and a backup code (TOTP codes cannot be replayed). */
