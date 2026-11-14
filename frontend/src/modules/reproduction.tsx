@@ -1,17 +1,16 @@
 import { Baby, HeartCrack, Milk } from 'lucide-react';
 import { ActionDialog } from '../components/module/ActionDialog';
-import type { Field, ModuleConfig, RowAction, StatusDef } from '../components/module/types';
+import type { Field, ModuleConfig, RowAction } from '../components/module/types';
 import { api } from '../lib/api';
 import { formatNumber } from '../lib/format';
 import { today } from './lotsShared';
-import { useBuildingOptions } from './productionShared';
+import { BREEDING_STATUSES, type BreedingStatus } from './breedingShared';
+import { RecordForm, useBuildingOptions } from './productionShared';
 
 /* ---------------------------------------------------------------------------------------------
  * API shapes (backend contract of `/breeding`, task 5).
  * If the real backend names a field differently, this is the only place to adjust.
  * ------------------------------------------------------------------------------------------- */
-
-export type BreedingStatus = 'GESTATION' | 'MISE_BAS' | 'SEVRAGE' | 'ECHEC';
 
 /** `GET /breeding`. */
 export interface BreedingRecord {
@@ -31,13 +30,6 @@ export interface BreedingRecord {
 }
 
 /* --------------------------------------------------------------------------------------------- */
-
-const STATUSES: StatusDef[] = [
-  { value: 'GESTATION', label: 'Gestation', tone: 'warning' },
-  { value: 'MISE_BAS', label: 'Mise bas', tone: 'success' },
-  { value: 'SEVRAGE', label: 'Sevrage', tone: 'neutral' },
-  { value: 'ECHEC', label: 'Échec', tone: 'danger' },
-];
 
 const METHODS = [
   { value: 'SAILLIE', label: 'Saillie' },
@@ -62,13 +54,15 @@ function BreedingForm({ row, onSaved, onClose }: FormProps) {
           { name: 'serviceDate', label: 'Date de saillie', type: 'date', required: true, defaultValue: today() },
         ];
   return (
-    <ActionDialog
-      title={`${row ? 'Modifier' : 'Ajouter'} — Reproduction`}
+    <RecordForm
+      label="Reproduction"
+      row={row}
       fields={fields}
       initial={row ? { serviceDate: row.serviceDate } : {}}
-      onSubmit={(body) => (row ? api.patch(`/breeding/${row.id}`, body) : api.post('/breeding', body))}
+      createPath="/breeding"
+      patchPath={(r) => `/breeding/${r.id}`}
+      onSaved={onSaved}
       onClose={onClose}
-      onDone={onSaved}
     />
   );
 }
@@ -158,7 +152,7 @@ export const reproduction: ModuleConfig<BreedingRecord> = {
     },
   ],
   fields: [],
-  statuses: STATUSES,
+  statuses: BREEDING_STATUSES,
   statusKey: 'status',
   rowLabel: (r) => `${r.sowTag} — ${r.serviceDate}`,
   canEdit: (r) => r.status === 'GESTATION',

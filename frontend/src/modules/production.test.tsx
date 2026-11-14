@@ -37,7 +37,17 @@ const BREEDING = [
   { id: 'b2', sowId: 'a3', sowTag: 'TR-020', sire: 'IA Pietrain', serviceDate: '2026-10-01', expectedFarrowingDate: '2027-01-23', bornTotal: 0, bornAlive: 0, weanedCount: 0, status: 'GESTATION', daysToFarrowing: 70 },
   { id: 'b3', sowId: 'a4', sowTag: 'TR-021', sire: 'VR-002', serviceDate: '2026-06-01', expectedFarrowingDate: '2026-09-23', bornTotal: 13, bornAlive: 12, weanedCount: 0, status: 'MISE_BAS', daysToFarrowing: -52 },
 ];
-const animalOf = (a: (typeof HERD)[number], sex: 'F' | 'M') => ({ ...a, sex, sireTag: null, damTag: null, exitDate: null, exitReason: null, notes: null });
+const animalOf = (a: (typeof HERD)[number], sex: 'F' | 'M', category: string) => ({
+  id: a.id, tag: a.identifier, category, sex, breedId: 'br1', breedName: a.breedName, buildingId: 'b2', buildingName: a.buildingName,
+  birthDate: a.birthDate, sireId: 'a2', sireTag: 'VR-002', damId: null, damTag: null, status: a.status, weightKg: a.weightKg,
+  exitDate: null, exitReason: null, notes: 'Bonne mère',
+});
+const PIG_LOT = {
+  id: 'p1', code: 'LOT-ENG-01', type: 'ENGRAISSEMENT', species: 'PORCIN', breedId: null, breedName: null, buildingId: 'b2', buildingName: 'Porcherie 1',
+  entryDate: '2026-09-01', initialCount: 240, deaths: 0, alive: 240, mortalityRate: 0, averageWeightG: null, status: 'EN_COURS', ageDays: 70,
+  supplierName: null, purchasePrice: null, responsibleId: null, responsibleName: null, closedAt: null, notes: null,
+  performance: { ageDays: 70, alive: 240, deaths: 0, mortalityRate: 0, firstWeightG: null, lastWeightG: null, dailyGainG: null, feedKg: null, feedConversion: null, feedCost: null },
+};
 
 interface Call { method: string; url: string; body?: unknown }
 const calls: Call[] = [];
@@ -47,14 +57,18 @@ let handler: (c: Call) => Response | undefined;
 
 const page = (items: unknown[], extra: object = {}) => json(200, { items, total: items.length, page: 1, pageSize: 25, ...extra });
 
-function mount(ui: React.ReactNode, { perms = ALL, path = '/' }: { perms?: string[]; path?: string } = {}) {
+function mount(
+  ui: React.ReactNode,
+  { perms = ALL, path = '/', modules = {}, farm }: { perms?: string[]; path?: string; modules?: Record<string, string[]>; farm?: string } = {},
+) {
+  if (farm) localStorage.setItem('ap_farm', farm);
   handler = () => undefined;
   fetchMock.mockImplementation(async (input, init) => {
     const call: Call = { method: init?.method ?? 'GET', url: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined };
     calls.push(call);
     if (call.url === '/api/auth/refresh') return json(200, { accessToken: 'acc', user: USER });
     if (call.url === '/api/auth/me') {
-      return json(200, { user: USER, farms: [{ id: 'f1', name: 'Ferme' }], canSeeAllFarms: true, permissions: { ponte: perms, porcs: perms, reproduction: perms, lots: perms } });
+      return json(200, { user: USER, farms: [{ id: 'f1', name: 'Ferme' }], canSeeAllFarms: true, permissions: { ponte: perms, porcs: perms, reproduction: perms, lots: perms, ...modules } });
     }
     const custom = handler(call);
     if (custom) return custom;
@@ -72,11 +86,13 @@ function mount(ui: React.ReactNode, { perms = ALL, path = '/' }: { perms?: strin
         totals: { litters: 1, averageBornAlive: 12, averageWeaned: 11 },
       });
     }
-    if (/^\/api\/animals\/a1(\?|$)/.test(url)) return json(200, animalOf(HERD[0], 'F'));
-    if (/^\/api\/animals\/a2(\?|$)/.test(url)) return json(200, animalOf(HERD[1], 'M'));
+    if (/^\/api\/animals\/a1(\?|$)/.test(url)) return json(200, animalOf(HERD[0], 'F', 'TRUIE'));
+    if (/^\/api\/animals\/a2(\?|$)/.test(url)) return json(200, animalOf(HERD[1], 'M', 'VERRAT'));
     if (url.startsWith('/api/animals')) {
       return page([{ id: 'a2', tag: 'VR-002' }, { id: 'a1', tag: 'TR-014' }]);
     }
+    if (/^\/api\/batches\/p1(\?|$)/.test(url)) return json(200, PIG_LOT);
+    if (/^\/api\/batches\/p1\/(events|weighings)/.test(url)) return page([]);
     if (url.startsWith('/api/batches')) {
       return page([
         { id: 'l1', code: 'LP-2026-03', type: 'PONDEUSE' },
@@ -186,6 +202,17 @@ describe('ponte', () => {
     });
   });
 
+  it('leaves the source lot out when editing an incubation (Field.only)', async () => {
+    mountPage(ponte);
+    await screen.findByText('2026-10-22');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Incubation' }));
+    await user.click(within((await screen.findByText('INC-2026-01')).closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Incubation' });
+    expect(within(dialog).queryByLabelText("Lot d'origine")).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Œufs incubés')).toHaveValue(300);
+  });
+
   it('shows the server message when an action is refused', async () => {
     mountPage(ponte);
     await screen.findByText('2026-10-22');
@@ -212,7 +239,7 @@ describe('porcs', () => {
     const row = screen.getByText('TR-014').closest('tr')!;
     for (const t of ['Truie', 'Large White', 'Maternité', '2024-02-10', '210', 'Gestante']) expect(within(row).getAllByText(t).length).toBeGreaterThan(0);
     expect(screen.getByRole('link', { name: 'TR-014' })).toHaveAttribute('href', '/m/porcs/a1');
-    expect(screen.getByRole('link', { name: 'LOT-ENG-01' })).toHaveAttribute('href', '/m/lots/p1');
+    expect(screen.getByRole('link', { name: 'LOT-ENG-01' })).toHaveAttribute('href', '/m/porcs/lot-p1');
     const lot = screen.getByText('LOT-ENG-01').closest('tr')!;
     expect(within(lot).getByText('2026-09-01')).toBeInTheDocument();
     expect(within(lot).getByText('Actif')).toBeInTheDocument();
@@ -232,17 +259,44 @@ describe('porcs', () => {
     expect(writes()[0]).toMatchObject({ method: 'DELETE', url: '/api/animals/a2' });
   });
 
-  it('edits an animal through PATCH /animals/:id', async () => {
+  it('loads the animal when editing, shows its current values, and sends only what changed (null when cleared)', async () => {
     mountPage(porcs);
     await screen.findByText('TR-014');
     const user = userEvent.setup();
     await user.click(within(screen.getByText('TR-014').closest('tr')!).getByRole('button', { name: 'Modifier' }));
     const dialog = await screen.findByRole('dialog', { name: 'Modifier — Animal individuel' });
-    expect(within(dialog).getByLabelText('Catégorie')).toHaveValue('TRUIE');
+    await waitFor(() => expect(within(dialog).getByLabelText('Identifiant')).toHaveValue('TR-014'));
+    expect(calls.some((c) => c.url === '/api/animals/a1')).toBe(true);
+    expect(within(dialog).getByText('Catégorie : Truie')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Catégorie')).not.toBeInTheDocument();
+    await waitFor(() => expect(within(dialog).getByLabelText('Race')).toHaveValue('br1'));
+    await waitFor(() => expect(within(dialog).getByLabelText('Bâtiment')).toHaveValue('b2'));
+    await waitFor(() => expect(within(dialog).getByLabelText('Père')).toHaveValue('a2'));
+    expect(within(dialog).getByLabelText('Date de naissance')).toHaveValue('2024-02-10');
+    expect(within(dialog).getByLabelText('Notes')).toHaveValue('Bonne mère');
+    await user.selectOptions(within(dialog).getByLabelText('Père'), '');
     fireEvent.change(within(dialog).getByLabelText('Date de naissance'), { target: { value: '2024-02-11' } });
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/animals/a1', body: { tag: 'TR-014', category: 'TRUIE', sex: 'F', birthDate: '2024-02-11' } });
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/animals/a1' });
+    expect(writes()[0].body).toEqual({ birthDate: '2024-02-11', sireId: null });
+  });
+
+  it('closes an unchanged edit without any request, and refuses to clear the identifier', async () => {
+    mountPage(porcs);
+    await screen.findByText('TR-014');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('TR-014').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Animal individuel' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Identifiant')).toHaveValue('TR-014'));
+    await waitFor(() => expect(within(dialog).getByLabelText('Bâtiment')).toHaveValue('b2'));
+    await user.clear(within(dialog).getByLabelText('Identifiant'));
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Le champ « Identifiant » est requis')).toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText('Identifiant'), 'TR-014');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(writes()).toHaveLength(0);
   });
 
   it('asks animal or lot, then posts the animal to /animals with its sex', async () => {
@@ -314,6 +368,23 @@ describe('animal detail', () => {
     expect(await screen.findByText('Nette')).toBeInTheDocument();
   });
 
+  it('hides the breeding tabs without read permission on reproduction', async () => {
+    mountDetail('a1', { modules: { reproduction: [] } });
+    await screen.findByRole('heading', { name: 'TR-014' });
+    expect(screen.getByRole('tab', { name: 'Pesées' })).toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Reproduction' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tab', { name: 'Chaleurs' })).not.toBeInTheDocument();
+  });
+
+  it('reads heats and breeding history under the reproduction permission, not porcs', async () => {
+    mountDetail('a1', { modules: { porcs: ['read'], reproduction: ['read', 'create'] } });
+    await screen.findByRole('heading', { name: 'TR-014' });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Chaleurs' }));
+    expect(await screen.findByText('Nette')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
+  });
+
   it('has no breeding tabs for a boar', async () => {
     mountDetail('a2');
     await screen.findByRole('heading', { name: 'VR-002' });
@@ -339,6 +410,53 @@ describe('animal detail', () => {
     mountDetail('a1', { perms: ['read'] });
     await screen.findByRole('heading', { name: 'TR-014' });
     expect(screen.queryByRole('button', { name: 'Sortie' })).not.toBeInTheDocument();
+  });
+});
+
+describe('pig lot detail', () => {
+  it('opens under porcs permissions only, with the back link to the pig herd', async () => {
+    const Detail = porcs.detail!;
+    mount(
+      <Routes>
+        <Route path="/m/porcs/:id" element={<Detail id="lot-p1" />} />
+        <Route path="/m/porcs" element={<p>Cheptel</p>} />
+      </Routes>,
+      { path: '/m/porcs/lot-p1', modules: { lots: [] } },
+    );
+    expect(await screen.findByRole('heading', { name: 'LOT-ENG-01' })).toBeInTheDocument();
+    expect(calls.some((c) => c.url === '/api/batches/p1')).toBe(true);
+    expect(screen.getByRole('link', { name: 'Cheptel porcin' })).toHaveAttribute('href', '/m/porcs');
+    expect(screen.getByRole('button', { name: 'Clôturer' })).toBeInTheDocument();
+  });
+});
+
+describe('write controls are gated', () => {
+  const lists = [
+    ['ponte', ponte], ['porcs', porcs], ['reproduction', reproduction],
+  ] as const;
+  const ACTIONS = ['Mise bas', 'Sevrage', 'Échec', 'Mirage', 'Éclosion', 'Modifier', 'Supprimer', 'Ajouter'];
+
+  for (const [name, config] of lists) {
+    it(`${name}: a read-only role sees none`, async () => {
+      mountPage(config, { perms: ['read'] });
+      await screen.findAllByRole('row');
+      await waitFor(() => expect(screen.queryAllByTestId('skeleton-row')).toHaveLength(0));
+      for (const a of ACTIONS) expect(screen.queryByRole('button', { name: a })).not.toBeInTheDocument();
+    });
+
+    it(`${name}: all farms hides them too`, async () => {
+      mountPage(config, { farm: 'all' });
+      await screen.findAllByRole('row');
+      await waitFor(() => expect(screen.queryAllByTestId('skeleton-row')).toHaveLength(0));
+      for (const a of ACTIONS) expect(screen.queryByRole('button', { name: a })).not.toBeInTheDocument();
+    });
+  }
+
+  it('incubation actions are hidden for a read-only role', async () => {
+    mountPage(ponte, { perms: ['read'] });
+    await userEvent.setup().click(await screen.findByRole('tab', { name: 'Incubation' }));
+    await screen.findByText('INC-2026-01');
+    for (const a of ['Mirage', 'Éclosion', 'Échec']) expect(screen.queryByRole('button', { name: a })).not.toBeInTheDocument();
   });
 });
 

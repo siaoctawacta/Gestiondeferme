@@ -1,66 +1,125 @@
 import { useState } from 'react';
 import { Trash2 } from 'lucide-react';
-import { ActionDialog } from '../components/module/ActionDialog';
 import { ConfirmDialog } from '../components/module/ConfirmDialog';
-import type { Field, ModuleConfig, RowAction } from '../components/module/types';
+import { errorMessage } from '../components/module/errorMessage';
+import type { ModuleConfig, RowAction } from '../components/module/types';
+import { Alert } from '../components/ui/Alert';
 import { Button } from '../components/ui/Button';
 import { Dialog } from '../components/ui/Dialog';
 import { Pill } from '../components/ui/Pill';
 import { api } from '../lib/api';
+import { useFarmQuery } from '../lib/query';
 import { AnimalDetail } from '../pages/details/AnimalDetail';
+import { LotDetail } from '../pages/details/LotDetail';
 import { clean, orDash, text, today } from './lotsShared';
-import { useBuildingOptions } from './productionShared';
-import { ANIMAL_CATEGORIES, LOT_TYPES, STATUSES, categoryValue, statusDef, type HerdRow } from './porcsShared';
+import { RecordForm, useBuildingOptions } from './productionShared';
+import { ANIMAL_CATEGORIES, LOT_TYPES, STATUSES, categoryLabel, statusDef, type AnimalDetailData, type HerdRow } from './porcsShared';
 
 export * from './porcsShared';
 
 type FormProps = { row?: HerdRow; scope?: Record<string, string>; onSaved: () => void; onClose: () => void };
 
+const LOT_PREFIX = 'lot-';
+
+/** `/m/porcs/:id`: an animal, or `lot-{id}` for a pig lot. */
+function PigDetail({ id }: { id: string }) {
+  return id.startsWith(LOT_PREFIX) ? <LotDetail id={id.slice(LOT_PREFIX.length)} /> : <AnimalDetail id={id} />;
+}
+
 const BREEDS = { endpoint: '/breeds', params: { species: 'PORCIN' } };
 
-/** Request body of an animal: the sex follows the category (Truie, Cochette → F; Verrat → M). */
-function animalBody(v: Record<string, unknown>, mode: 'create' | 'update') {
-  const category = String(v.category ?? '');
-  return clean(
-    {
-      tag: text(v.tag),
-      category,
-      sex: ANIMAL_CATEGORIES.find((c) => c.value === category)?.sex,
-      breedId: v.breedId,
-      buildingId: v.buildingId,
-      birthDate: v.birthDate,
-      sireId: v.sireId,
-      damId: v.damId,
-    },
-    mode,
+const CLEARABLE = ['breedId', 'birthDate', 'sireId', 'damId', 'notes'] as const;
+const ACTIVE = (sex: 'F' | 'M') => ({ endpoint: '/animals', params: { sex, status: 'ACTIF' }, labelKey: 'tag' });
+
+/** Add an individual animal; the sex follows the category (Truie, Cochette → F; Verrat → M). */
+function AnimalCreateForm({ onSaved, onClose }: Pick<FormProps, 'onSaved' | 'onClose'>) {
+  const buildings = useBuildingOptions('PORCIN');
+  return (
+    <RecordForm
+      label="Animal individuel"
+      fields={[
+        { name: 'tag', label: 'Identifiant (généré si vide)', type: 'text' },
+        { name: 'category', label: 'Catégorie', type: 'select', required: true, options: ANIMAL_CATEGORIES.map(({ value, label }) => ({ value, label })) },
+        { name: 'breedId', label: 'Race', type: 'select', options: BREEDS },
+        { name: 'buildingId', label: 'Bâtiment', type: 'select', required: true, options: buildings },
+        { name: 'birthDate', label: 'Date de naissance', type: 'date' },
+        { name: 'sireId', label: 'Père', type: 'select', options: ACTIVE('M') },
+        { name: 'damId', label: 'Mère', type: 'select', options: ACTIVE('F') },
+      ]}
+      toPayload={(v) =>
+        clean(
+          {
+            tag: text(v.tag),
+            category: v.category,
+            sex: ANIMAL_CATEGORIES.find((c) => c.value === v.category)?.sex,
+            breedId: v.breedId,
+            buildingId: v.buildingId,
+            birthDate: v.birthDate,
+            sireId: v.sireId,
+            damId: v.damId,
+          },
+          'create',
+        )
+      }
+      createPath="/animals"
+      patchPath={(r) => `/animals/${r.id}`}
+      onSaved={onSaved}
+      onClose={onClose}
+    />
   );
 }
 
-/** Add an individual animal, or edit one (`PATCH /animals/:id`; an empty select keeps the stored value). */
-function AnimalForm({ row, onSaved, onClose }: Pick<FormProps, 'row' | 'onSaved' | 'onClose'>) {
+/**
+ * Edit an animal: loads `GET /animals/:id` so the selects show the current values, and sends only what changed
+ * (a cleared optional field as `null`). The category is fixed after creation.
+ */
+function AnimalEditForm({ row, onSaved, onClose }: { row: HerdRow } & Pick<FormProps, 'onSaved' | 'onClose'>) {
   const buildings = useBuildingOptions('PORCIN');
-  const fields: Field[] = [
-    { name: 'tag', label: 'Identifiant (généré si vide)', type: 'text' },
-    { name: 'category', label: 'Catégorie', type: 'select', required: true, options: ANIMAL_CATEGORIES.map(({ value, label }) => ({ value, label })) },
-    { name: 'breedId', label: 'Race', type: 'select', options: BREEDS },
-    { name: 'buildingId', label: 'Bâtiment', type: 'select', required: !row, options: buildings },
-    { name: 'birthDate', label: 'Date de naissance', type: 'date' },
-    ...(row
-      ? []
-      : ([
-          { name: 'sireId', label: 'Père', type: 'select', options: { endpoint: '/animals', params: { sex: 'M', status: 'ACTIF' }, labelKey: 'tag' } },
-          { name: 'damId', label: 'Mère', type: 'select', options: { endpoint: '/animals', params: { sex: 'F', status: 'ACTIF' }, labelKey: 'tag' } },
-        ] as Field[])),
-  ];
+  const query = useFarmQuery<AnimalDetailData>(['/animals', 'detail', row.id], () => api.get<AnimalDetailData>(`/animals/${row.id}`));
+  if (query.isPending || query.isError) {
+    return (
+      <Dialog open onClose={onClose} title="Modifier — Animal individuel">
+        {query.isError ? (
+          <Alert>{errorMessage(query.error)}</Alert>
+        ) : (
+          <div aria-busy role="status" className="h-24 animate-pulse rounded-3xl bg-muted"><span className="sr-only">Chargement…</span></div>
+        )}
+        <div className="mt-6 flex justify-end"><Button variant="outline" onClick={onClose}>Fermer</Button></div>
+      </Dialog>
+    );
+  }
+  const a = query.data;
+  const initial: Record<string, unknown> = {
+    tag: a.tag, breedId: a.breedId, buildingId: a.buildingId, birthDate: a.birthDate, sireId: a.sireId, damId: a.damId, notes: a.notes,
+  };
+  const was = (k: string) => String(initial[k] ?? '');
   return (
-    <ActionDialog
-      title={`${row ? 'Modifier' : 'Ajouter'} — Animal individuel`}
-      fields={fields}
-      initial={row ? { tag: row.identifier, category: categoryValue(row.category), birthDate: row.birthDate } : {}}
-      toPayload={(v) => animalBody(v, row ? 'update' : 'create')}
-      onSubmit={(body) => (row ? api.patch(`/animals/${row.id}`, body) : api.post('/animals', body))}
+    <RecordForm
+      label="Animal individuel"
+      row={row}
+      intro={`Catégorie : ${categoryLabel(a.category)}`}
+      fields={[
+        { name: 'tag', label: 'Identifiant', type: 'text', required: true },
+        { name: 'breedId', label: 'Race', type: 'select', options: BREEDS },
+        { name: 'buildingId', label: 'Bâtiment', type: 'select', required: true, options: buildings },
+        { name: 'birthDate', label: 'Date de naissance', type: 'date' },
+        { name: 'sireId', label: 'Père', type: 'select', options: ACTIVE('M') },
+        { name: 'damId', label: 'Mère', type: 'select', options: ACTIVE('F') },
+        { name: 'notes', label: 'Notes', type: 'textarea' },
+      ]}
+      initial={initial}
+      toPayload={(v) => {
+        const out: Record<string, unknown> = {};
+        for (const k of ['tag', 'buildingId', ...CLEARABLE]) {
+          const now = text(v[k]);
+          if (now !== was(k)) out[k] = now === '' ? null : now;
+        }
+        return out;
+      }}
+      createPath="/animals"
+      patchPath={(r) => `/animals/${r.id}`}
+      onSaved={onSaved}
       onClose={onClose}
-      onDone={onSaved}
     />
   );
 }
@@ -69,8 +128,8 @@ function AnimalForm({ row, onSaved, onClose }: Pick<FormProps, 'row' | 'onSaved'
 function LotForm({ onSaved, onClose }: Pick<FormProps, 'onSaved' | 'onClose'>) {
   const buildings = useBuildingOptions('PORCIN');
   return (
-    <ActionDialog
-      title="Ajouter — Lot de porcs"
+    <RecordForm
+      label="Lot de porcs"
       fields={[
         { name: 'type', label: 'Type', type: 'select', required: true, options: LOT_TYPES },
         { name: 'breedId', label: 'Race', type: 'select', options: BREEDS },
@@ -84,17 +143,19 @@ function LotForm({ onSaved, onClose }: Pick<FormProps, 'onSaved' | 'onClose'>) {
           'create',
         )
       }
-      onSubmit={(body) => api.post('/batches', body)}
+      createPath="/batches"
+      patchPath={(r) => `/batches/${r.id}`}
+      onSaved={onSaved}
       onClose={onClose}
-      onDone={onSaved}
     />
   );
 }
 
 /** `Ajouter`: asks whether it is an individual animal or a lot, then shows the matching form. */
 function PigForm({ row, onSaved, onClose }: FormProps) {
-  const [kind, setKind] = useState<'ANIMAL' | 'LOT' | null>(row ? 'ANIMAL' : null);
-  if (kind === 'ANIMAL') return <AnimalForm row={row} onSaved={onSaved} onClose={onClose} />;
+  const [kind, setKind] = useState<'ANIMAL' | 'LOT' | null>(null);
+  if (row) return <AnimalEditForm row={row} onSaved={onSaved} onClose={onClose} />;
+  if (kind === 'ANIMAL') return <AnimalCreateForm onSaved={onSaved} onClose={onClose} />;
   if (kind === 'LOT') return <LotForm onSaved={onSaved} onClose={onClose} />;
   return (
     <Dialog open onClose={onClose} title="Ajouter — Cheptel porcin">
@@ -153,9 +214,9 @@ export const porcs: ModuleConfig<HerdRow> = {
   statuses: STATUSES,
   statusKey: 'status',
   rowLabel: (r) => r.identifier,
-  // Pig lots have their own page (the species-aware lot detail); animals have `AnimalDetail`.
-  detailPath: (r) => (r.kind === 'LOT' ? `/m/lots/${r.id}` : `/m/porcs/${r.id}`),
-  detail: AnimalDetail,
+  // Pig lots reuse the species-aware lot detail, under this module's route so `porcs` permissions apply.
+  detailPath: (r) => (r.kind === 'LOT' ? `/m/porcs/${LOT_PREFIX}${r.id}` : `/m/porcs/${r.id}`),
+  detail: PigDetail,
   // Lots are edited from their detail page; animals through `/animals/:id`.
   canEdit: (r) => r.kind === 'ANIMAL',
   canDelete: () => false,

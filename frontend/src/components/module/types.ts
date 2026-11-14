@@ -77,24 +77,32 @@ export type FilterDef = {
   options: OptionsDef;
 };
 
-/** An extra per-row button next to the built-in edit and delete ones. */
-export type RowAction<T> = {
+/** Fields shared by every extra per-row button. */
+type RowActionBase<T> = {
   key: string;
   /** Accessible label and tooltip. */
   label: string;
   icon: LucideIcon;
-  /** `refresh` reloads the page data; `notify` shows a message above the table. A rejection is shown as an error. */
-  run?: (row: T, helpers: { refresh(): void; notify(message: string): void }) => void | Promise<void>;
-  /**
-   * Instead of `run`: a dialog the page opens for the row. It calls `onDone` after a successful write (the
-   * dialog is closed and the list refetched) or `onClose` to cancel. Lets a config-only module (no page
-   * component of its own) open dialogs.
-   */
-  dialog?: ComponentType<{ row: T; onClose: () => void; onDone: () => void }>;
   visible?: (row: T) => boolean;
   /** Permission needed on `slug` (default `update`; anything but `read` is also off under "all farms"). */
   permission?: Action;
 };
+
+/**
+ * An extra per-row button next to the built-in edit and delete ones. It has exactly one of:
+ * - `run`: `refresh` reloads the page data; `notify` shows a message above the table. A rejection is shown as an error;
+ * - `dialog`: a dialog the page opens for the row. It calls `onDone` after a successful write (the dialog is
+ *   closed and the list refetched) or `onClose` to cancel. Lets a config-only module (no page component of its
+ *   own) open dialogs.
+ */
+export type RowAction<T> = RowActionBase<T> &
+  (
+    | {
+        run: (row: T, helpers: { refresh(): void; notify(message: string): void }) => void | Promise<void>;
+        dialog?: never;
+      }
+    | { dialog: ComponentType<{ row: T; onClose: () => void; onDone: () => void }>; run?: never }
+  );
 
 export type FormMap = Record<string, unknown>;
 

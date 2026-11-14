@@ -3,9 +3,9 @@ import { ActionDialog } from '../components/module/ActionDialog';
 import type { Field, ModuleConfig, RowAction, StatusDef } from '../components/module/types';
 import { Pill, type PillTone } from '../components/ui/Pill';
 import { api } from '../lib/api';
-import { formatNumber } from '../lib/format';
+import { formatNumber, formatPct } from '../lib/format';
 import { orDash, today } from './lotsShared';
-import { pct, useBuildingOptions, useLayingBatchOptions } from './productionShared';
+import { RecordForm, useBuildingOptions, useLayingBatchOptions } from './productionShared';
 
 /* ---------------------------------------------------------------------------------------------
  * API shapes (backend contract of `/egg-production` and `/incubations`, task 4).
@@ -65,20 +65,23 @@ function EggForm({ row, scope, onSaved, onClose }: { row?: EggRecord; scope?: Re
   const lots = useLayingBatchOptions();
   const fields: Field[] = [
     { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: today() },
-    ...(row || scope?.batchId ? [] : [{ name: 'batchId', label: 'Lot', type: 'select', required: true, options: lots } as Field]),
+    ...(scope?.batchId ? [] : [{ name: 'batchId', label: 'Lot', type: 'select', required: true, only: 'create', options: lots } as Field]),
     count('collected', 'Œufs collectés', { required: true }),
     count('broken', 'Œufs cassés', { defaultValue: 0 }),
     count('downgraded', 'Œufs déclassés', { defaultValue: 0 }),
     count('toIncubation', 'Mis en incubation', { defaultValue: 0 }),
   ];
   return (
-    <ActionDialog
-      title={`${row ? 'Modifier' : 'Ajouter'} — Ponte & œufs`}
+    <RecordForm
+      label="Ponte & œufs"
+      row={row}
       fields={fields}
       initial={row as unknown as Record<string, unknown>}
-      onSubmit={(body) => (row ? api.patch(`/egg-production/${row.id}`, body) : api.post('/egg-production', { ...(body as object), ...scope }))}
+      createPath="/egg-production"
+      patchPath={(r) => `/egg-production/${r.id}`}
+      scope={scope}
+      onSaved={onSaved}
       onClose={onClose}
-      onDone={onSaved}
     />
   );
 }
@@ -90,15 +93,17 @@ function IncubationForm({ row, onSaved, onClose }: { row?: Incubation; scope?: R
     { name: 'sourceBatchId', label: "Lot d'origine", type: 'select', options: lots, only: 'create' },
     { name: 'startDate', label: 'Date de début', type: 'date', required: true, defaultValue: today() },
     { name: 'eggsSet', label: 'Œufs incubés', type: 'number', required: true, min: 1, step: 1 },
-  ].filter((f) => !f.only || !row) as Field[];
+  ];
   return (
-    <ActionDialog
-      title={`${row ? 'Modifier' : 'Ajouter'} — Incubation`}
+    <RecordForm
+      label="Incubation"
+      row={row}
       fields={fields}
       initial={row as unknown as Record<string, unknown>}
-      onSubmit={(body) => (row ? api.patch(`/incubations/${row.id}`, body) : api.post('/incubations', body))}
+      createPath="/incubations"
+      patchPath={(r) => `/incubations/${r.id}`}
+      onSaved={onSaved}
       onClose={onClose}
-      onDone={onSaved}
     />
   );
 }
@@ -175,7 +180,7 @@ export const incubations: ModuleConfig<Incubation> = {
     { key: 'fertileEggs', header: 'FERTILES', render: (i) => orDash(i.fertileEggs) },
     { key: 'expectedHatchDate', header: 'ÉCLOSION PRÉVUE' },
     { key: 'chicksHatched', header: 'POUSSINS', render: (i) => orDash(i.chicksHatched) },
-    { key: 'hatchRate', header: "TAUX D'ÉCLOSION", render: (i) => pct(i.hatchRate) },
+    { key: 'hatchRate', header: "TAUX D'ÉCLOSION", render: (i) => orDash(i.hatchRate, formatPct) },
     { key: 'status', header: 'STATUT' },
   ],
   fields: [],
@@ -203,7 +208,7 @@ export const ponte: ModuleConfig<EggRecord> = {
     {
       key: 'breakageRate',
       header: 'TAUX DE CASSE',
-      render: (e) => (e.breakageRate === null ? '—' : <Pill tone={breakageTone(e.breakageRate)}>{pct(e.breakageRate)}</Pill>),
+      render: (e) => (e.breakageRate === null ? '—' : <Pill tone={breakageTone(e.breakageRate)}>{formatPct(e.breakageRate)}</Pill>),
     },
   ],
   fields: [],

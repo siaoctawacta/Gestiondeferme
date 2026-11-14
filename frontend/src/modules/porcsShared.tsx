@@ -27,11 +27,23 @@ export interface HerdRow {
   status: string;
 }
 
-/** `GET /animals/:id`: the list fields plus the pedigree and the exit. */
-export interface AnimalDetailData extends HerdRow {
+/** `GET /animals/:id`. */
+export interface AnimalDetailData {
+  id: string;
+  tag: string;
+  category: 'TRUIE' | 'VERRAT' | 'COCHETTE';
   sex: 'F' | 'M';
+  breedId: string | null;
+  breedName: string | null;
+  buildingId: string;
+  buildingName: string;
+  birthDate: string | null;
+  sireId: string | null;
   sireTag: string | null;
+  damId: string | null;
   damTag: string | null;
+  status: string;
+  weightKg: number | null;
   exitDate: string | null;
   exitReason: string | null;
   notes: string | null;
@@ -80,7 +92,6 @@ export const LOT_TYPES = [
 ];
 
 /** Category enum for a list label (`Truie` → `TRUIE`); unknown values come back unchanged. */
-export const categoryValue = (label: string) => ANIMAL_CATEGORIES.find((c) => c.label === label || c.value === label)?.value ?? label;
 export const categoryLabel = (value: string) => ANIMAL_CATEGORIES.find((c) => c.value === value)?.label ?? value;
 
 export const STATUSES: StatusDef[] = [
@@ -141,7 +152,8 @@ export function animalWeighings(animalId: string): ModuleConfig<AnimalWeighing> 
 /** Heats of one sow. */
 export function animalHeats(animalId: string): ModuleConfig<Heat> {
   return {
-    slug: 'porcs',
+    // The API serves heats and breeding history under the `reproduction` module.
+    slug: 'reproduction',
     exportable: false,
     group: 'Production',
     title: 'Chaleurs',

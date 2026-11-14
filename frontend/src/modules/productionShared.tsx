@@ -1,10 +1,10 @@
+import type { ReactNode } from 'react';
 import { api } from '../lib/api';
 import { useFarmQuery } from '../lib/query';
-import type { ListResponse } from '../components/module/types';
+import { ActionDialog } from '../components/module/ActionDialog';
+import type { Field, ListResponse } from '../components/module/types';
 import type { Option } from '../components/module/useEndpointOptions';
 
-/** Percentage with one decimal and no space before `%`; `—` when there is no figure. */
-export const pct = (n: number | null | undefined) => (n === null || n === undefined ? '—' : `${n.toFixed(1)}%`);
 
 const PAGE_SIZE = 200;
 
@@ -34,4 +34,45 @@ export function useLayingBatchOptions(): Option[] {
     () => allPages('/batches', { species: 'AVICOLE', status: 'EN_COURS' }),
   );
   return (data ?? []).filter((b) => b.type === 'PONDEUSE' || b.type === 'REPRODUCTEUR').map((b) => ({ value: b.id, label: b.code }));
+}
+
+type Values = Record<string, unknown>;
+
+export interface RecordFormProps {
+  /** Dialog title suffix: `Ajouter — {label}` / `Modifier — {label}`. */
+  label: string;
+  /** The record being edited; absent when adding. */
+  row?: { id: string };
+  fields: Field[] | ((values: Values) => Field[]);
+  initial?: Values;
+  intro?: ReactNode;
+  toPayload?: (values: Values) => unknown;
+  /** `POST` target when adding. */
+  createPath: string;
+  /** `PATCH` target when editing. */
+  patchPath: (row: { id: string }) => string;
+  /** Fixed values merged into the create body (the list's scope). */
+  scope?: Record<string, string>;
+  onSaved: () => void;
+  onClose: () => void;
+}
+
+/**
+ * The add / edit dialog of a record whose form is custom: `POST createPath` (with the scope) or `PATCH` the row.
+ * An edit that changes nothing (empty body) sends no request and just closes.
+ */
+export function RecordForm({ label, row, createPath, patchPath, scope, onSaved, onClose, ...rest }: RecordFormProps) {
+  return (
+    <ActionDialog
+      {...rest}
+      title={`${row ? 'Modifier' : 'Ajouter'} — ${label}`}
+      mode={row ? 'update' : 'create'}
+      onSubmit={async (body) => {
+        if (!row) await api.post(createPath, { ...(body as object), ...scope });
+        else if (Object.keys(body as object).length > 0) await api.patch(patchPath(row), body);
+      }}
+      onClose={onClose}
+      onDone={onSaved}
+    />
+  );
 }

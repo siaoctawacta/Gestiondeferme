@@ -12,6 +12,7 @@ import { ApiError, api } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { formatNumber } from '../../lib/format';
 import { farmKey, useFarmQuery } from '../../lib/query';
+import { BREEDING_STATUSES } from '../../modules/breedingShared';
 import { today } from '../../modules/lotsShared';
 import {
   ageLabel, animalHeats, animalWeighings, categoryLabel, statusDef, type AnimalDetailData, type BreedingHistory,
@@ -29,7 +30,7 @@ const dash = (v: number | null | undefined, fmt: (n: number) => string) => (v ==
 function ExitDialog({ animal, onClose, onDone }: { animal: AnimalDetailData; onClose: () => void; onDone: () => void }) {
   return (
     <ActionDialog
-      title={`Sortie — ${animal.identifier}`}
+      title={`Sortie — ${animal.tag}`}
       fields={[
         { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: today() },
         { name: 'reason', label: 'Motif', type: 'select', required: true, options: EXIT_REASONS },
@@ -81,7 +82,7 @@ function BreedingTab({ animalId }: { animalId: string }) {
                 <TD>{dash(r.bornTotal, formatNumber)}</TD>
                 <TD>{dash(r.bornAlive, formatNumber)}</TD>
                 <TD>{dash(r.weanedCount, formatNumber)}</TD>
-                <TD>{BREEDING_STATUS[r.status] ?? r.status}</TD>
+                <TD>{breedingStatus(r.status)}</TD>
               </TR>
             ))}
           </tbody>
@@ -91,7 +92,10 @@ function BreedingTab({ animalId }: { animalId: string }) {
   );
 }
 
-const BREEDING_STATUS: Record<string, string> = { GESTATION: 'Gestation', MISE_BAS: 'Mise bas', SEVRAGE: 'Sevrage', ECHEC: 'Échec' };
+function breedingStatus(value: string) {
+  const def = BREEDING_STATUSES.find((s) => s.value === value);
+  return def ? <Pill tone={def.tone}>{def.label}</Pill> : value;
+}
 
 /** `/m/porcs/:id`: one animal with its key figures, weighings, breeding history and heats. */
 export function AnimalDetail({ id }: { id: string }) {
@@ -109,8 +113,9 @@ export function AnimalDetail({ id }: { id: string }) {
   }
 
   const animal = query.data;
-  const status = statusDef(animal);
-  const female = animal.sex === 'F';
+  const status = statusDef({ kind: 'ANIMAL', status: animal.status });
+  // Heats and breeding history belong to the `reproduction` module, whatever the animal's own permissions.
+  const breeding = animal.sex === 'F' && can('reproduction', 'read');
   const left = animal.exitDate !== null || ['VENDU', 'MORT', 'REFORME'].includes(animal.status);
   const canManage = can('porcs', 'update') && farmId !== 'all';
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
@@ -119,7 +124,7 @@ export function AnimalDetail({ id }: { id: string }) {
     <>
       <DetailLayout
         back={{ to: '/m/porcs', label: 'Cheptel porcin' }}
-        title={animal.identifier}
+        title={animal.tag}
         subtitle={[categoryLabel(animal.category), animal.breedName, animal.buildingName].filter(Boolean).join(' · ')}
         status={<Pill tone={status.tone}>{status.label}</Pill>}
         actions={canManage && !left && <Button variant="outline" onClick={() => setExiting(true)}>Sortie</Button>}
@@ -130,8 +135,8 @@ export function AnimalDetail({ id }: { id: string }) {
         ]}
         tabs={[
           { key: 'weighings', label: 'Pesées', content: <ModuleList config={weighings} readOnly={left} /> },
-          ...(female ? [{ key: 'breeding', label: 'Reproduction', content: <BreedingTab animalId={id} /> }] : []),
-          ...(female ? [{ key: 'heats', label: 'Chaleurs', content: <ModuleList config={heats} readOnly={left} /> }] : []),
+          ...(breeding ? [{ key: 'breeding', label: 'Reproduction', content: <BreedingTab animalId={id} /> }] : []),
+          ...(breeding ? [{ key: 'heats', label: 'Chaleurs', content: <ModuleList config={heats} readOnly={left} /> }] : []),
         ]}
       />
       {exiting && <ExitDialog animal={animal} onClose={() => setExiting(false)} onDone={() => { setExiting(false); refresh(); }} />}

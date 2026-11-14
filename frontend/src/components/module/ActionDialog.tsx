@@ -4,7 +4,7 @@ import { Button } from '../ui/Button';
 import { Dialog } from '../ui/Dialog';
 import { errorMessage } from './errorMessage';
 import { FieldInput, defaultPayload, initialValue, validate } from './RecordDialog';
-import type { Field } from './types';
+import type { Field, FormMode } from './types';
 
 type Values = Record<string, unknown>;
 
@@ -19,6 +19,8 @@ export interface ActionDialogProps {
   initial?: Values;
   /** Text above the inputs. */
   intro?: ReactNode;
+  /** Fields with `only` for the other mode are left out (default `create`). */
+  mode?: FormMode;
   submitLabel?: string;
   /** Form values to request body (default: the shown fields, numbers coerced, empty optional text left out). */
   toPayload?: (values: Values) => unknown;
@@ -35,25 +37,26 @@ export interface ActionDialogProps {
  * on a record use this one.
  */
 export function ActionDialog({
-  title, fields, initial = {}, intro, submitLabel = 'Enregistrer', toPayload, onSubmit, onClose, onDone,
+  title, fields, initial = {}, intro, mode = 'create', submitLabel = 'Enregistrer', toPayload, onSubmit, onClose, onDone,
 }: ActionDialogProps) {
   const [edited, setEdited] = useState<Values>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const shown = typeof fields === 'function' ? fields({ ...initial, ...edited }) : fields;
+  const all = typeof fields === 'function' ? fields({ ...initial, ...edited }) : fields;
+  const shown = all.filter((f) => !f.only || f.only === mode);
   const values = valuesOf(edited, initial, shown);
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const invalid = validate(shown, values, 'create');
+    const invalid = validate(shown, values, mode);
     if (invalid) return setError(invalid);
     setBusy(true);
     setError(null);
     try {
       const body = toPayload
         ? toPayload(values)
-        : Object.fromEntries(Object.entries(defaultPayload(shown, values, 'create')).filter(([, v]) => v !== ''));
+        : Object.fromEntries(Object.entries(defaultPayload(shown, values, mode)).filter(([, v]) => v !== ''));
       await onSubmit(body);
       onDone();
     } catch (err) {
