@@ -102,6 +102,7 @@ export async function createUser(opts: {
   farmIds?: string[];
   active?: boolean;
   name?: string;
+  passwordHash?: string;
 }) {
   const prisma = new PrismaService();
   try {
@@ -113,7 +114,7 @@ export async function createUser(opts: {
         active: opts.active ?? true,
         name: opts.name ?? `User ${userSeq}`,
         email: `user${userSeq}-${Date.now()}@test.local`,
-        passwordHash: 'not-a-real-hash',
+        passwordHash: opts.passwordHash ?? 'not-a-real-hash',
         farms: {
           create: (opts.farmIds ?? []).map((farmId) => ({ farmId })),
         },

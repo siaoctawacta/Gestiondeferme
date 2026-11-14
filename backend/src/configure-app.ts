@@ -9,11 +9,15 @@ export function configureApp(app: INestApplication): void {
   if (!secret || secret.length < 32) {
     throw new Error('JWT_SECRET must be set and at least 32 characters long');
   }
+  const webOrigin = process.env.WEB_ORIGIN;
+  if (!webOrigin) {
+    throw new Error('WEB_ORIGIN must be set (CORS never allows any origin)');
+  }
   app.setGlobalPrefix('api');
   app.use(helmet());
   app.use(cookieParser());
   app.enableCors({
-    origin: process.env.WEB_ORIGIN,
+    origin: webOrigin,
     credentials: true,
   });
   app.useGlobalPipes(

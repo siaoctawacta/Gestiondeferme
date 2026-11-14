@@ -31,13 +31,6 @@ describe('Health & validation (e2e)', () => {
     );
   });
 
-  it('stub login answers 501 for a valid body', async () => {
-    const res = await request(app.getHttpServer() as App)
-      .post('/api/auth/login')
-      .send({ email: 'user@example.com', password: 'x' });
-    expect(res.status).toBe(501);
-  });
-
   it('serves Swagger UI at /api/docs', async () => {
     const res = await request(app.getHttpServer() as App).get('/api/docs');
     expect(res.status).toBe(200);

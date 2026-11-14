@@ -20,14 +20,18 @@ function secret(): string {
   return s;
 }
 
-export function signAccessToken(claims: AccessClaims): string {
+/** `expiresInSeconds` overrides the default 15-minute lifetime (used for the short-lived 2fa/setup tokens). */
+export function signAccessToken(
+  claims: AccessClaims,
+  expiresInSeconds: number = ACCESS_TOKEN_TTL_SECONDS,
+): string {
   return jwt.sign(
     { role: claims.role, org: claims.org, stage: claims.stage },
     secret(),
     {
       algorithm: 'HS256',
       subject: claims.sub,
-      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+      expiresIn: expiresInSeconds,
     },
   );
 }
