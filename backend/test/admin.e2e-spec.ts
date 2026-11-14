@@ -156,6 +156,43 @@ describe('Administration resources (e2e)', () => {
         .expect(200);
     });
 
+    it('keeps capacity >= occupation when a capacity cut races a lot creation', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const b = (
+        await http()
+          .post('/api/buildings')
+          .set(headers)
+          .send(building({ capacity: 1000 }))
+      ).body as BuildingItem;
+      for (let i = 0; i < 4; i += 1) {
+        const [patch, create] = await Promise.all([
+          http()
+            .patch(`/api/buildings/${b.id}`)
+            .set(headers)
+            .send({ capacity: 500 }),
+          http().post('/api/batches').set(headers).send({
+            species: 'AVICOLE',
+            type: 'CHAIR',
+            buildingId: b.id,
+            entryDate: '2026-01-01',
+            initialCount: 800,
+          }),
+        ]);
+        const outcome = `${patch.status}/${create.status}`;
+        // exactly one of the two lost, with a 400 (never a 500)
+        expect(['200/400', '400/201']).toContain(outcome);
+        const now = (await http().get(`/api/buildings/${b.id}`).set(headers))
+          .body as BuildingItem;
+        expect(now.capacity).toBeGreaterThanOrEqual(now.occupation);
+        // reset for the next round
+        await prisma.animalBatch.deleteMany({ where: { buildingId: b.id } });
+        await prisma.building.update({
+          where: { id: b.id },
+          data: { capacity: 1000 },
+        });
+      }
+    });
+
     it('lists with siteName, occupation 0, rate 0 and statusCounts', async () => {
       const { headers } = await actor('DIRECTEUR_FERME');
       await http().post('/api/buildings').set(headers).send(building());

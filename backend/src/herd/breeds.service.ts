@@ -1,7 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
-import type { AuditableService } from '../audit/audited.decorator';
 import type { Breed, Prisma } from '../generated/prisma/client';
 import type { AuditAction, Species } from '../generated/prisma/enums';
 import { orConflict } from '../listing/list-helpers';
@@ -24,7 +23,7 @@ const toItem = (b: Breed): BreedItem => ({
 });
 
 @Injectable()
-export class BreedsService implements AuditableService {
+export class BreedsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
@@ -101,14 +100,10 @@ export class BreedsService implements AuditableService {
     );
   }
 
-  findForAudit(id: string, ctx: RequestContext) {
-    return this.prisma.breed.findFirst({
+  private async load(ctx: RequestContext, id: string): Promise<Breed> {
+    const breed = await this.prisma.breed.findFirst({
       where: { id, organizationId: ctx.user.organizationId },
     });
-  }
-
-  private async load(ctx: RequestContext, id: string): Promise<Breed> {
-    const breed = await this.findForAudit(id, ctx);
     if (!breed) throw new NotFoundException('Souche introuvable');
     return breed;
   }

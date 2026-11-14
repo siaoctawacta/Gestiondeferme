@@ -143,7 +143,7 @@ export class HerdLedgerService implements OccupationSource {
   }
 
   /** Same lock on the building row, taken before an occupation check so two batches cannot overfill it together. */
-  private async lockBuilding(tx: Tx, buildingId: string): Promise<void> {
+  async lockBuilding(tx: Tx, buildingId: string): Promise<void> {
     await tx.$queryRaw`SELECT id FROM "Building" WHERE id = ${buildingId} FOR NO KEY UPDATE`;
   }
 

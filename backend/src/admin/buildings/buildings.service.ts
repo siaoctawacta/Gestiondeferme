@@ -10,6 +10,7 @@ import type { Prisma } from '../../generated/prisma/client';
 import { BuildingStatus, BuildingType } from '../../generated/prisma/enums';
 import type { ExportColumn } from '../../listing/export';
 import { ListQueryDto, orderBy } from '../../listing/list-query.dto';
+import { HerdLedgerService } from '../../herd/herd-ledger.service';
 import { OccupationRegistry } from '../../herd/occupation';
 import { occupationRate } from '../../indicators/indicators';
 import { PrismaService } from '../../prisma/prisma.service';
@@ -64,6 +65,7 @@ export class BuildingsService implements AuditableService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly occupation: OccupationRegistry,
+    private readonly ledger: HerdLedgerService,
   ) {}
 
   /** Animals currently housed per building, summed over every registered source (lots, individual animals). */
@@ -193,17 +195,28 @@ export class BuildingsService implements AuditableService {
   ): Promise<BuildingItem> {
     const current = await this.load(id, ctx);
     if (dto.siteId) await this.assertSiteInFarm(dto.siteId, ctx.farmId!);
-    if (dto.capacity !== undefined) {
-      const occupied =
-        (await this.occupationOf([current.farmId], [id])).get(id) ?? 0;
-      if (dto.capacity < occupied) {
-        throw new BadRequestException(
-          `La capacité ne peut pas être inférieure à l'occupation actuelle (${occupied})`,
-        );
-      }
-    }
     const updated = await orConflict(() =>
-      this.prisma.building.update({ where: { id }, data: dto, include }),
+      this.prisma.$transaction(async (tx) => {
+        if (dto.capacity !== undefined) {
+          // Same lock the herd ledger takes before its capacity check, so a
+          // concurrent lot creation or transfer cannot slip past the new floor.
+          await this.ledger.lockBuilding(tx, id);
+          const occupied =
+            (
+              await this.occupation.occupationByBuilding(
+                [current.farmId],
+                [id],
+                tx,
+              )
+            ).get(id) ?? 0;
+          if (dto.capacity < occupied) {
+            throw new BadRequestException(
+              `La capacité ne peut pas être inférieure à l'occupation actuelle (${occupied})`,
+            );
+          }
+        }
+        return tx.building.update({ where: { id }, data: dto, include });
+      }),
     );
     return (await this.toItems([updated]))[0];
   }
