@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { RequestContext } from '../../access/decorators';
-import { formatDay } from '../../herd/days';
+import { addDays, formatDay, today } from '../../herd/days';
 import { HerdLedgerService } from '../../herd/herd-ledger.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AlertsRegistry } from './alerts-registry';
@@ -13,16 +13,10 @@ import {
   type MortalityLot,
 } from './production-alerts';
 
-const DAY_MS = 86_400_000;
-const addDays = (date: Date, n: number) =>
-  new Date(date.getTime() + n * DAY_MS);
-const utcDay = (now: Date) =>
-  new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-
-/** One day's total for a lot or a building. */
+/** One day's total for a lot or a building of a farm. */
 interface DayTotal {
-  batchId: string | null;
-  buildingId: string | null;
+  farmId: string;
+  targetId: string;
   date: Date;
   total: number;
 }
@@ -47,33 +41,43 @@ export class ProductionAlertsService implements AlertData, OnModuleInit {
   async mortalityLots(ctx: RequestContext, now: Date): Promise<MortalityLot[]> {
     const lots = await this.prisma.animalBatch.findMany({
       where: { farmId: { in: ctx.farmIds }, status: 'EN_COURS' },
-      select: { id: true, code: true, species: true, initialCount: true },
+      select: {
+        id: true,
+        code: true,
+        species: true,
+        initialCount: true,
+        entryDate: true,
+      },
     });
     if (lots.length === 0) return [];
     const ids = lots.map((l) => l.id);
-    const today = utcDay(now);
-    const yesterday = addDays(today, -1);
+    const day0 = today(now);
+    const yesterday = addDays(day0, -1);
     const [deaths, liveYesterdayStart, liveTodayStart, days] =
       await Promise.all([
         this.ledger.deaths(ids),
-        this.ledger.liveCounts(ids, addDays(today, -2)),
+        this.ledger.liveCounts(ids, addDays(day0, -2)),
         this.ledger.liveCounts(ids, yesterday),
         this.prisma.batchEvent.groupBy({
           by: ['batchId', 'date'],
           where: {
             batchId: { in: ids },
             type: 'MORTALITE',
-            date: { gte: yesterday, lte: today },
+            date: { gte: yesterday, lte: day0 },
           },
           _sum: { quantity: true },
         }),
       ]);
+    const byId = new Map(lots.map((l) => [l.id, l]));
     const recent = new Map<string, DeathDay[]>();
     for (const d of days) {
-      const isToday = d.date.getTime() === today.getTime();
-      const live = (isToday ? liveTodayStart : liveYesterdayStart).get(
-        d.batchId,
-      );
+      const isToday = d.date.getTime() === day0.getTime();
+      const lot = byId.get(d.batchId);
+      // On its arrival day a lot starts with its opening count.
+      const live =
+        lot?.entryDate.getTime() === d.date.getTime()
+          ? lot.initialCount
+          : (isToday ? liveTodayStart : liveYesterdayStart).get(d.batchId);
       recent.set(d.batchId, [
         ...(recent.get(d.batchId) ?? []),
         {
@@ -84,7 +88,10 @@ export class ProductionAlertsService implements AlertData, OnModuleInit {
       ]);
     }
     return lots.map((l) => ({
-      ...l,
+      id: l.id,
+      code: l.code,
+      species: l.species,
+      initialCount: l.initialCount,
       deaths: deaths.get(l.id) ?? 0,
       recentDays: recent.get(l.id) ?? [],
     }));
@@ -106,84 +113,88 @@ export class ProductionAlertsService implements AlertData, OnModuleInit {
     }));
   }
 
+  /**
+   * Each farm is judged on its own latest recorded day (today or yesterday),
+   * with one grouped query per table whatever the number of farms.
+   */
   async consumption(
     ctx: RequestContext,
     now: Date,
   ): Promise<ConsumptionSeries[]> {
     const farmId = { in: ctx.farmIds };
+    const earliest = addDays(today(now), -1);
     const [feedLatest, waterLatest] = await Promise.all([
-      this.prisma.feedDistribution.aggregate({
+      this.prisma.feedDistribution.groupBy({
+        by: ['farmId'],
         where: { farmId },
         _max: { date: true },
       }),
-      this.prisma.waterConsumption.aggregate({
+      this.prisma.waterConsumption.groupBy({
+        by: ['farmId'],
         where: { farmId },
         _max: { date: true },
       }),
     ]);
-    const earliest = addDays(utcDay(now), -1);
-    const feedDay = feedLatest._max.date;
-    const waterDay = waterLatest._max.date;
-    const [feed, water] = await Promise.all([
-      feedDay && feedDay >= earliest
-        ? this.feedTotals(ctx, feedDay)
-        : Promise.resolve([]),
-      waterDay && waterDay >= earliest
-        ? this.waterTotals(ctx, waterDay)
-        : Promise.resolve([]),
-    ]);
-    const labels = await this.labels([...feed, ...water]);
-    return [
-      ...this.series('feed', feedDay, feed, labels),
-      ...this.series('water', waterDay, water, labels),
-    ];
-  }
-
-  private async feedTotals(ctx: RequestContext, latest: Date) {
-    const rows = await this.prisma.feedDistribution.groupBy({
-      by: ['batchId', 'buildingId', 'date'],
-      where: {
-        farmId: { in: ctx.farmIds },
+    const recent = (rows: { farmId: string; _max: { date: Date | null } }[]) =>
+      new Map(
+        rows.flatMap((r) =>
+          r._max.date && r._max.date >= earliest
+            ? [[r.farmId, r._max.date] as [string, Date]]
+            : [],
+        ),
+      );
+    const feedDays = recent(feedLatest);
+    const waterDays = recent(waterLatest);
+    const window = (days: Map<string, Date>) =>
+      [...days].map(([id, latest]) => ({
+        farmId: id,
         date: { gte: addDays(latest, -7), lte: latest },
-      },
-      _sum: { quantityKg: true },
-    });
-    return rows.map((r): DayTotal => ({
-      batchId: r.batchId,
-      buildingId: r.buildingId,
+      }));
+    const [feedRows, waterRows] = await Promise.all([
+      feedDays.size === 0
+        ? []
+        : this.prisma.feedDistribution.groupBy({
+            by: ['farmId', 'batchId', 'buildingId', 'date'],
+            where: { OR: window(feedDays) },
+            _sum: { quantityKg: true },
+          }),
+      waterDays.size === 0
+        ? []
+        : this.prisma.waterConsumption.groupBy({
+            by: ['farmId', 'batchId', 'buildingId', 'date'],
+            where: { OR: window(waterDays) },
+            _sum: { liters: true },
+          }),
+    ]);
+    const feed = feedRows.map((r) => ({
+      farmId: r.farmId,
+      targetId: r.batchId ?? r.buildingId ?? '',
       date: r.date,
       total: Number(r._sum.quantityKg ?? 0),
     }));
-  }
-
-  private async waterTotals(ctx: RequestContext, latest: Date) {
-    const rows = await this.prisma.waterConsumption.groupBy({
-      by: ['batchId', 'buildingId', 'date'],
-      where: {
-        farmId: { in: ctx.farmIds },
-        date: { gte: addDays(latest, -7), lte: latest },
-      },
-      _sum: { liters: true },
-    });
-    return rows.map((r): DayTotal => ({
-      batchId: r.batchId,
-      buildingId: r.buildingId,
+    const water = waterRows.map((r) => ({
+      farmId: r.farmId,
+      targetId: r.batchId ?? r.buildingId ?? '',
       date: r.date,
       total: Number(r._sum.liters ?? 0),
     }));
+    const labels = await this.labels([...feed, ...water]);
+    return [
+      ...this.series('feed', feedDays, feed, labels),
+      ...this.series('water', waterDays, water, labels),
+    ];
   }
 
   /** Lot codes and building names for every target of the totals, in two queries. */
   private async labels(totals: DayTotal[]): Promise<Map<string, string>> {
-    const batchIds = [...new Set(totals.flatMap((t) => t.batchId ?? []))];
-    const buildingIds = [...new Set(totals.flatMap((t) => t.buildingId ?? []))];
+    const ids = [...new Set(totals.map((t) => t.targetId))];
     const [batches, buildings] = await Promise.all([
       this.prisma.animalBatch.findMany({
-        where: { id: { in: batchIds } },
+        where: { id: { in: ids } },
         select: { id: true, code: true },
       }),
       this.prisma.building.findMany({
-        where: { id: { in: buildingIds } },
+        where: { id: { in: ids } },
         select: { id: true, name: true },
       }),
     ]);
@@ -193,31 +204,40 @@ export class ProductionAlertsService implements AlertData, OnModuleInit {
     ]);
   }
 
+  /** One series per target that has a record on its farm's latest day; targets of one id sum their rows per day. */
   private series(
     kind: ConsumptionSeries['kind'],
-    latest: Date | null,
+    latestByFarm: Map<string, Date>,
     totals: DayTotal[],
     labels: Map<string, string>,
   ): ConsumptionSeries[] {
-    if (!latest || totals.length === 0) return [];
-    const byTarget = new Map<string, DayTotal[]>();
+    const byTarget = new Map<
+      string,
+      { farmId: string; days: Map<number, number> }
+    >();
     for (const t of totals) {
-      const id = t.batchId ?? t.buildingId ?? '';
-      byTarget.set(id, [...(byTarget.get(id) ?? []), t]);
+      const entry = byTarget.get(t.targetId) ?? {
+        farmId: t.farmId,
+        days: new Map<number, number>(),
+      };
+      const ms = t.date.getTime();
+      entry.days.set(ms, (entry.days.get(ms) ?? 0) + t.total);
+      byTarget.set(t.targetId, entry);
     }
     const result: ConsumptionSeries[] = [];
-    for (const [targetId, rows] of byTarget) {
-      const last = rows.find((r) => r.date.getTime() === latest.getTime());
-      if (!last) continue;
+    for (const [targetId, { farmId, days }] of byTarget) {
+      const latest = latestByFarm.get(farmId);
+      const value = latest ? days.get(latest.getTime()) : undefined;
+      if (!latest || value === undefined) continue;
       result.push({
         kind,
         targetId,
         label: labels.get(targetId) ?? targetId,
         date: formatDay(latest),
-        value: last.total,
-        previous: rows
-          .filter((r) => r.date.getTime() < latest.getTime())
-          .map((r) => r.total),
+        value,
+        previous: [...days]
+          .filter(([ms]) => ms < latest.getTime())
+          .map(([, total]) => total),
       });
     }
     return result;

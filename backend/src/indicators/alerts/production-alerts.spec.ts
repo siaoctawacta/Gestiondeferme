@@ -2,10 +2,13 @@ import {
   consumptionAlerts,
   farrowingAlerts,
   mortalityAlerts,
+  productionAlertRules,
+  type AlertData,
   type ConsumptionSeries,
   type Gestation,
   type MortalityLot,
 } from './production-alerts';
+import type { RequestContext } from '../../access/decorators';
 import type { AlertSettings } from './alert.types';
 
 const SETTINGS: AlertSettings = {
@@ -79,6 +82,24 @@ describe('mortalityAlerts', () => {
       SETTINGS,
     );
     expect(alert.module).toBe('porcs');
+  });
+});
+
+describe('mortality thresholds are compared on raw rates', () => {
+  it('cumulative: alerts at the threshold, not below, not by rounding', () => {
+    const at = lot({ initialCount: 3000, deaths: 90 });
+    expect(mortalityAlerts([at], SETTINGS)).toHaveLength(1);
+    const below = lot({ initialCount: 3000, deaths: 89 });
+    expect(mortalityAlerts([below], SETTINGS)).toEqual([]);
+  });
+
+  it('daily: alerts at the threshold, not below, not by rounding', () => {
+    const day = (deaths: number) =>
+      lot({
+        recentDays: [{ date: '2026-11-14', deaths, liveAtStart: 2000 }],
+      });
+    expect(mortalityAlerts([day(10)], SETTINGS)[0]?.level).toBe('URGENT');
+    expect(mortalityAlerts([day(9)], SETTINGS)).toEqual([]);
   });
 });
 
@@ -157,6 +178,25 @@ describe('consumptionAlerts', () => {
     expect(water.key).toBe('consumption:t1:2026-11-13:water');
   });
 
+  it('compares the raw deviation: exact threshold alerts, just under does not', () => {
+    expect(consumptionAlerts([series({ value: 125 })], SETTINGS)).toHaveLength(
+      1,
+    );
+    expect(consumptionAlerts([series({ value: 75 })], SETTINGS)).toHaveLength(
+      1,
+    );
+    expect(consumptionAlerts([series({ value: 124.9 })], SETTINGS)).toEqual([]);
+    expect(consumptionAlerts([series({ value: 124.96 })], SETTINGS)).toEqual(
+      [],
+    );
+  });
+
+  it('judges a series with exactly 3 prior days', () => {
+    expect(
+      consumptionAlerts([series({ previous: [100, 100, 100] })], SETTINGS),
+    ).toHaveLength(1);
+  });
+
   it('stays silent inside the tolerance or with fewer than 3 prior days', () => {
     expect(consumptionAlerts([series({ value: 120 })], SETTINGS)).toEqual([]);
     expect(
@@ -165,5 +205,39 @@ describe('consumptionAlerts', () => {
     expect(
       consumptionAlerts([series({ previous: [0, 0, 0] })], SETTINGS),
     ).toEqual([]);
+  });
+});
+
+describe('productionAlertRules', () => {
+  it('builds mortality, farrowing and consumption rules in that order, reading the injected now', async () => {
+    const seen: string[] = [];
+    const data: AlertData = {
+      mortalityLots: (_ctx, now) => {
+        seen.push(`mortality ${now.toISOString()}`);
+        return Promise.resolve([lot({ deaths: 180 })]);
+      },
+      gestations: () => {
+        seen.push('gestations');
+        return Promise.resolve([
+          { id: 'r1', sowTag: 'TR-001', expectedFarrowingDate: '2026-11-10' },
+        ]);
+      },
+      consumption: (_ctx, now) => {
+        seen.push(`consumption ${now.toISOString()}`);
+        return Promise.resolve([]);
+      },
+    };
+    const rules = productionAlertRules(data, () => NOW);
+    expect(rules).toHaveLength(3);
+    const ctx = {} as RequestContext;
+    const [m, f, c] = await Promise.all(rules.map((r) => r(ctx, SETTINGS)));
+    expect(m[0].key).toBe('mortality:b1');
+    expect(f[0]).toMatchObject({
+      key: 'farrowing:r1',
+      detail: 'Dépassée depuis 4 j (2026-11-10)',
+    });
+    expect(c).toEqual([]);
+    expect(seen).toContain(`mortality ${NOW.toISOString()}`);
+    expect(seen).toContain(`consumption ${NOW.toISOString()}`);
   });
 });

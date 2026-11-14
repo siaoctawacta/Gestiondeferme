@@ -101,19 +101,18 @@ export class DashboardService {
   /** Poultry lots and their eggs, pigs; one grouped query per figure, whatever the number of lots. */
   private async kpis(ctx: RequestContext): Promise<KpisDto> {
     const farmId = { in: ctx.farmIds };
-    const [lots, pigs, eggDay] = await Promise.all([
+    const [lots, pigs] = await Promise.all([
       this.prisma.animalBatch.findMany({
         where: { farmId, species: 'AVICOLE', status: 'EN_COURS' },
         select: { id: true, initialCount: true },
       }),
       this.herdList.totalPigs(ctx.farmIds),
-      this.latestEggDay(ctx),
     ]);
     const ids = lots.map((l) => l.id);
     const [alive, deaths, laying] = await Promise.all([
       this.ledger.liveCounts(ids),
       this.ledger.deaths(ids),
-      this.layingFigures(ctx, eggDay),
+      this.layingFigures(ctx),
     ]);
     const sum = (m: Map<string, number>) =>
       [...m.values()].reduce((a, b) => a + b, 0);
@@ -130,32 +129,51 @@ export class DashboardService {
     };
   }
 
-  private async latestEggDay(ctx: RequestContext): Promise<Date | null> {
-    const latest = await this.prisma.eggProduction.aggregate({
+  /** `where` matching each farm's own latest recorded day, or null when no farm has a record. */
+  private onLatestDays(
+    rows: { farmId: string; _max: { date: Date | null } }[],
+  ): { OR: { farmId: string; date: Date }[] } | null {
+    const OR = rows.flatMap((r) =>
+      r._max.date ? [{ farmId: r.farmId, date: r._max.date }] : [],
+    );
+    return OR.length === 0 ? null : { OR };
+  }
+
+  /**
+   * Eggs collected on each farm's latest day and the hens alive that day in
+   * the lots that recorded them (one live-count query per distinct day).
+   */
+  private async layingFigures(
+    ctx: RequestContext,
+  ): Promise<{ eggs: number; hens: number }> {
+    const latest = await this.prisma.eggProduction.groupBy({
+      by: ['farmId'],
       where: { farmId: { in: ctx.farmIds } },
       _max: { date: true },
     });
-    return latest._max.date;
-  }
-
-  /** Eggs collected on `day` and the hens alive that day in the lots that recorded them. */
-  private async layingFigures(
-    ctx: RequestContext,
-    day: Date | null,
-  ): Promise<{ eggs: number; hens: number }> {
-    if (!day) return { eggs: 0, hens: 0 };
+    const onLatest = this.onLatestDays(latest);
+    if (!onLatest) return { eggs: 0, hens: 0 };
     const rows = await this.prisma.eggProduction.groupBy({
-      by: ['batchId'],
-      where: { farmId: { in: ctx.farmIds }, date: day },
+      by: ['batchId', 'date'],
+      where: onLatest,
       _sum: { collected: true },
     });
-    const alive = await this.ledger.liveCounts(
-      rows.map((r) => r.batchId),
-      day,
+    const idsByDay = new Map<number, string[]>();
+    for (const r of rows) {
+      const ms = r.date.getTime();
+      idsByDay.set(ms, [...(idsByDay.get(ms) ?? []), r.batchId]);
+    }
+    const alive = await Promise.all(
+      [...idsByDay].map(([ms, ids]) =>
+        this.ledger.liveCounts(ids, new Date(ms)),
+      ),
     );
     return {
       eggs: rows.reduce((n, r) => n + (r._sum.collected ?? 0), 0),
-      hens: [...alive.values()].reduce((a, b) => a + b, 0),
+      hens: alive.reduce(
+        (n, m) => n + [...m.values()].reduce((a, b) => a + b, 0),
+        0,
+      ),
     };
   }
 
@@ -182,28 +200,36 @@ export class DashboardService {
     };
   }
 
-  /** Total of the latest day with any distribution. */
+  /** Sum over the farms of each one's latest day with any distribution. */
   private async feedDistributedKg(ctx: RequestContext): Promise<number> {
-    const [latest] = await this.prisma.feedDistribution.groupBy({
-      by: ['date'],
+    const latest = await this.prisma.feedDistribution.groupBy({
+      by: ['farmId'],
       where: { farmId: { in: ctx.farmIds } },
-      _sum: { quantityKg: true },
-      orderBy: { date: 'desc' },
-      take: 1,
+      _max: { date: true },
     });
-    return Number(latest?._sum.quantityKg ?? 0);
+    const onLatest = this.onLatestDays(latest);
+    if (!onLatest) return 0;
+    const total = await this.prisma.feedDistribution.aggregate({
+      where: onLatest,
+      _sum: { quantityKg: true },
+    });
+    return Number(total._sum.quantityKg ?? 0);
   }
 
-  /** Total of the latest day with any water record. */
+  /** Sum over the farms of each one's latest day with any water record. */
   private async waterConsumedL(ctx: RequestContext): Promise<number> {
-    const [latest] = await this.prisma.waterConsumption.groupBy({
-      by: ['date'],
+    const latest = await this.prisma.waterConsumption.groupBy({
+      by: ['farmId'],
       where: { farmId: { in: ctx.farmIds } },
-      _sum: { liters: true },
-      orderBy: { date: 'desc' },
-      take: 1,
+      _max: { date: true },
     });
-    return Number(latest?._sum.liters ?? 0);
+    const onLatest = this.onLatestDays(latest);
+    if (!onLatest) return 0;
+    const total = await this.prisma.waterConsumption.aggregate({
+      where: onLatest,
+      _sum: { liters: true },
+    });
+    return Number(total._sum.liters ?? 0);
   }
 
   private revenueVsExpenses(): ActivityTotalsDto[] {

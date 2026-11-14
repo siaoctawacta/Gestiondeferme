@@ -1,10 +1,10 @@
 import type { RequestContext } from '../../access/decorators';
 import type { Species } from '../../generated/prisma/enums';
 import { speciesModule } from '../../herd/species';
+import { daysBetween, today } from '../../herd/days';
 import { mortalityRate, ratio } from '../indicators';
 import type { AlertItem, AlertRule, AlertSettings } from './alert.types';
 
-const DAY_MS = 86_400_000;
 /** Consumption needs this many earlier days with records before it can be judged. */
 export const MIN_PRIOR_DAYS = 3;
 
@@ -54,10 +54,17 @@ export interface AlertData {
 }
 
 /**
+ * `part / whole × 100 ≥ pct` on the raw values, so a rate that only reaches the
+ * threshold once rounded for display does not count.
+ */
+const reaches = (part: number, whole: number, pct: number): boolean =>
+  whole > 0 && part * 100 >= pct * whole;
+
+/**
  * Cumulative rate ≥ `mortalityCumulPct` is A_VOIR; a day within the last two
  * with deaths ≥ `mortalityDailyPct` of the live count is URGENT. A lot raises
- * one alert, the URGENT one when both fire. Rates are compared as displayed
- * (one decimal).
+ * one alert, the URGENT one when both fire. Thresholds are compared on the
+ * raw rate; the rounded one (one decimal) only appears in the text.
  */
 export function mortalityAlerts(
   lots: MortalityLot[],
@@ -71,22 +78,22 @@ export function mortalityAlerts(
       module: speciesModule(lot.species),
     };
     const bad = lot.recentDays
-      .map((d) => ({ ...d, rate: mortalityRate(d.deaths, d.liveAtStart) }))
-      .filter((d) => d.rate !== null && d.rate >= settings.mortalityDailyPct)
+      .filter((d) =>
+        reaches(d.deaths, d.liveAtStart, settings.mortalityDailyPct),
+      )
       .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
     if (bad) {
       alerts.push({
         ...base,
-        detail: `${bad.deaths} morts le ${bad.date} (${bad.rate}% de l'effectif)`,
+        detail: `${bad.deaths} morts le ${bad.date} (${mortalityRate(bad.deaths, bad.liveAtStart)}% de l'effectif)`,
         level: 'URGENT',
       });
       continue;
     }
-    const rate = mortalityRate(lot.deaths, lot.initialCount);
-    if (rate !== null && rate >= settings.mortalityCumulPct) {
+    if (reaches(lot.deaths, lot.initialCount, settings.mortalityCumulPct)) {
       alerts.push({
         ...base,
-        detail: `${rate}% sur ${lot.initialCount} sujets`,
+        detail: `${mortalityRate(lot.deaths, lot.initialCount)}% sur ${lot.initialCount} sujets`,
         level: 'A_VOIR',
       });
     }
@@ -101,15 +108,13 @@ export function farrowingAlerts(
   now: Date,
 ): AlertItem[] {
   const alerts: AlertItem[] = [];
-  const todayMs = Date.UTC(
-    now.getUTCFullYear(),
-    now.getUTCMonth(),
-    now.getUTCDate(),
-  );
+  const start = today(now);
   for (const r of records) {
-    const days = Math.round(
-      (new Date(r.expectedFarrowingDate).getTime() - todayMs) / DAY_MS,
-    );
+    const due = new Date(r.expectedFarrowingDate);
+    const days =
+      due.getTime() < start.getTime()
+        ? -daysBetween(due, start)
+        : daysBetween(start, due);
     const base = {
       key: `farrowing:${r.id}`,
       title: `Mise bas ${r.sowTag}`,
@@ -141,9 +146,18 @@ export function consumptionAlerts(
   for (const s of series) {
     if (s.previous.length < MIN_PRIOR_DAYS) continue;
     const average = s.previous.reduce((a, b) => a + b, 0) / s.previous.length;
+    // A zero average gives no reference to deviate from: no alert (thresholds
+    // are validated > 0 by the settings service, so there is no zero case to guard).
     if (average <= 0) continue;
-    const deviation = (Math.abs(s.value - average) / average) * 100;
-    if (deviation < settings.consumptionDeviationPct) continue;
+    if (
+      !reaches(
+        Math.abs(s.value - average),
+        average,
+        settings.consumptionDeviationPct,
+      )
+    ) {
+      continue;
+    }
     const [x, y] = [ratio(s.value, 1), ratio(average, 1)];
     alerts.push({
       key: `consumption:${s.targetId}:${s.date}:${s.kind}`,

@@ -47,3 +47,7 @@ export function assertNotBeforeEntry(entryDate: Date, date: Date): void {
     throw new BadRequestException(BEFORE_ENTRY);
   }
 }
+
+/** `date` moved by `n` whole days (calendar days at 00:00 UTC stay at 00:00 UTC). */
+export const addDays = (date: Date, n: number): Date =>
+  new Date(date.getTime() + n * MS_PER_DAY);
