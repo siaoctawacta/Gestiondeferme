@@ -84,7 +84,13 @@ export type RowAction<T> = {
   label: string;
   icon: LucideIcon;
   /** `refresh` reloads the page data; `notify` shows a message above the table. A rejection is shown as an error. */
-  run: (row: T, helpers: { refresh(): void; notify(message: string): void }) => void | Promise<void>;
+  run?: (row: T, helpers: { refresh(): void; notify(message: string): void }) => void | Promise<void>;
+  /**
+   * Instead of `run`: a dialog the page opens for the row. It calls `onDone` after a successful write (the
+   * dialog is closed and the list refetched) or `onClose` to cancel. Lets a config-only module (no page
+   * component of its own) open dialogs.
+   */
+  dialog?: ComponentType<{ row: T; onClose: () => void; onDone: () => void }>;
   visible?: (row: T) => boolean;
   /** Permission needed on `slug` (default `update`; anything but `read` is also off under "all farms"). */
   permission?: Action;

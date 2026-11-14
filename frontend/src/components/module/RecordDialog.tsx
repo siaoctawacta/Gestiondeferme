@@ -13,7 +13,7 @@ type Values = Record<string, unknown>;
 
 const LABEL = "block text-sm font-medium after:ml-0.5 after:text-destructive";
 
-function initial(field: Field, raw: Values): unknown {
+export function initialValue(field: Field, raw: Values): unknown {
   const v = raw[field.name] ?? field.defaultValue;
   switch (field.type) {
     case 'checkbox': return Boolean(v ?? false);
@@ -22,7 +22,7 @@ function initial(field: Field, raw: Values): unknown {
   }
 }
 
-function defaultPayload(fields: Field[], values: Values, mode: FormMode): Values {
+export function defaultPayload(fields: Field[], values: Values, mode: FormMode): Values {
   const out: Values = {};
   for (const f of fields) {
     if (f.only && f.only !== mode) continue;
@@ -40,7 +40,7 @@ function defaultPayload(fields: Field[], values: Values, mode: FormMode): Values
   return out;
 }
 
-function validate(fields: Field[], values: Values, mode: FormMode): string | null {
+export function validate(fields: Field[], values: Values, mode: FormMode): string | null {
   for (const f of fields) {
     if (f.only && f.only !== mode) continue;
     const v = values[f.name];
@@ -61,7 +61,7 @@ function validate(fields: Field[], values: Values, mode: FormMode): string | nul
   return null;
 }
 
-interface FieldInputProps {
+export interface FieldInputProps {
   field: Field;
   value: unknown;
   onChange: (v: unknown) => void;
@@ -107,7 +107,7 @@ function MultiSelectInput({ field, value, onChange, options }: FieldInputProps &
   );
 }
 
-function FieldInput(props: FieldInputProps & { parentValue?: string }) {
+export function FieldInput(props: FieldInputProps & { parentValue?: string }) {
   const { field, value, onChange, parentValue } = props;
   const id = useId();
   const dependsOn = field.type === 'select' ? field.dependsOn : undefined;
@@ -175,7 +175,7 @@ export function RecordDialog<T extends { id: string }>({ config, row, scope, onC
   const fields = config.fields.filter((f) => !f.only || f.only === mode);
   const [values, setValues] = useState<Values>(() => {
     const raw: Values = row ? (config.toForm ? config.toForm(row) : (row as unknown as Values)) : {};
-    return Object.fromEntries(fields.map((f) => [f.name, initial(f, raw)]));
+    return Object.fromEntries(fields.map((f) => [f.name, initialValue(f, raw)]));
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

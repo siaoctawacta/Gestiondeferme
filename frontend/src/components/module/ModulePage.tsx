@@ -20,7 +20,7 @@ import { Pagination, pageCount } from './Pagination';
 import { RecordDialog } from './RecordDialog';
 import { StatTiles, type StatTile } from './StatTiles';
 import { TabBar, panelId, tabId } from './TabBar';
-import type { FilterDef, ListResponse, ModuleConfig } from './types';
+import type { FilterDef, ListResponse, ModuleConfig, RowAction } from './types';
 import { useEndpointOptions } from './useEndpointOptions';
 import { useListState } from './useListState';
 
@@ -80,6 +80,7 @@ function ModuleView<T extends { id: string }>({
   const [tab, setTab] = useState('main');
   const [editing, setEditing] = useState<T | 'new' | null>(null);
   const [deleting, setDeleting] = useState<T | null>(null);
+  const [acting, setActing] = useState<{ action: RowAction<T>; row: T } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const onMain = tab === 'main';
 
@@ -144,9 +145,13 @@ function ModuleView<T extends { id: string }>({
       icon: a.icon,
       visible: a.visible,
       run: (row) => {
+        if (a.dialog) {
+          setActing({ action: a, row });
+          return;
+        }
         void (async () => {
           try {
-            await a.run(row, { refresh: afterWrite, notify: (message) => setNotice({ tone: 'success', message }) });
+            await a.run?.(row, { refresh: afterWrite, notify: (message) => setNotice({ tone: 'success', message }) });
           } catch (e) {
             setNotice({ tone: 'error', message: errorMessage(e) });
           }
@@ -267,6 +272,13 @@ function ModuleView<T extends { id: string }>({
           scope={scope}
           onClose={() => setEditing(null)}
           onSaved={() => { setEditing(null); afterWrite(); }}
+        />
+      )}
+      {acting?.action.dialog && (
+        <acting.action.dialog
+          row={acting.row}
+          onClose={() => setActing(null)}
+          onDone={() => { setActing(null); afterWrite(); }}
         />
       )}
       {deleting && (
