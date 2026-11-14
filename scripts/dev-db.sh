@@ -16,9 +16,9 @@ psql_admin() { su postgres -c "psql -v ON_ERROR_STOP=1 -tA $*"; }
 if [ "$(psql_admin "-c \"SELECT 1 FROM pg_roles WHERE rolname='agripilot'\"")" != "1" ]; then
   psql_admin "-c \"CREATE ROLE agripilot WITH LOGIN SUPERUSER PASSWORD 'agripilot'\""
 fi
-for db in agripilot agripilot_test; do
+for db in agripilot agripilot_test agripilot_e2e; do
   if [ "$(psql_admin "-c \"SELECT 1 FROM pg_database WHERE datname='$db'\"")" != "1" ]; then
     psql_admin "-c \"CREATE DATABASE $db OWNER agripilot\""
   fi
 done
-echo "Databases ready: agripilot, agripilot_test"
+echo "Databases ready: agripilot, agripilot_test, agripilot_e2e"

@@ -1,7 +1,13 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
-import { createTestApp, resetDb } from './setup';
+import {
+  createOrganization,
+  createTestApp,
+  createUser,
+  resetDb,
+  tokenFor,
+} from './setup';
 
 describe('Auth rate limiting (e2e)', () => {
   let app: INestApplication;
@@ -27,5 +33,24 @@ describe('Auth rate limiting (e2e)', () => {
     }
     expect(statuses.slice(0, 10)).toEqual(Array(10).fill(401));
     expect(statuses[10]).toBe(429);
+  });
+
+  it('throttles change-password like login (11th request is 429)', async () => {
+    const org = await createOrganization();
+    const user = await createUser({
+      organizationId: org.id,
+      role: 'COMMERCIAL',
+    });
+    const token = await tokenFor(user.id);
+    const statuses: number[] = [];
+    for (let i = 0; i < 11; i += 1) {
+      const res = await request(app.getHttpServer() as App)
+        .post('/api/auth/change-password')
+        .set('Authorization', `Bearer ${token}`)
+        .send({ currentPassword: 'x', newPassword: 'A-brand-new-pass-1' });
+      statuses.push(res.status);
+    }
+    expect(statuses[10]).toBe(429);
+    expect(statuses.slice(0, 10)).not.toContain(429);
   });
 });

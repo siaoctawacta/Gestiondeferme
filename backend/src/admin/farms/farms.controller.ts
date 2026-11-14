@@ -15,7 +15,7 @@ import { Ctx, NoFarm, RequirePermission } from '../../access/decorators';
 import type { RequestContext } from '../../access/decorators';
 import { Audited } from '../../audit/audited.decorator';
 import { ListQueryDto } from '../../listing/list-query.dto';
-import { sendList } from '../shared';
+import { sendList } from '../../listing/list-helpers';
 import { CreateFarmDto, UpdateFarmDto } from './farms.dto';
 import { FARM_COLUMNS, FarmsService } from './farms.service';
 

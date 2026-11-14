@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { Check, ChevronsUpDown, LogOut, UserRound } from 'lucide-react';
 import { ALL_FARMS, useAuth } from '../../lib/auth';
+import { useMenu } from '../ui/useMenu';
 
 const ALL_LABEL = 'Toutes les fermes';
 
@@ -19,18 +20,16 @@ export function FarmSwitcher() {
   const { user, farms, farmId, setFarmId, canSeeAllFarms, logout } = useAuth();
   const [open, setOpen] = useState(false);
   const root = useRef<HTMLDivElement>(null);
+  const { menuRef, triggerRef, onMenuKeyDown, closeAndFocusTrigger } = useMenu<HTMLDivElement>(open, setOpen);
 
   useEffect(() => {
     if (!open) return;
     const onDown = (e: MouseEvent) => {
       if (!root.current?.contains(e.target as Node)) setOpen(false);
     };
-    const onKey = (e: KeyboardEvent) => e.key === 'Escape' && setOpen(false);
     document.addEventListener('mousedown', onDown);
-    document.addEventListener('keydown', onKey);
     return () => {
       document.removeEventListener('mousedown', onDown);
-      document.removeEventListener('keydown', onKey);
     };
   }, [open]);
 
@@ -49,6 +48,8 @@ export function FarmSwitcher() {
     <div ref={root} className="relative">
       {open && (
         <div
+          ref={menuRef}
+          onKeyDown={onMenuKeyDown}
           role="menu"
           aria-label="Ferme et compte"
           className="absolute bottom-full left-0 right-0 mb-2 rounded-2xl border border-border bg-popover p-1 shadow-card"
@@ -62,7 +63,7 @@ export function FarmSwitcher() {
               className={item}
               onClick={() => {
                 setFarmId(o.id);
-                setOpen(false);
+                closeAndFocusTrigger();
               }}
             >
               <span className="flex-1 truncate">{o.name}</span>
@@ -81,6 +82,7 @@ export function FarmSwitcher() {
         </div>
       )}
       <button
+        ref={triggerRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}

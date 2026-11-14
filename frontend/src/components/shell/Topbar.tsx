@@ -29,7 +29,7 @@ export function Topbar({ permissions, alertCount, onMenu }: TopbarProps) {
   };
 
   return (
-    <header className="sticky top-0 z-30 flex h-[65px] items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur md:px-8">
+    <header className="sticky top-0 z-30 flex print:hidden h-[65px] items-center gap-3 border-b border-border bg-background/80 px-4 backdrop-blur md:px-8">
       <button
         type="button"
         aria-label="Ouvrir le menu"
@@ -71,7 +71,7 @@ export function Topbar({ permissions, alertCount, onMenu }: TopbarProps) {
 
       <Link
         to="/alertes"
-        aria-label="Alertes"
+        aria-label={alertCount > 0 ? `Alertes (${alertCount} ${alertCount > 1 ? 'ouvertes' : 'ouverte'})` : 'Alertes'}
         className="relative flex size-10 shrink-0 items-center justify-center rounded-full border border-border bg-card"
       >
         <Bell className="size-4" />

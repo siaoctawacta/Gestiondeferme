@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { LucideIcon } from 'lucide-react';
 import { Link } from 'react-router';
 import { ChevronDown, ChevronUp, Pencil, QrCode, Trash2 } from 'lucide-react';
 import { Table, TD, TH, THead, TR } from '../ui/Table';
@@ -10,17 +11,29 @@ export interface SortState {
   dir: 'asc' | 'desc';
 }
 
+/** A row button already filtered by permission and bound to its handler. */
+export interface TableAction<T> {
+  key: string;
+  label: string;
+  icon: LucideIcon;
+  visible?: (row: T) => boolean;
+  run: (row: T) => void;
+}
+
 export interface DataTableProps<T extends { id: string }> {
   columns: Column<T>[];
   rows: T[];
   loading: boolean;
   statuses?: StatusDef[];
   statusKey?: keyof T;
-  sort: SortState | null;
-  onSort: (key: string) => void;
+  /** Only needed when a column is `sortable`. */
+  sort?: SortState | null;
+  onSort?: (key: string) => void;
   detailPath?: (row: T) => string;
   qr?: boolean;
-  extraActions?: (row: T) => ReactNode;
+  actions?: TableAction<T>[];
+  /** Shown when there are no rows (default `Aucun enregistrement`). */
+  emptyText?: string;
   onEdit?: (row: T) => void;
   onDelete?: (row: T) => void;
 }
@@ -49,9 +62,9 @@ function cell<T extends { id: string }>(
 const SKELETON_ROWS = 5;
 
 export function DataTable<T extends { id: string }>({
-  columns, rows, loading, statuses, statusKey, sort, onSort, detailPath, qr, extraActions, onEdit, onDelete,
+  columns, rows, loading, statuses, statusKey, sort, onSort, detailPath, qr, actions, emptyText = 'Aucun enregistrement', onEdit, onDelete,
 }: DataTableProps<T>) {
-  const hasActions = Boolean(qr || extraActions || onEdit || onDelete);
+  const hasActions = Boolean(qr || (actions && actions.length > 0) || onEdit || onDelete);
   const span = columns.length + (hasActions ? 1 : 0);
 
   return (
@@ -67,7 +80,7 @@ export function DataTable<T extends { id: string }>({
                 aria-sort={active ? (sort!.dir === 'asc' ? 'ascending' : 'descending') : undefined}
               >
                 {c.sortable ? (
-                  <button type="button" onClick={() => onSort(c.key)} className="inline-flex items-center gap-1 uppercase tracking-wider">
+                  <button type="button" onClick={() => onSort?.(c.key)} className="inline-flex items-center gap-1 uppercase tracking-wider">
                     {c.header}
                     {active && (sort!.dir === 'asc' ? <ChevronUp aria-hidden className="size-3" /> : <ChevronDown aria-hidden className="size-3" />)}
                   </button>
@@ -91,7 +104,7 @@ export function DataTable<T extends { id: string }>({
           ))}
         {!loading && rows.length === 0 && (
           <TR>
-            <TD colSpan={span} className="py-10 text-center text-muted-foreground">Aucun enregistrement</TD>
+            <TD colSpan={span} className="py-10 text-center text-muted-foreground">{emptyText}</TD>
           </TR>
         )}
         {!loading &&
@@ -112,7 +125,11 @@ export function DataTable<T extends { id: string }>({
               {hasActions && (
                 <TD>
                   <div className="flex items-center justify-end">
-                    {extraActions?.(row)}
+                    {actions?.filter((a) => a.visible?.(row) ?? true).map((a) => (
+                      <ActionButton key={a.key} label={a.label} onClick={() => a.run(row)}>
+                        <a.icon aria-hidden className="size-4" />
+                      </ActionButton>
+                    ))}
                     {qr && detailPath && (
                       <Link to={detailPath(row)} aria-label="QR code" title="QR code" className={ICON_BUTTON}>
                         <QrCode aria-hidden className="size-4" />

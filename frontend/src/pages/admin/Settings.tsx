@@ -1,5 +1,6 @@
 import { useId, useState, type FormEvent } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
+import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
 import { PageHeader } from '../../components/module/PageHeader';
 import { Alert } from '../../components/ui/Alert';
@@ -105,8 +106,14 @@ function SettingsCard({ title, fields, data, canEdit }: {
 
   const save = async (e: FormEvent) => {
     e.preventDefault();
-    setSaving(true);
     setFeedback(null);
+    // A cleared number field would be sent as 0: ask for a value instead.
+    const missing = fields.find((f) => f.kind === 'number' && !Number.isFinite(parseFloat(values[fieldId(f)])));
+    if (missing) {
+      setFeedback({ tone: 'error', message: `Le champ « ${missing.label} » est requis et doit être un nombre` });
+      return;
+    }
+    setSaving(true);
     try {
       for (const [key, value] of toRequests(fields, values)) await api.put(`/settings/${key}`, { value });
       setFeedback({ tone: 'success', message: 'Paramètres enregistrés' });
@@ -156,10 +163,7 @@ export default function Settings() {
         subtitle="Seuils d’alerte, reproduction, mentions légales et devise."
       />
       {settings.isError && (
-        <div className="flex flex-wrap items-center gap-3">
-          <Alert className="flex-1">{errorMessage(settings.error)}</Alert>
-          <Button variant="outline" onClick={() => settings.refetch()}>Réessayer</Button>
-        </div>
+        <ErrorRetry message={errorMessage(settings.error)} onRetry={() => settings.refetch()} />
       )}
       {settings.isPending && <div role="status" aria-label="Chargement" className="h-40 animate-pulse rounded-3xl bg-muted" />}
       {settings.data && (

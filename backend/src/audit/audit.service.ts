@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
+import type { Prisma } from '../generated/prisma/client';
 import type { AuditAction } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -13,9 +14,15 @@ const SENSITIVE_KEYS = new Set([
 /** JSON-safe deep copy without the sensitive keys, at every depth. */
 export function sanitize(value: unknown): unknown {
   if (value === null || value === undefined) return value;
-  if (value instanceof Date) return value.toISOString();
   if (Array.isArray(value)) return value.map(sanitize);
   if (typeof value === 'object') {
+    // Dates, Prisma Decimals...: they know how to serialise themselves; walking
+    // their internals would leak implementation fields.
+    const { toJSON } = value as { toJSON?: unknown };
+    if (typeof toJSON === 'function') {
+      const json: unknown = (toJSON as () => unknown).call(value);
+      return json === value ? json : sanitize(json);
+    }
     const out: Record<string, unknown> = {};
     for (const [key, v] of Object.entries(value)) {
       if (SENSITIVE_KEYS.has(key) || v === undefined) continue;
@@ -48,8 +55,12 @@ export class AuditService {
 
   constructor(private readonly prisma: PrismaService) {}
 
-  /** Never throws: a failed audit write is logged server-side and must not break the request. */
-  async log(entry: AuditEntry): Promise<void> {
+  /**
+   * Never throws: a failed audit write is logged server-side and must not break the request.
+   * Pass `tx` to write the row inside the caller's transaction (it then commits
+   * or rolls back with the change it describes).
+   */
+  async log(entry: AuditEntry, tx?: Prisma.TransactionClient): Promise<void> {
     try {
       const userId = entry.ctx?.user.id ?? entry.userId ?? null;
       const userName = entry.ctx?.user.name ?? entry.userName;
@@ -62,7 +73,7 @@ export class AuditService {
         const clean = sanitize(v);
         return clean === undefined || clean === null ? undefined : clean;
       };
-      await this.prisma.auditLog.create({
+      await (tx ?? this.prisma).auditLog.create({
         data: {
           organizationId,
           userId,

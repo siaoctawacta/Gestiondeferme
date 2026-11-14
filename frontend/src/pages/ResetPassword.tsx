@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router';
 import { api } from '../lib/api';
 import { checkNewPassword } from '../lib/password';
 import { AuthCard } from '../components/AuthCard';
+import { errorMessage } from '../components/module/errorMessage';
 import { Alert } from '../components/ui/Alert';
 import { Button } from '../components/ui/Button';
 import { Field } from '../components/ui/Field';
@@ -25,7 +26,7 @@ export default function ResetPassword() {
       await api.post('/auth/reset-password', { token, newPassword: password });
       setDone(true);
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }

@@ -1,34 +1,17 @@
 import { useId, useState, type FormEvent } from 'react';
 import { api } from '../../lib/api';
-import { useFarmQuery } from '../../lib/query';
 import { Dialog } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { errorMessage } from './errorMessage';
-import type { Field, FormMode, ListResponse, ModuleConfig, SelectOptions } from './types';
+import type { Field, FormMode, ModuleConfig } from './types';
+import { useEndpointOptions, type Option } from './useEndpointOptions';
 
 type Values = Record<string, unknown>;
-type Option = { value: string; label: string };
 
 const LABEL = "block text-sm font-medium after:ml-0.5 after:text-destructive";
-
-function useOptions(options: SelectOptions): Option[] {
-  const remote = Array.isArray(options) ? null : options;
-  const { data } = useFarmQuery<Option[]>(
-    [remote?.endpoint ?? '', 'options'],
-    async () => {
-      const res = await api.get<ListResponse<Record<string, unknown>>>(remote!.endpoint, { pageSize: 200 });
-      return res.items.map((r) => ({
-        value: String(r[remote!.valueKey ?? 'id']),
-        label: String(r[remote!.labelKey ?? 'name']),
-      }));
-    },
-    { enabled: remote !== null },
-  );
-  return Array.isArray(options) ? options : (data ?? []);
-}
 
 function initial(field: Field, raw: Values): unknown {
   const v = raw[field.name] ?? field.defaultValue;
@@ -122,7 +105,7 @@ function MultiSelectInput({ field, value, onChange, options }: FieldInputProps &
 function FieldInput(props: FieldInputProps) {
   const { field, value, onChange } = props;
   const id = useId();
-  const options = useOptions('options' in field ? field.options : []);
+  const options = useEndpointOptions('options' in field ? field.options : []);
   if (field.type === 'select') return <SelectInput {...props} options={options} />;
   if (field.type === 'multiselect') return <MultiSelectInput {...props} options={options} />;
   if (field.type === 'checkbox') {

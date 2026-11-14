@@ -63,7 +63,10 @@ function buildUrl(path: string, params?: Params): string {
   return `${BASE}${path}${q ? `?${q}` : ''}`;
 }
 
+const UNREACHABLE = "Le serveur est injoignable. Vérifiez que l'API est démarrée, puis réessayez.";
+
 async function toError(res: Response): Promise<ApiError> {
+  if (res.status === 502 || res.status === 503 || res.status === 504) return new ApiError(res.status, UNREACHABLE);
   let body: Record<string, unknown> | undefined;
   try {
     body = await res.json();
@@ -94,6 +97,8 @@ function send(
     headers,
     credentials: 'include',
     body: body === undefined ? undefined : JSON.stringify(body),
+  }).catch(() => {
+    throw new ApiError(0, UNREACHABLE);
   });
 }
 
@@ -153,7 +158,22 @@ async function request<T>(
   const res = await sendWithRetry(method, path, opts);
   if (!res.ok) throw await toError(res);
   if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
+  // Nest answers DELETE with 200 and no body: only parse when there is something to parse.
+  const text = await res.text();
+  return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/** Hands a blob to the browser as a download (link attached to the page, object URL freed after 30 s). */
+export function saveBlob(blob: Blob, filename: string): void {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
 export const api = {
@@ -168,11 +188,6 @@ export const api = {
   async download(path: string, params: Params | undefined, filename: string): Promise<void> {
     const res = await sendWithRetry('GET', path, { params });
     if (!res.ok) throw await toError(res);
-    const url = URL.createObjectURL(await res.blob());
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename;
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    saveBlob(await res.blob(), filename);
   },
 };

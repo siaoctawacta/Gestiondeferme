@@ -1,9 +1,11 @@
 import type { ReactNode } from 'react';
 import { Leaf } from 'lucide-react';
+import { useDocumentTitle } from '../lib/useDocumentTitle';
 import { Card } from './ui/Card';
 
 /** Centred card on the page background, used by the public auth pages. */
 export function AuthCard({ title, children }: { title: string; children: ReactNode }) {
+  useDocumentTitle(title);
   return (
     <div className="flex min-h-screen flex-col items-center justify-center bg-background px-4 py-10">
       <div className="mb-6 flex items-center gap-3">

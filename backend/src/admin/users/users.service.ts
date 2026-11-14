@@ -15,7 +15,7 @@ import type { Role } from '../../generated/prisma/enums';
 import type { ExportColumn } from '../../listing/export';
 import { ListQueryDto, orderBy } from '../../listing/list-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { containsInsensitive, orConflict } from '../shared';
+import { containsInsensitive, orConflict } from '../../listing/list-helpers';
 import type { CreateUserDto, UpdateUserDto } from './users.dto';
 
 const RESET_TTL_MS = 24 * 60 * 60 * 1000;
@@ -39,8 +39,8 @@ export interface UserView {
 }
 
 const ROLE_LABEL: Record<Role, string> = {
-  SUPER_ADMIN: 'Super administrateur',
-  PROPRIETAIRE: 'Propriétaire',
+  SUPER_ADMIN: 'Super Administrateur',
+  PROPRIETAIRE: 'Propriétaire / Direction',
   DIRECTEUR_FERME: 'Directeur de ferme',
   RESP_AVICOLE: 'Responsable avicole',
   RESP_PORCIN: 'Responsable porcin',
@@ -158,22 +158,34 @@ export class UsersService implements AuditableService {
   }
 
   /**
-   * Locks the organisation's active super admins and refuses when `userId`
-   * is the only one, so two concurrent demotions cannot both succeed.
+   * Locks (FOR UPDATE, in id order, so concurrent transactions cannot deadlock)
+   * the target and the organisation's active super admins, then returns the
+   * target as it is NOW and whether another active super admin exists. Two
+   * concurrent demotions therefore cannot both pass, and decisions are made on
+   * the locked row, never on an earlier snapshot.
    */
-  private async assertAnotherSuperAdmin(
+  private async lockForAdminCheck(
     tx: Prisma.TransactionClient,
     organizationId: string,
     userId: string,
-  ): Promise<void> {
-    const admins = await tx.$queryRaw<{ id: string }[]>`
-      SELECT "id" FROM "User"
+  ): Promise<{
+    current: { role: Role; active: boolean };
+    otherAdmin: boolean;
+  }> {
+    const rows = await tx.$queryRaw<
+      { id: string; role: Role; active: boolean }[]
+    >`
+      SELECT "id", "role", "active" FROM "User"
       WHERE "organizationId" = ${organizationId}
-        AND "role" = 'SUPER_ADMIN' AND "active" = true
+        AND ("id" = ${userId} OR ("role" = 'SUPER_ADMIN' AND "active" = true))
+      ORDER BY "id"
       FOR UPDATE`;
-    if (!admins.some((a) => a.id !== userId)) {
-      throw new ConflictException(LAST_ADMIN);
-    }
+    const current = rows.find((r) => r.id === userId);
+    if (!current) throw new NotFoundException('Utilisateur introuvable');
+    const otherAdmin = rows.some(
+      (r) => r.id !== userId && r.role === 'SUPER_ADMIN' && r.active,
+    );
+    return { current, otherAdmin };
   }
 
   async create(ctx: RequestContext, dto: CreateUserDto): Promise<UserView> {
@@ -202,68 +214,80 @@ export class UsersService implements AuditableService {
     id: string,
     dto: UpdateUserDto,
   ): Promise<UserView> {
-    const target = await this.load(id, ctx);
+    await this.load(id, ctx); // 404 early, before any hashing or locking
     const farmIds = dto.farmIds && (await this.validFarmIds(ctx, dto.farmIds));
-    const role = dto.role ?? target.role;
-    const active = dto.active ?? target.active;
 
-    const user = await this.prisma.$transaction(async (tx) => {
-      const losesAdmin =
-        target.role === 'SUPER_ADMIN' &&
-        target.active &&
-        (!active || role !== 'SUPER_ADMIN');
-      if (losesAdmin) {
-        await this.assertAnotherSuperAdmin(tx, ctx.user.organizationId, id);
-      }
-      if (target.active && !active && id === ctx.user.id) {
-        throw new ConflictException(
-          'Vous ne pouvez pas désactiver votre propre compte',
+    const { user, revokeSessions } = await this.prisma.$transaction(
+      async (tx) => {
+        const { current, otherAdmin } = await this.lockForAdminCheck(
+          tx,
+          ctx.user.organizationId,
+          id,
         );
-      }
-      if (farmIds) {
-        await tx.userFarm.deleteMany({ where: { userId: id } });
-        await tx.userFarm.createMany({
-          data: farmIds.map((farmId) => ({ userId: id, farmId })),
+        const role = dto.role ?? current.role;
+        const active = dto.active ?? current.active;
+        const losesAdmin =
+          current.role === 'SUPER_ADMIN' &&
+          current.active &&
+          (!active || role !== 'SUPER_ADMIN');
+        if (losesAdmin && !otherAdmin) throw new ConflictException(LAST_ADMIN);
+        if (current.active && !active && id === ctx.user.id) {
+          throw new ConflictException(
+            'Vous ne pouvez pas désactiver votre propre compte',
+          );
+        }
+        if (farmIds) {
+          await tx.userFarm.deleteMany({ where: { userId: id } });
+          await tx.userFarm.createMany({
+            data: farmIds.map((farmId) => ({ userId: id, farmId })),
+          });
+        }
+        const updated = await tx.user.update({
+          where: { id },
+          data: { name: dto.name, role: dto.role, active: dto.active },
+          include,
         });
-      }
-      return tx.user.update({
-        where: { id },
-        data: { name: dto.name, role: dto.role, active: dto.active },
-        include,
-      });
-    });
+        return {
+          user: updated,
+          revokeSessions: role !== current.role || (current.active && !active),
+        };
+      },
+    );
 
-    if (role !== target.role || (target.active && !active)) {
-      await this.tokens.revokeAll(id);
-    }
+    if (revokeSessions) await this.tokens.revokeAll(id);
     return toView(user);
   }
 
   async remove(ctx: RequestContext, id: string): Promise<void> {
-    const target = await this.load(id, ctx);
-    const [audits, logins] = await Promise.all([
-      this.prisma.auditLog.count({ where: { userId: id } }),
-      this.prisma.loginLog.count({ where: { userId: id } }),
-    ]);
-    await this.prisma.$transaction(async (tx) => {
-      if (target.role === 'SUPER_ADMIN' && target.active) {
-        await this.assertAnotherSuperAdmin(tx, ctx.user.organizationId, id);
-      }
-      if (id === ctx.user.id) {
-        throw new ConflictException(
-          'Vous ne pouvez pas supprimer votre propre compte',
+    await this.load(id, ctx);
+    await orConflict(() =>
+      this.prisma.$transaction(async (tx) => {
+        const { current, otherAdmin } = await this.lockForAdminCheck(
+          tx,
+          ctx.user.organizationId,
+          id,
         );
-      }
-      if (audits + logins > 0) {
-        throw new ConflictException(
-          'Cet utilisateur a un historique ; désactivez-le plutôt',
-        );
-      }
-      await tx.refreshToken.deleteMany({ where: { userId: id } });
-      await tx.passwordReset.deleteMany({ where: { userId: id } });
-      await tx.userFarm.deleteMany({ where: { userId: id } });
-      await tx.user.delete({ where: { id } });
-    });
+        if (current.role === 'SUPER_ADMIN' && current.active && !otherAdmin) {
+          throw new ConflictException(LAST_ADMIN);
+        }
+        if (id === ctx.user.id) {
+          throw new ConflictException(
+            'Vous ne pouvez pas supprimer votre propre compte',
+          );
+        }
+        const audits = await tx.auditLog.count({ where: { userId: id } });
+        const logins = await tx.loginLog.count({ where: { userId: id } });
+        if (audits + logins > 0) {
+          throw new ConflictException(
+            'Cet utilisateur a un historique ; désactivez-le plutôt',
+          );
+        }
+        await tx.refreshToken.deleteMany({ where: { userId: id } });
+        await tx.passwordReset.deleteMany({ where: { userId: id } });
+        await tx.userFarm.deleteMany({ where: { userId: id } });
+        await tx.user.delete({ where: { id } });
+      }),
+    );
   }
 
   /**

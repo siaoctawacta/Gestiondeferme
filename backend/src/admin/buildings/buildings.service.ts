@@ -10,7 +10,7 @@ import { BuildingStatus, BuildingType } from '../../generated/prisma/enums';
 import type { ExportColumn } from '../../listing/export';
 import { ListQueryDto, orderBy } from '../../listing/list-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { containsInsensitive, orConflict } from '../shared';
+import { containsInsensitive, orConflict } from '../../listing/list-helpers';
 import type { CreateBuildingDto, UpdateBuildingDto } from './buildings.dto';
 
 const include = {
@@ -193,9 +193,11 @@ export class BuildingsService implements AuditableService {
 
   async remove(ctx: RequestContext, id: string): Promise<void> {
     const building = await this.load(id, ctx);
-    await this.prisma.$transaction([
-      this.prisma.zone.deleteMany({ where: { buildingId: building.id } }),
-      this.prisma.building.delete({ where: { id } }),
-    ]);
+    await orConflict(() =>
+      this.prisma.$transaction([
+        this.prisma.zone.deleteMany({ where: { buildingId: building.id } }),
+        this.prisma.building.delete({ where: { id } }),
+      ]),
+    );
   }
 }

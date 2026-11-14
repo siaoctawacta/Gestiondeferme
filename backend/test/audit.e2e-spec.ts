@@ -314,6 +314,48 @@ describe('Audit trail (e2e)', () => {
       ]);
     });
 
+    it('shows organisation-level rows (no farm) to all-farm roles whatever the header, never to farm-limited roles', async () => {
+      const admin = await actor('SUPER_ADMIN');
+      const director = await actor('DIRECTEUR_FERME');
+      await prisma.auditLog.createMany({
+        data: [
+          {
+            organizationId: orgId,
+            userName: 'Connexion',
+            module: 'auth',
+            action: 'LOGIN',
+            farmId: null,
+          },
+          {
+            organizationId: orgId,
+            userName: 'Lot',
+            module: 'lots',
+            action: 'CREATE',
+            farmId,
+          },
+        ],
+      });
+      const names = async (headers: Record<string, string>) =>
+        (
+          (await http().get('/api/audit').set(headers).expect(200))
+            .body as AuditPage
+        ).items
+          .map((r) => r.userName)
+          .sort();
+      const token = bearer(admin.token);
+      expect(await names({ ...token, 'X-Farm-Id': farmId })).toEqual([
+        'Connexion',
+        'Lot',
+      ]);
+      expect(await names({ ...token, 'X-Farm-Id': 'all' })).toEqual([
+        'Connexion',
+        'Lot',
+      ]);
+      expect(await names(token)).toEqual(['Connexion', 'Lot']);
+      expect(await names(director.headers)).toEqual(['Lot']);
+      expect(await names(bearer(director.token))).toEqual(['Lot']);
+    });
+
     it('rejects a farm-limited user asking for an unassigned, foreign or all-farms scope', async () => {
       const director = await actor('DIRECTEUR_FERME');
       const unassigned = await createFarm(orgId, 'Non assignée');

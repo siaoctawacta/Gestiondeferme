@@ -3,6 +3,8 @@ import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { checkNewPassword } from '../lib/password';
 import { TwoFactorEnroll } from '../components/TwoFactorEnroll';
+import { errorMessage } from '../components/module/errorMessage';
+import { PageHeader } from '../components/module/PageHeader';
 import { Alert } from '../components/ui/Alert';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
@@ -33,7 +35,7 @@ function PasswordCard() {
       setNext('');
       setConfirm('');
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -75,7 +77,7 @@ function TwoFactorCard() {
       setCode('');
       await reload();
     } catch (err) {
-      setError((err as Error).message);
+      setError(errorMessage(err));
     } finally {
       setBusy(false);
     }
@@ -120,10 +122,7 @@ export default function Account() {
   const { user } = useAuth();
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-4xl font-bold">Mon compte</h1>
-        {user && <p className="mt-1 text-sm text-muted-foreground">{user.name} · {user.email}</p>}
-      </div>
+      <PageHeader large title="Mon compte" subtitle={user ? `${user.name} · ${user.email}` : undefined} />
       <div className="grid gap-6 xl:grid-cols-2">
         <PasswordCard />
         <TwoFactorCard />

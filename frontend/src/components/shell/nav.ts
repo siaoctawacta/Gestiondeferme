@@ -1,7 +1,7 @@
 import {
-  Bell, BarChart3, Bird, Building2, Egg, LayoutGrid, MapPin, Package, PiggyBank, Receipt,
-  ScrollText, Settings, ShoppingCart, Stethoscope, Truck, Users, UserCog, Wallet, Wheat,
-  ClipboardList, Wrench, Heart,
+  Bell, BarChart3, Bird, Egg, HeartPulse, LayoutGrid, MapPin, Package, PiggyBank, Receipt,
+  ScrollText, Settings, ShoppingCart, Syringe, Truck, Users, UserCog, Wallet, Warehouse, Wheat,
+  ClipboardList, Wrench,
   type LucideIcon,
 } from 'lucide-react';
 import type { ModuleKey, Permissions } from '../../lib/modules';
@@ -33,9 +33,9 @@ export const NAV: NavGroup[] = [
   {
     group: 'ADMINISTRATION',
     items: [
-      m('batiments', 'Bâtiments', Building2),
+      m('batiments', 'Bâtiments', Warehouse),
       m('fermes', 'Fermes & sites', MapPin, '/admin/fermes'),
-      m('utilisateurs', 'Utilisateurs', Users, '/admin/utilisateurs'),
+      m('utilisateurs', 'Utilisateurs', UserCog, '/admin/utilisateurs'),
       m('parametres', 'Paramètres', Settings, '/admin/parametres'),
     ],
   },
@@ -45,18 +45,18 @@ export const NAV: NavGroup[] = [
       m('lots', 'Lots avicoles', Bird),
       m('ponte', 'Ponte & œufs', Egg),
       m('porcs', 'Cheptel porcin', PiggyBank),
-      m('reproduction', 'Reproduction', Heart),
+      m('reproduction', 'Reproduction', HeartPulse),
       m('alimentation', 'Alimentation & eau', Wheat),
     ],
   },
-  { group: 'SANTÉ', items: [m('sante', 'Santé & biosécurité', Stethoscope)] },
+  { group: 'SANTÉ', items: [m('sante', 'Santé & biosécurité', Syringe)] },
   { group: 'LOGISTIQUE', items: [m('stocks', 'Stocks', Package)] },
   {
     group: 'COMMERCIAL',
     items: [
       m('fournisseurs', 'Fournisseurs', Truck),
       m('achats', 'Achats', ShoppingCart),
-      m('clients', 'Clients', UserCog),
+      m('clients', 'Clients', Users),
       m('ventes', 'Ventes', Receipt),
     ],
   },
@@ -70,6 +70,11 @@ export const NAV: NavGroup[] = [
   },
   { group: null, items: [m('audit', "Journal d'audit", ScrollText, '/audit')] },
 ];
+
+/** Module slug to its sidebar label, for screens that show a module name (alerts, audit). */
+export const MODULE_LABEL: ReadonlyMap<string, string> = new Map(
+  NAV.flatMap((g) => g.items).map((i) => [i.slug as string, i.label]),
+);
 
 /** NAV restricted to modules the role can read; groups left empty are dropped. */
 export function visibleNav(permissions: Permissions): NavGroup[] {

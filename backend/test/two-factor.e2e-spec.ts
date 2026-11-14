@@ -409,4 +409,77 @@ describe('Two-factor authentication (e2e)', () => {
     });
     expect(stored.totpSecretEnc).not.toContain(secret);
   });
+  it('audits enable (full token) and disable without secrets', async () => {
+    const user = await makeUser('COMMERCIAL');
+    const { token } = await firstToken(user.email);
+    const { secret } = (await post('setup', token)).body as { secret: string };
+    const step = stepAt(Date.now());
+    const enabled = await post('enable', token, {
+      code: totpCode(secret, step),
+    });
+    expect(enabled.status).toBe(201);
+    expect(
+      (
+        await post('disable', token, {
+          password: PASSWORD,
+          code: totpCode(secret, step + 1),
+        })
+      ).status,
+    ).toBe(204);
+    const rows = await prisma.auditLog.findMany({
+      where: { module: 'utilisateurs' },
+      orderBy: { createdAt: 'asc' },
+    });
+    expect(rows.map((r) => r.label)).toEqual([
+      'Double authentification activée',
+      'Double authentification désactivée',
+    ]);
+    for (const row of rows) {
+      expect(row).toMatchObject({
+        action: 'OTHER',
+        userId: user.id,
+        userName: user.name,
+        organizationId: orgId,
+      });
+    }
+    const dump = JSON.stringify(rows);
+    expect(dump).not.toContain(secret);
+    for (const c of (enabled.body as { backupCodes: string[] }).backupCodes) {
+      expect(dump).not.toContain(c);
+    }
+  });
+
+  it('counts wrong passwords on disable and answers 423 once locked', async () => {
+    const user = await makeUser('COMMERCIAL');
+    const { token } = await firstToken(user.email);
+    const { secret } = (await post('setup', token)).body as { secret: string };
+    const step = stepAt(Date.now());
+    await post('enable', token, { code: totpCode(secret, step) });
+    for (let i = 0; i < 5; i += 1) {
+      const res = await post('disable', token, {
+        password: 'wrong-password-1',
+        code: totpCode(secret, step + 1),
+      });
+      expect(res.status).toBe(400);
+    }
+    const locked = await post('disable', token, {
+      password: PASSWORD,
+      code: totpCode(secret, step + 1),
+    });
+    expect(locked.status).toBe(423);
+    const stored = await prisma.user.findUniqueOrThrow({
+      where: { id: user.id },
+    });
+    expect(stored.lockedUntil).not.toBeNull();
+    expect(stored.totpEnabledAt).not.toBeNull();
+  });
+
+  it('accepts a TOTP code typed with spaces', async () => {
+    const user = await makeUser('COMMERCIAL');
+    const { token } = await firstToken(user.email);
+    const { secret } = (await post('setup', token)).body as { secret: string };
+    const code = totpCode(secret, stepAt(Date.now()));
+    const spaced = `${code.slice(0, 3)} ${code.slice(3)}`;
+    expect((await post('enable', token, { code: spaced })).status).toBe(201);
+  });
 });

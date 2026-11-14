@@ -11,7 +11,7 @@ import {
 import { ApiTags } from '@nestjs/swagger';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
-import { Ctx, NoFarm, Public } from '../access/decorators';
+import { AnyAuthenticated, Ctx, NoFarm, Public } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import { AuthService } from './auth.service';
 import { ChangePasswordDto } from './dto/change-password.dto';
@@ -59,11 +59,14 @@ export class AuthController {
     await this.auth.logout(req, res);
   }
 
+  @AnyAuthenticated()
   @Get('me')
   me(@Ctx() ctx: RequestContext) {
     return this.auth.me(ctx.user.id);
   }
 
+  @AnyAuthenticated()
+  @UseGuards(ThrottlerGuard)
   @HttpCode(204)
   @Post('change-password')
   async changePassword(

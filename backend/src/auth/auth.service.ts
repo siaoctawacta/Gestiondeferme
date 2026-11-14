@@ -6,8 +6,9 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { AccessService } from '../access/access.service';
 import { permissionsFor } from '../access/permissions';
-import { ALL_FARMS_ROLES, Role } from '../access/roles';
+import { ALL_FARMS_ROLES, MANDATORY_2FA_ROLES, Role } from '../access/roles';
 import { AuditService } from '../audit/audit.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { hashPassword, MIN_PASSWORD_LENGTH, verifyPassword } from './password';
@@ -21,12 +22,6 @@ import {
 
 const MAX_FAILED_LOGINS = 5;
 const LOCK_MS = 15 * 60 * 1000;
-export const MANDATORY_2FA_ROLES: Role[] = [
-  'SUPER_ADMIN',
-  'PROPRIETAIRE',
-  'DIRECTEUR_FERME',
-  'COMPTABLE',
-];
 
 export type LoginOutcome = 'full' | 'twoFactor' | 'twoFactorSetup';
 
@@ -55,6 +50,7 @@ export class AuthService {
     private readonly prisma: PrismaService,
     private readonly tokens: TokensService,
     private readonly audit: AuditService,
+    private readonly access: AccessService,
   ) {}
 
   private getDummyHash(): Promise<string> {
@@ -225,11 +221,8 @@ export class AuthService {
     });
     const seesAll = ALL_FARMS_ROLES.includes(user.role);
     const farms = await this.prisma.farm.findMany({
-      where: {
-        organizationId: user.organizationId,
-        ...(seesAll ? {} : { userFarms: { some: { userId: user.id } } }),
-      },
-      select: { id: true, name: true },
+      where: this.access.visibleFarmsWhere(user),
+      select: { id: true, name: true, active: true },
       orderBy: { name: 'asc' },
     });
     return {
@@ -238,6 +231,36 @@ export class AuthService {
       permissions: permissionsFor(user.role),
       canSeeAllFarms: seesAll,
     };
+  }
+
+  /** Throws 423 while the account is locked; clears an expired lock so a fresh count starts. */
+  async assertNotLocked(user: {
+    id: string;
+    lockedUntil: Date | null;
+  }): Promise<void> {
+    if (!user.lockedUntil) return;
+    const now = new Date();
+    if (user.lockedUntil > now) throw this.lockedError(user.lockedUntil);
+    await this.prisma.user.updateMany({
+      where: { id: user.id, lockedUntil: { lte: now } },
+      data: { failedLogins: 0, lockedUntil: null },
+    });
+  }
+
+  /** Audit row for a self-service security action (never carries a secret). */
+  async auditSecurity(
+    user: { id: string; name: string; organizationId: string },
+    label: string,
+  ): Promise<void> {
+    await this.audit.log({
+      userId: user.id,
+      userName: user.name,
+      organizationId: user.organizationId,
+      module: 'utilisateurs',
+      action: 'OTHER',
+      recordId: user.id,
+      label,
+    });
   }
 
   async changePassword(
@@ -249,17 +272,24 @@ export class AuthService {
     const user = await this.prisma.user.findUniqueOrThrow({
       where: { id: userId },
     });
+    await this.assertNotLocked(user);
     if (!(await verifyPassword(user.passwordHash, currentPassword))) {
+      // Same atomic counter as login: this endpoint is not a password oracle.
+      await this.registerFailure(userId);
       throw new BadRequestException('Mot de passe actuel incorrect');
     }
     await this.prisma.user.update({
       where: { id: userId },
-      data: { passwordHash: await hashPassword(newPassword) },
+      data: {
+        passwordHash: await hashPassword(newPassword),
+        failedLogins: 0,
+      },
     });
     const current = (req.cookies as Record<string, string> | undefined)?.[
       REFRESH_COOKIE
     ];
     await this.tokens.revokeAll(userId, current);
+    await this.auditSecurity(user, 'Mot de passe modifié');
   }
 
   async resetPassword(token: string, newPassword: string): Promise<void> {
@@ -275,14 +305,14 @@ export class AuthService {
       throw invalid();
     }
     const passwordHash = await hashPassword(newPassword);
-    await this.prisma.$transaction(async (tx) => {
+    const user = await this.prisma.$transaction(async (tx) => {
       // Atomic claim so a token cannot be used twice concurrently.
       const claimed = await tx.passwordReset.updateMany({
         where: { id: reset.id, usedAt: null },
         data: { usedAt: new Date() },
       });
       if (claimed.count === 0) throw invalid();
-      await tx.user.update({
+      const updated = await tx.user.update({
         where: { id: reset.userId },
         data: { passwordHash, failedLogins: 0, lockedUntil: null },
       });
@@ -290,6 +320,8 @@ export class AuthService {
         where: { userId: reset.userId, revokedAt: null },
         data: { revokedAt: new Date() },
       });
+      return updated;
     });
+    await this.auditSecurity(user, 'Mot de passe réinitialisé par lien');
   }
 }

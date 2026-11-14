@@ -11,12 +11,19 @@ import { ApiTags } from '@nestjs/swagger';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 import type { TokenStage } from '../access/access-token';
-import { AllowStage, Ctx, NoFarm, Stage } from '../access/decorators';
+import {
+  AllowStage,
+  AnyAuthenticated,
+  Ctx,
+  NoFarm,
+  Stage,
+} from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import { DisableTwoFactorDto, TwoFactorCodeDto } from './dto/two-factor.dto';
 import { TwoFactorService } from './two-factor.service';
 
 @ApiTags('auth')
+@AnyAuthenticated()
 @NoFarm()
 @UseGuards(ThrottlerGuard)
 @Controller('auth/2fa')

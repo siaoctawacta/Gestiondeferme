@@ -135,4 +135,21 @@ describe('api client', () => {
     expect(headersOf(0).has('X-Farm-Id')).toBe(false);
     expect((fetchMock.mock.calls[0][1] as RequestInit).method).toBe('DELETE');
   });
+
+  it('returns undefined on a 200 with an empty body (Nest DELETE handlers)', async () => {
+    fetchMock.mockResolvedValueOnce(new Response('', { status: 200 }));
+    await expect(api.del('/buildings/1')).resolves.toBeUndefined();
+  });
+
+  it('reports an unreachable server for 502/503/504 and for a rejected fetch', async () => {
+    const msg = "Le serveur est injoignable. Vérifiez que l'API est démarrée, puis réessayez.";
+    for (const status of [502, 503, 504]) {
+      fetchMock.mockResolvedValueOnce(new Response('<html>Bad gateway</html>', { status }));
+      await expect(api.get('/x')).rejects.toMatchObject({ status, message: msg });
+    }
+    fetchMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const err = await api.get('/x').catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect(err).toMatchObject({ status: 0, message: msg });
+  });
 });

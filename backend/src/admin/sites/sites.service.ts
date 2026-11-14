@@ -9,7 +9,7 @@ import type { Prisma } from '../../generated/prisma/client';
 import type { ExportColumn } from '../../listing/export';
 import { ListQueryDto, orderBy } from '../../listing/list-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { containsInsensitive, orConflict } from '../shared';
+import { containsInsensitive, orConflict } from '../../listing/list-helpers';
 import type { SiteDto } from './sites.dto';
 
 const withCounts = {
@@ -114,6 +114,6 @@ export class SitesService implements AuditableService {
     if (site._count.buildings > 0) {
       throw new ConflictException('Ce site contient des bâtiments');
     }
-    await this.prisma.site.delete({ where: { id } });
+    await orConflict(() => this.prisma.site.delete({ where: { id } }));
   }
 }

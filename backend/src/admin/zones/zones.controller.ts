@@ -14,7 +14,7 @@ import type { Response } from 'express';
 import { Ctx, RequirePermission } from '../../access/decorators';
 import type { RequestContext } from '../../access/decorators';
 import { Audited } from '../../audit/audited.decorator';
-import { sendList } from '../shared';
+import { sendList } from '../../listing/list-helpers';
 import { CreateZoneDto, UpdateZoneDto, ZonesQueryDto } from './zones.dto';
 import { ZONE_COLUMNS, ZonesService } from './zones.service';
 

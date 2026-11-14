@@ -1,20 +1,16 @@
-import { useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useMemo, useState } from 'react';
 import { KeyRound, ShieldOff } from 'lucide-react';
-import { ActionButton } from '../../components/module/DataTable';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { errorMessage } from '../../components/module/errorMessage';
 import { ModulePage } from '../../components/module/ModulePage';
-import type { ModuleConfig } from '../../components/module/types';
+import type { FormMap, FormMode, ModuleConfig } from '../../components/module/types';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
 import { Dialog } from '../../components/ui/Dialog';
 import { Input } from '../../components/ui/Input';
 import { Pill } from '../../components/ui/Pill';
-import { api } from '../../lib/api';
+import { ApiError, api } from '../../lib/api';
 import { formatDateTimeFr } from '../../lib/format';
-import { farmKey } from '../../lib/query';
-import { useAuth } from '../../lib/auth';
 import { ROLE_LABELS, ROLE_OPTIONS } from '../../lib/roles';
 
 interface User {
@@ -64,46 +60,20 @@ function ResetLinkDialog({ state, onClose }: { state: LinkState; onClose: () => 
   );
 }
 
-function UserActions({ user }: { user: User }) {
-  const queryClient = useQueryClient();
-  const { farmId } = useAuth();
-  const [link, setLink] = useState<LinkState | null>(null);
-  const [confirm2fa, setConfirm2fa] = useState(false);
+// Roles that work across farms: every other role needs at least one assigned farm, or it sees nothing.
+const FARMLESS_ROLES = ['SUPER_ADMIN', 'PROPRIETAIRE', 'AUDITEUR'];
 
-  const openLink = async () => {
-    setLink({ status: 'loading' });
-    try {
-      const res = await api.post<{ url: string; expiresAt: string }>(`/users/${user.id}/reset-link`);
-      setLink({ status: 'ready', ...res });
-    } catch (e) {
-      setLink({ status: 'error', message: errorMessage(e) });
-    }
-  };
-
-  return (
-    <>
-      <ActionButton label="Lien de réinitialisation" onClick={openLink}>
-        <KeyRound aria-hidden className="size-4" />
-      </ActionButton>
-      <ActionButton label="Réinitialiser 2FA" onClick={() => setConfirm2fa(true)}>
-        <ShieldOff aria-hidden className="size-4" />
-      </ActionButton>
-      {link && <ResetLinkDialog state={link} onClose={() => setLink(null)} />}
-      {confirm2fa && (
-        <ConfirmDialog
-          title="Réinitialiser la 2FA"
-          message={`Réinitialiser la double authentification de « ${user.name} » ? Il devra la configurer à nouveau.`}
-          confirmLabel="Réinitialiser"
-          onClose={() => setConfirm2fa(false)}
-          onConfirm={async () => {
-            await api.post(`/users/${user.id}/reset-2fa`);
-            setConfirm2fa(false);
-            void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
-          }}
-        />
-      )}
-    </>
-  );
+function toPayload(values: FormMap, mode: FormMode): unknown {
+  const role = String(values.role);
+  const farmIds = values.farmIds as string[];
+  if (!FARMLESS_ROLES.includes(role) && farmIds.length === 0) {
+    // The form dialog shows the message of an ApiError.
+    throw new ApiError(400, `Le champ « Fermes » est requis : sélectionnez au moins une ferme pour le rôle « ${ROLE_LABELS[role] ?? role} »`);
+  }
+  const common = { name: String(values.name).trim(), role, farmIds };
+  return mode === 'create'
+    ? { ...common, email: String(values.email).trim(), password: values.password }
+    : { ...common, active: values.active };
 }
 
 export const users: ModuleConfig<User> = {
@@ -138,12 +108,63 @@ export const users: ModuleConfig<User> = {
     { name: 'password', label: 'Mot de passe', type: 'password', required: true, minLength: 10, only: 'create' },
     { name: 'active', label: 'Compte actif', type: 'checkbox', only: 'update' },
   ],
-  statTiles: 'totalOnly',
+  toPayload,
   toForm: (u) => ({ name: u.name, role: u.role, active: u.active, farmIds: u.farms.map((f) => f.id) }),
   rowLabel: (u) => u.name,
-  rowActions: (u) => <UserActions user={u} />,
 };
 
+type ConfirmState = { user: User; refresh: () => void };
+
 export default function Users() {
-  return <ModulePage config={users} />;
+  const [link, setLink] = useState<LinkState | null>(null);
+  const [confirm2fa, setConfirm2fa] = useState<ConfirmState | null>(null);
+
+  const config = useMemo<ModuleConfig<User>>(
+    () => ({
+      ...users,
+      actions: [
+        {
+          key: 'reset-link',
+          label: 'Lien de réinitialisation',
+          icon: KeyRound,
+          run: async (user) => {
+            setLink({ status: 'loading' });
+            try {
+              const res = await api.post<{ url: string; expiresAt: string }>(`/users/${user.id}/reset-link`);
+              setLink({ status: 'ready', ...res });
+            } catch (e) {
+              setLink({ status: 'error', message: errorMessage(e) });
+            }
+          },
+        },
+        {
+          key: 'reset-2fa',
+          label: 'Réinitialiser 2FA',
+          icon: ShieldOff,
+          run: (user, { refresh }) => setConfirm2fa({ user, refresh }),
+        },
+      ],
+    }),
+    [],
+  );
+
+  return (
+    <>
+      <ModulePage config={config} />
+      {link && <ResetLinkDialog state={link} onClose={() => setLink(null)} />}
+      {confirm2fa && (
+        <ConfirmDialog
+          title="Réinitialiser la 2FA"
+          message={`Réinitialiser la double authentification de « ${confirm2fa.user.name} » ? Il devra la configurer à nouveau.`}
+          confirmLabel="Réinitialiser"
+          onClose={() => setConfirm2fa(null)}
+          onConfirm={async () => {
+            await api.post(`/users/${confirm2fa.user.id}/reset-2fa`);
+            confirm2fa.refresh();
+            setConfirm2fa(null);
+          }}
+        />
+      )}
+    </>
+  );
 }

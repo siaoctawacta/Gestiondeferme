@@ -18,6 +18,7 @@ export class ListQueryDto {
   @Type(() => Number)
   @IsInt()
   @Min(1)
+  @Max(100000)
   page: number = 1;
 
   @ApiPropertyOptional({ default: 25, maximum: 200 })

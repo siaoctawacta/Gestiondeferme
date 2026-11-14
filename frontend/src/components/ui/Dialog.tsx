@@ -1,8 +1,6 @@
-import { useEffect, useId, useRef, type ReactNode } from 'react';
+import { useId, useRef, type ReactNode } from 'react';
 import { X } from 'lucide-react';
-
-const FOCUSABLE =
-  'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
+import { useFocusTrap } from './useFocusTrap';
 
 export interface DialogProps {
   open: boolean;
@@ -15,43 +13,7 @@ export interface DialogProps {
 export function Dialog({ open, onClose, title, children }: DialogProps) {
   const titleId = useId();
   const panel = useRef<HTMLDivElement>(null);
-  const onCloseRef = useRef(onClose);
-  onCloseRef.current = onClose;
-
-  useEffect(() => {
-    if (!open) return;
-    const previous = document.activeElement as HTMLElement | null;
-    const node = panel.current!;
-    (node.querySelector<HTMLElement>(FOCUSABLE) ?? node).focus();
-
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation();
-        onCloseRef.current();
-        return;
-      }
-      if (e.key !== 'Tab') return;
-      const items = Array.from(node.querySelectorAll<HTMLElement>(FOCUSABLE));
-      if (items.length === 0) {
-        e.preventDefault();
-        return;
-      }
-      const first = items[0];
-      const last = items[items.length - 1];
-      if (e.shiftKey && (document.activeElement === first || !node.contains(document.activeElement))) {
-        e.preventDefault();
-        last.focus();
-      } else if (!e.shiftKey && (document.activeElement === last || !node.contains(document.activeElement))) {
-        e.preventDefault();
-        first.focus();
-      }
-    };
-    document.addEventListener('keydown', onKey);
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      previous?.focus?.();
-    };
-  }, [open]);
+  useFocusTrap(panel, open, onClose);
 
   if (!open) return null;
   return (

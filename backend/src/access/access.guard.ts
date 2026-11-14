@@ -3,6 +3,7 @@ import {
   ExecutionContext,
   ForbiddenException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { Reflector } from '@nestjs/core';
@@ -11,6 +12,7 @@ import { TokenStage, verifyAccessToken } from './access-token';
 import { AccessService } from './access.service';
 import {
   ALLOW_STAGE_KEY,
+  ANY_AUTHENTICATED_KEY,
   IS_PUBLIC_KEY,
   NO_FARM_KEY,
   PERMISSION_KEY,
@@ -20,6 +22,8 @@ import { Action, can, ModuleKey } from './permissions';
 
 @Injectable()
 export class AccessGuard implements CanActivate {
+  private readonly logger = new Logger(AccessGuard.name);
+
   constructor(
     private readonly reflector: Reflector,
     private readonly access: AccessService,
@@ -47,6 +51,17 @@ export class AccessGuard implements CanActivate {
 
     const user = await this.access.loadUser(claims);
 
+    const required = meta<{ module: ModuleKey; action: Action }>(
+      PERMISSION_KEY,
+    );
+    // Fail closed: a route must say who may call it.
+    if (!required && !meta<boolean>(ANY_AUTHENTICATED_KEY)) {
+      this.logger.error(
+        `Route sans @RequirePermission ni @AnyAuthenticated : ${context.getClass().name}.${context.getHandler().name}`,
+      );
+      throw new ForbiddenException('Permission insuffisante');
+    }
+
     const allowedStages = meta<TokenStage[]>(ALLOW_STAGE_KEY) ?? ['full'];
     if (!allowedStages.includes(claims.stage)) {
       throw new ForbiddenException({
@@ -57,9 +72,6 @@ export class AccessGuard implements CanActivate {
       });
     }
 
-    const required = meta<{ module: ModuleKey; action: Action }>(
-      PERMISSION_KEY,
-    );
     if (required && !can(user.role, required.module, required.action)) {
       throw new ForbiddenException('Permission insuffisante');
     }

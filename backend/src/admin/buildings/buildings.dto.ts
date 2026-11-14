@@ -10,7 +10,7 @@ import {
   Min,
 } from 'class-validator';
 import { BuildingStatus, BuildingType } from '../../generated/prisma/enums';
-import { Trim } from '../shared';
+import { Trim } from '../../listing/list-helpers';
 
 const NAME = 'Le nom est requis';
 const CAPACITY_MIN = 'La capacité doit être supérieure à 0';

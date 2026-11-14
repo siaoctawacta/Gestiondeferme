@@ -2,14 +2,14 @@ import type { HTMLAttributes, TdHTMLAttributes, ThHTMLAttributes } from 'react';
 
 export function Table({ className = '', ...props }: HTMLAttributes<HTMLTableElement>) {
   return (
-    <div className="w-full overflow-x-auto">
+    <div className="relative w-full overflow-x-auto">
       <table className={`w-full border-collapse text-left text-sm ${className}`} {...props} />
     </div>
   );
 }
 
 export function THead({ className = '', ...props }: HTMLAttributes<HTMLTableSectionElement>) {
-  return <thead className={`bg-muted/60 ${className}`} {...props} />;
+  return <thead className={`bg-secondary ${className}`} {...props} />;
 }
 
 export function TR({ className = '', ...props }: HTMLAttributes<HTMLTableRowElement>) {
@@ -19,7 +19,7 @@ export function TR({ className = '', ...props }: HTMLAttributes<HTMLTableRowElem
 export function TH({ className = '', ...props }: ThHTMLAttributes<HTMLTableCellElement>) {
   return (
     <th
-      className={`px-4 py-3 text-xs font-medium uppercase leading-[18px] tracking-wider text-muted-foreground ${className}`}
+      className={`px-4 py-3 text-xs font-medium uppercase leading-[18px] tracking-wider text-foreground/70 ${className}`}
       {...props}
     />
   );

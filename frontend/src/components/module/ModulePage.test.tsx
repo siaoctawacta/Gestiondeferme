@@ -5,7 +5,10 @@ import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '../../lib/auth';
 import { setAccessToken, setFarmHeader } from '../../lib/api';
-import { batiments } from '../../modules/batiments';
+import { Eye } from 'lucide-react';
+import { api } from '../../lib/api';
+import { batiments, type Building } from '../../modules/batiments';
+import type { ModuleConfig } from './types';
 import { ModulePage } from './ModulePage';
 
 function json(status: number, body?: unknown): Response {
@@ -28,7 +31,7 @@ const calls: Call[] = [];
 const fetchMock = vi.fn<typeof fetch>();
 let handler: (c: Call) => Response | undefined;
 
-function setup({ perms = ALL, farm }: { perms?: string[]; farm?: string } = {}) {
+function setup({ perms = ALL, farm, config = batiments }: { perms?: string[]; farm?: string; config?: ModuleConfig<Building> } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
   handler = () => undefined;
   fetchMock.mockImplementation(async (input, init) => {
@@ -55,7 +58,7 @@ function setup({ perms = ALL, farm }: { perms?: string[]; farm?: string } = {}) 
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter>
         <AuthProvider>
-          <ModulePage config={batiments} />
+          <ModulePage config={config} />
         </AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -102,7 +105,7 @@ describe('ModulePage with the batiments config', () => {
   it('requests the chosen status', async () => {
     setup();
     await screen.findByText('Poulailler A');
-    await userEvent.setup().selectOptions(screen.getByLabelText('Filtrer par statut'), 'Maintenance');
+    await userEvent.setup().selectOptions(screen.getByLabelText('Tous les statuts'), 'Maintenance');
     await waitFor(() => expect(listCalls().some((c) => c.url.includes('status=MAINTENANCE'))).toBe(true));
   });
 
@@ -231,5 +234,130 @@ describe('ModulePage with the batiments config', () => {
     expect(await screen.findByText('Page 1 sur 3')).toBeInTheDocument();
     await userEvent.setup().click(screen.getByRole('button', { name: 'Suivant' }));
     await waitFor(() => expect(listCalls().some((c) => c.url.includes('page=2'))).toBe(true));
+  });
+
+  it('exports the current list as CSV or Excel through api.download', async () => {
+    const download = vi.spyOn(api, 'download').mockResolvedValue();
+    setup();
+    await screen.findByText('Poulailler A');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Exporter' }));
+    await user.click(screen.getByRole('menuitem', { name: 'CSV' }));
+    await user.click(screen.getByRole('button', { name: 'Exporter' }));
+    await user.click(screen.getByRole('menuitem', { name: 'Excel' }));
+    expect(download).toHaveBeenNthCalledWith(1, '/buildings', expect.objectContaining({ format: 'csv' }), 'batiments.csv');
+    expect(download).toHaveBeenNthCalledWith(2, '/buildings', expect.objectContaining({ format: 'xlsx' }), 'batiments.xlsx');
+    download.mockRestore();
+  });
+
+  it('shows the QR button only when the config asks for it', async () => {
+    setup();
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('link', { name: 'QR code' })).not.toBeInTheDocument();
+  });
+
+  it('shows the QR button when config.qr is set', async () => {
+    setup({ config: { ...batiments, qr: true, detailPath: (b) => `/m/batiments/${b.id}` } });
+    expect((await screen.findAllByRole('link', { name: 'QR code' }))[0]).toHaveAttribute('href', '/m/batiments/b1');
+  });
+
+  it('renders the second tab with its own list', async () => {
+    setup();
+    await screen.findByText('Poulailler A');
+    handler = (c) => (c.url.startsWith('/api/zones')
+      ? json(200, { items: [{ id: 'z1', name: 'Zone Nord', buildingId: 'b1', buildingName: 'Poulailler A', capacity: 100 }], total: 1, page: 1, pageSize: 25 })
+      : undefined);
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Zones' }));
+    expect(await screen.findByText('Zone Nord')).toBeInTheDocument();
+    expect(screen.queryByText('Total enregistrements')).not.toBeInTheDocument();
+  });
+
+  it('keeps the unfiltered total tile while a search narrows the list', async () => {
+    const plain: ModuleConfig<Building> = { ...batiments, statuses: undefined, statusKey: undefined, tabs: undefined };
+    setup({ config: plain });
+    handler = (c) => {
+      if (!c.url.startsWith('/api/buildings') || c.method !== 'GET') return undefined;
+      const narrowed = c.url.includes('search=');
+      return json(200, { items: BUILDINGS.slice(0, narrowed ? 1 : 2), total: narrowed ? 1 : 6, page: 1, pageSize: c.url.includes('pageSize=1&') || c.url.endsWith('pageSize=1') ? 1 : 25 });
+    };
+    await screen.findByText('Poulailler A');
+    await waitFor(() => expect(screen.getByText('Total enregistrements').nextElementSibling).toHaveTextContent('6'));
+    await userEvent.setup().type(screen.getByPlaceholderText('Rechercher…'), 'poul');
+    await waitFor(() => expect(screen.queryByText('Porcherie 2')).not.toBeInTheDocument());
+    expect(screen.getByText('Total enregistrements').nextElementSibling).toHaveTextContent('6');
+    expect(screen.queryByText('Vide sanitaire', { selector: 'p' })).not.toBeInTheDocument();
+  });
+
+  it('keeps the previous rows visible while the next search loads', async () => {
+    setup();
+    await screen.findByText('Poulailler A');
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    fetchMock.mockImplementationOnce(async () => { await gate; return json(200, LIST); });
+    await userEvent.setup().type(screen.getByPlaceholderText('Rechercher…'), 'p');
+    await waitFor(() => expect(document.querySelector('[aria-busy="true"]')).not.toBeNull());
+    expect(screen.getByText('Poulailler A')).toBeInTheDocument();
+    expect(screen.queryByTestId('skeleton-row')).not.toBeInTheDocument();
+    release();
+  });
+
+  it('runs a custom row action with the row', async () => {
+    const run = vi.fn();
+    setup({ config: { ...batiments, actions: [{ key: 'view', label: 'Voir détail', icon: Eye, run }] } });
+    await screen.findByText('Poulailler A');
+    await userEvent.setup().click(screen.getAllByRole('button', { name: 'Voir détail' })[0]);
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ id: 'b1' }), expect.objectContaining({ refresh: expect.any(Function), notify: expect.any(Function) }));
+  });
+
+  it('goes back a page when the last row of the last page is deleted', async () => {
+    setup();
+    await screen.findByText('Poulailler A');
+    handler = (c) => (c.url.startsWith('/api/buildings') && c.method === 'GET'
+      ? json(200, c.url.includes('page=2') ? { ...LIST, items: [], total: 25 } : { ...LIST, total: 26 })
+      : undefined);
+    await userEvent.setup().type(screen.getByPlaceholderText('Rechercher…'), 'p');
+    await screen.findByText('Page 1 sur 2');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Suivant' }));
+    await waitFor(() => expect(screen.queryByText('Page 2 sur 2')).not.toBeInTheDocument());
+    await waitFor(() => expect(listCalls().filter((c) => c.url.includes('page=1')).length).toBeGreaterThan(1));
+  });
+});
+
+describe('ModulePage keyboard accessibility', () => {
+  it('exposes the tabs as a tablist with arrow-key navigation and a labelled tabpanel', async () => {
+    setup();
+    await screen.findByText('Poulailler A');
+    const user = userEvent.setup();
+    const tabs = screen.getAllByRole('tab');
+    expect(tabs.map((t) => t.textContent)).toEqual(['Bâtiments', 'Zones']);
+    const panel = screen.getByRole('tabpanel');
+    expect(tabs[0]).toHaveAttribute('aria-controls', panel.id);
+    expect(panel).toHaveAttribute('aria-labelledby', tabs[0].id);
+    expect(tabs[1]).toHaveAttribute('tabindex', '-1');
+
+    tabs[0].focus();
+    await user.keyboard('{ArrowRight}');
+    expect(screen.getAllByRole('tab')[1]).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByRole('tab')[1]).toHaveFocus();
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', screen.getAllByRole('tab')[1].id);
+    await user.keyboard('{Home}');
+    expect(screen.getAllByRole('tab')[0]).toHaveAttribute('aria-selected', 'true');
+  });
+
+  it('moves focus into the export menu, walks it with arrows, and Escape restores focus', async () => {
+    setup();
+    await screen.findByText('Poulailler A');
+    const user = userEvent.setup();
+    const trigger = screen.getByRole('button', { name: 'Exporter' });
+    await user.click(trigger);
+    const items = screen.getAllByRole('menuitem');
+    expect(items[0]).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(items[1]).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(items[0]).toHaveFocus();
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
   });
 });
