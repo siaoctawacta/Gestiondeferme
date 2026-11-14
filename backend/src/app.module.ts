@@ -6,6 +6,7 @@ import { AuthModule } from './auth/auth.module';
 import { BreedingModule } from './breeding/breeding.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { EggsModule } from './eggs/eggs.module';
+import { FeedModule } from './feed/feed.module';
 import { HerdModule } from './herd/herd.module';
 import { HealthController } from './health/health.controller';
 import { IndicatorsModule } from './indicators/indicators.module';
@@ -21,6 +22,7 @@ import { PrismaModule } from './prisma/prisma.module';
     AdminModule,
     HerdModule,
     EggsModule,
+    FeedModule,
     PigsModule,
     BreedingModule,
     IndicatorsModule,

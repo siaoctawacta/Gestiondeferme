@@ -113,42 +113,46 @@ enum AuditAction {
 }
 
 model Organization {
-  id        String     @id @default(cuid())
-  name      String
-  currency  String     @default("FCFA")
-  legalId   String?
-  address   String?
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
-  farms     Farm[]
-  users     User[]
-  settings  Setting[]
-  auditLogs AuditLog[]
-  breeds    Breed[]
+  id           String        @id @default(cuid())
+  name         String
+  currency     String        @default("FCFA")
+  legalId      String?
+  address      String?
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  farms        Farm[]
+  users        User[]
+  settings     Setting[]
+  auditLogs    AuditLog[]
+  breeds       Breed[]
+  feedProducts FeedProduct[]
+  feedFormulas FeedFormula[]
 }
 
 model Farm {
-  id              String           @id @default(cuid())
-  organizationId  String
-  organization    Organization     @relation(fields: [organizationId], references: [id])
-  name            String
-  location        String?
-  active          Boolean          @default(true)
-  createdAt       DateTime         @default(now())
-  updatedAt       DateTime         @updatedAt
-  sites           Site[]
-  buildings       Building[]
-  zones           Zone[]
-  userFarms       UserFarm[]
-  batches         AnimalBatch[]
-  batchEvents     BatchEvent[]
-  weighings       Weighing[]
-  eggProductions  EggProduction[]
-  incubations     Incubation[]
-  animals         Animal[]
-  animalWeighings AnimalWeighing[]
-  heats           Heat[]
-  breedingRecords BreedingRecord[]
+  id                String             @id @default(cuid())
+  organizationId    String
+  organization      Organization       @relation(fields: [organizationId], references: [id])
+  name              String
+  location          String?
+  active            Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  sites             Site[]
+  buildings         Building[]
+  zones             Zone[]
+  userFarms         UserFarm[]
+  batches           AnimalBatch[]
+  batchEvents       BatchEvent[]
+  weighings         Weighing[]
+  eggProductions    EggProduction[]
+  feedDistributions FeedDistribution[]
+  waterConsumptions WaterConsumption[]
+  incubations       Incubation[]
+  animals           Animal[]
+  animalWeighings   AnimalWeighing[]
+  heats             Heat[]
+  breedingRecords   BreedingRecord[]
 }
 
 model Site {
@@ -164,20 +168,22 @@ model Site {
 }
 
 model Building {
-  id        String         @id @default(cuid())
-  farmId    String
-  farm      Farm           @relation(fields: [farmId], references: [id])
-  siteId    String
-  site      Site           @relation(fields: [siteId], references: [id])
-  name      String
-  type      BuildingType
-  capacity  Int
-  status    BuildingStatus @default(ACTIF)
-  createdAt DateTime       @default(now())
-  updatedAt DateTime       @updatedAt
-  zones     Zone[]
-  batches   AnimalBatch[]
-  animals   Animal[]
+  id                String             @id @default(cuid())
+  farmId            String
+  farm              Farm               @relation(fields: [farmId], references: [id])
+  siteId            String
+  site              Site               @relation(fields: [siteId], references: [id])
+  name              String
+  type              BuildingType
+  capacity          Int
+  status            BuildingStatus     @default(ACTIF)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  zones             Zone[]
+  batches           AnimalBatch[]
+  animals           Animal[]
+  feedDistributions FeedDistribution[]
+  waterConsumptions WaterConsumption[]
 
   @@unique([farmId, name])
   @@index([siteId])
@@ -327,37 +333,39 @@ model Breed {
 }
 
 model AnimalBatch {
-  id                  String          @id @default(cuid())
+  id                  String             @id @default(cuid())
   farmId              String
-  farm                Farm            @relation(fields: [farmId], references: [id])
+  farm                Farm               @relation(fields: [farmId], references: [id])
   code                String
   species             Species
   type                BatchType
   breedId             String?
-  breed               Breed?          @relation(fields: [breedId], references: [id], onDelete: Restrict)
+  breed               Breed?             @relation(fields: [breedId], references: [id], onDelete: Restrict)
   buildingId          String
-  building            Building        @relation(fields: [buildingId], references: [id])
-  entryDate           DateTime        @db.Date
+  building            Building           @relation(fields: [buildingId], references: [id])
+  entryDate           DateTime           @db.Date
   initialCount        Int
   supplierName        String?
-  purchasePrice       Decimal?        @db.Decimal(14, 2)
+  purchasePrice       Decimal?           @db.Decimal(14, 2)
   responsibleId       String?
-  responsible         User?           @relation(fields: [responsibleId], references: [id], onDelete: Restrict)
-  status              BatchStatus     @default(EN_COURS)
+  responsible         User?              @relation(fields: [responsibleId], references: [id], onDelete: Restrict)
+  status              BatchStatus        @default(EN_COURS)
   closedAt            DateTime?
   /// Sow of a piglet batch.
   motherAnimalId      String?
-  mother              Animal?         @relation("SowLitters", fields: [motherAnimalId], references: [id], onDelete: Restrict)
+  mother              Animal?            @relation("SowLitters", fields: [motherAnimalId], references: [id], onDelete: Restrict)
   notes               String?
-  createdAt           DateTime        @default(now())
-  updatedAt           DateTime        @updatedAt
-  events              BatchEvent[]    @relation("BatchEvents")
-  relatedEvents       BatchEvent[]    @relation("RelatedBatch")
+  createdAt           DateTime           @default(now())
+  updatedAt           DateTime           @updatedAt
+  events              BatchEvent[]       @relation("BatchEvents")
+  relatedEvents       BatchEvent[]       @relation("RelatedBatch")
   weighings           Weighing[]
   eggProductions      EggProduction[]
-  sourceOfIncubations Incubation[]    @relation("IncubationSource")
-  hatchedFrom         Incubation?     @relation("IncubationChicks")
-  litterOf            BreedingRecord? @relation("BreedingLitter")
+  feedDistributions   FeedDistribution[]
+  waterConsumptions   WaterConsumption[]
+  sourceOfIncubations Incubation[]       @relation("IncubationSource")
+  hatchedFrom         Incubation?        @relation("IncubationChicks")
+  litterOf            BreedingRecord?    @relation("BreedingLitter")
 
   @@unique([farmId, code])
   @@index([farmId])
@@ -561,4 +569,104 @@ model BreedingRecord {
   @@index([farmId, serviceDate])
   @@index([sowId])
   @@index([boarId])
+}
+
+enum FeedKind {
+  MATIERE_PREMIERE
+  ALIMENT_COMPLET
+}
+
+model FeedProduct {
+  id             String             @id @default(cuid())
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+  name           String
+  kind           FeedKind
+  unit           String             @default("kg")
+  unitCost       Decimal            @db.Decimal(12, 2)
+  active         Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  formulaItems   FeedFormulaItem[]
+  distributions  FeedDistribution[]
+
+  @@unique([organizationId, name])
+}
+
+model FeedFormula {
+  id             String             @id @default(cuid())
+  organizationId String
+  organization   Organization       @relation(fields: [organizationId], references: [id])
+  name           String
+  species        Species
+  stage          String
+  active         Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  updatedAt      DateTime           @updatedAt
+  items          FeedFormulaItem[]
+  distributions  FeedDistribution[]
+
+  @@unique([organizationId, name])
+}
+
+model FeedFormulaItem {
+  id            String      @id @default(cuid())
+  formulaId     String
+  formula       FeedFormula @relation(fields: [formulaId], references: [id], onDelete: Cascade)
+  feedProductId String
+  feedProduct   FeedProduct @relation(fields: [feedProductId], references: [id], onDelete: Restrict)
+  percentage    Decimal     @db.Decimal(5, 2)
+
+  @@unique([formulaId, feedProductId])
+  @@index([feedProductId])
+}
+
+model FeedDistribution {
+  id            String       @id @default(cuid())
+  farmId        String
+  farm          Farm         @relation(fields: [farmId], references: [id])
+  date          DateTime     @db.Date
+  batchId       String?
+  batch         AnimalBatch? @relation(fields: [batchId], references: [id])
+  buildingId    String?
+  building      Building?    @relation(fields: [buildingId], references: [id])
+  feedProductId String?
+  feedProduct   FeedProduct? @relation(fields: [feedProductId], references: [id], onDelete: Restrict)
+  formulaId     String?
+  formula       FeedFormula? @relation(fields: [formulaId], references: [id], onDelete: Restrict)
+  quantityKg    Decimal      @db.Decimal(10, 2)
+  /// Copied at entry time (product cost, or formula cost per kg): later price changes never rewrite history.
+  unitCost      Decimal      @db.Decimal(12, 2)
+  cost          Decimal      @db.Decimal(14, 2)
+  note          String?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  @@index([farmId])
+  @@index([farmId, date])
+  @@index([batchId])
+  @@index([buildingId])
+  @@index([feedProductId])
+  @@index([formulaId])
+}
+
+model WaterConsumption {
+  id         String       @id @default(cuid())
+  farmId     String
+  farm       Farm         @relation(fields: [farmId], references: [id])
+  date       DateTime     @db.Date
+  batchId    String?
+  batch      AnimalBatch? @relation(fields: [batchId], references: [id])
+  buildingId String?
+  building   Building?    @relation(fields: [buildingId], references: [id])
+  liters     Decimal      @db.Decimal(10, 2)
+  createdAt  DateTime     @default(now())
+  updatedAt  DateTime     @updatedAt
+
+  @@unique([batchId, date])
+  @@unique([buildingId, date])
+  @@index([farmId])
+  @@index([farmId, date])
+  @@index([batchId])
+  @@index([buildingId])
 }
