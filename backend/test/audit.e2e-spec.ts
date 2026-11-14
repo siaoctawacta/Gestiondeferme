@@ -314,6 +314,20 @@ describe('Audit trail (e2e)', () => {
       ]);
     });
 
+    it('rejects a farm-limited user asking for an unassigned, foreign or all-farms scope', async () => {
+      const director = await actor('DIRECTEUR_FERME');
+      const unassigned = await createFarm(orgId, 'Non assignée');
+      const foreignOrg = await createOrganization('Autre');
+      const foreignFarm = await createFarm(foreignOrg.id, 'Étrangère');
+      for (const header of [unassigned.id, foreignFarm.id, 'all']) {
+        await http()
+          .get('/api/audit')
+          .set(bearer(director.token))
+          .set('X-Farm-Id', header)
+          .expect(403);
+      }
+    });
+
     it('filters by search, module and date range, and paginates', async () => {
       const admin = await actor('SUPER_ADMIN');
       await prisma.auditLog.createMany({
