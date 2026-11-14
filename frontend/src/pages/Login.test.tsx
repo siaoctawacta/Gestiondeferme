@@ -131,6 +131,21 @@ describe('Login', () => {
     await vi.waitFor(() => expect(calledMe()).toBe(true));
   });
 
+  it('returns to the credentials with an error when the session cannot be loaded after verify', async () => {
+    mockRoutes({
+      '/auth/refresh': () => json(401, { message: 'Unauthorized' }),
+      '/auth/login': () => json(200, { twoFactorRequired: true, challengeToken: 'chal' }),
+      '/auth/2fa/verify': () => json(200, { accessToken: 'acc', user: ME.user }),
+      '/auth/me': () => json(500, { message: 'boom' }),
+    });
+    await renderLogin();
+    const user = await submitCredentials();
+    await user.type(await screen.findByLabelText('Code de vérification'), '123456');
+    await user.click(screen.getByRole('button', { name: 'Vérifier' }));
+    expect(await screen.findByRole('heading', { name: 'Connexion' })).toBeInTheDocument();
+    expect(screen.getByRole('alert')).toHaveTextContent('la session n\'a pas pu être chargée');
+  });
+
   it('shows the lock message with the unlock time in French', async () => {
     mockRoutes({
       '/auth/refresh': () => json(401, { message: 'Unauthorized' }),

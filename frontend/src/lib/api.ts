@@ -51,9 +51,8 @@ export interface RequestOptions {
   token?: string;
 }
 
-const NO_REFRESH = ['/auth/login', '/auth/refresh', '/auth/reset-password'];
-const noRefresh = (path: string) =>
-  NO_REFRESH.includes(path) || path.startsWith('/auth/2fa/');
+const NO_REFRESH = ['/auth/login', '/auth/refresh', '/auth/reset-password', '/auth/2fa/verify'];
+const noRefresh = (path: string) => NO_REFRESH.includes(path);
 
 function buildUrl(path: string, params?: Params): string {
   const qs = new URLSearchParams();
@@ -132,16 +131,26 @@ async function refreshOrExpire(): Promise<void> {
   }
 }
 
+/** Sends once; on a 401 for a session request, refreshes (or reuses a newer token) and retries once. */
+async function sendWithRetry(
+  method: string,
+  path: string,
+  opts: { params?: Params; body?: unknown } & RequestOptions,
+): Promise<Response> {
+  const sentWith = accessToken;
+  const res = await send(method, path, opts);
+  if (res.status !== 401 || opts.token || noRefresh(path)) return res;
+  // Another request may already have refreshed while this one was in flight.
+  if (!accessToken || accessToken === sentWith) await refreshOrExpire();
+  return send(method, path, opts);
+}
+
 async function request<T>(
   method: string,
   path: string,
   opts: { params?: Params; body?: unknown } & RequestOptions = {},
 ): Promise<T> {
-  let res = await send(method, path, opts);
-  if (res.status === 401 && !opts.token && !noRefresh(path)) {
-    await refreshOrExpire();
-    res = await send(method, path, opts);
-  }
+  const res = await sendWithRetry(method, path, opts);
   if (!res.ok) throw await toError(res);
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
@@ -157,17 +166,13 @@ export const api = {
   del: <T = void>(path: string) => request<T>('DELETE', path),
   /** Fetches a file with the session credentials and hands it to the browser as a download. */
   async download(path: string, params: Params | undefined, filename: string): Promise<void> {
-    let res = await send('GET', path, { params });
-    if (res.status === 401) {
-      await refreshOrExpire();
-      res = await send('GET', path, { params });
-    }
+    const res = await sendWithRetry('GET', path, { params });
     if (!res.ok) throw await toError(res);
     const url = URL.createObjectURL(await res.blob());
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
     a.click();
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
   },
 };

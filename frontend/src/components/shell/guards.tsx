@@ -13,12 +13,23 @@ export function FullScreenLoader() {
   );
 }
 
+/** A post-login destination is only honoured when it is an in-app path (never `//host`). */
+export function safeRedirect(from: unknown): string {
+  return typeof from === 'string' && /^\/(?![/\\])/.test(from) ? from : '/';
+}
+
 export function RequireAuth({ children }: { children: ReactNode }) {
-  const { status } = useAuth();
+  const { status, signedOut } = useAuth();
   const location = useLocation();
   if (status === 'loading') return <FullScreenLoader />;
   if (status === 'anonymous') {
-    return <Navigate to="/login" replace state={{ from: location.pathname + location.search }} />;
+    return (
+      <Navigate
+        to="/login"
+        replace
+        state={signedOut ? null : { from: location.pathname + location.search }}
+      />
+    );
   }
   return children;
 }

@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { farmKey, useFarmQuery } from './query';
 import { AuthProvider, useAuth } from './auth';
 import { setAccessToken, setFarmHeader } from './api';
 import { FarmSwitcher } from '../components/shell/FarmSwitcher';
@@ -26,14 +27,14 @@ function Probe() {
   return <p data-testid="farm">{farmId}</p>;
 }
 
-function renderApp(ui: React.ReactNode) {
+function renderApp(ui: React.ReactNode, client = new QueryClient()) {
   fetchMock.mockImplementation(async (input) => {
     if (input === '/api/auth/refresh') return json(200, { accessToken: 'acc', user: ME.user });
     if (input === '/api/auth/me') return json(200, ME);
     throw new Error(`unexpected ${String(input)}`);
   });
   render(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider client={client}>
       <MemoryRouter>
         <AuthProvider>{ui}</AuthProvider>
       </MemoryRouter>
@@ -72,6 +73,27 @@ describe('AuthProvider', () => {
     await user.click(screen.getByRole('menuitemradio', { name: 'Ferme Atakpamé' }));
     expect(screen.getByTestId('farm')).toHaveTextContent('f2');
     expect(localStorage.getItem('ap_farm')).toBe('f2');
+  });
+
+  it('empties the cache of the previous farm on switch and keys farm queries by farm id', async () => {
+    const client = new QueryClient();
+    function Lots() {
+      const q = useFarmQuery(['lots'], async () => 'lots-data');
+      return <p>{q.data ?? 'vide'}</p>;
+    }
+    renderApp(<><Probe /><FarmSwitcher /><Lots /></>, client);
+    const user = userEvent.setup();
+    expect(await screen.findByText('lots-data')).toBeInTheDocument();
+    expect(client.getQueryCache().find({ queryKey: farmKey('f1', 'lots') })).toBeDefined();
+    client.setQueryData(farmKey('f1', 'other'), 'stale');
+
+    await user.click(screen.getByRole('button', { name: /Awa Mensah/ }));
+    await user.click(screen.getByRole('menuitemradio', { name: 'Ferme Atakpamé' }));
+    await screen.findByText('f2');
+    await vi.waitFor(() =>
+      expect(client.getQueryCache().getAll().map((q) => q.queryKey[1])).not.toContain('f1'),
+    );
+    expect(client.getQueryCache().find({ queryKey: farmKey('f2', 'lots') })).toBeDefined();
   });
 
   it('shows the 403 card when read permission is missing', async () => {

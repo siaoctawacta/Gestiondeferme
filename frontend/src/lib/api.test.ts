@@ -81,7 +81,28 @@ describe('api client', () => {
     expect(getAccessToken()).toBeNull();
   });
 
-  it('never tries to refresh for login or 2FA calls', async () => {
+  it('refreshes once for /auth/2fa/setup made with the session token', async () => {
+    fetchMock
+      .mockResolvedValueOnce(json(401, { message: 'Unauthorized' }))
+      .mockResolvedValueOnce(json(200, { accessToken: 'tok-2', user: {} }))
+      .mockResolvedValueOnce(json(200, { secret: 's' }));
+    await expect(api.post('/auth/2fa/setup')).resolves.toEqual({ secret: 's' });
+    expect(fetchMock.mock.calls[1][0]).toBe('/api/auth/refresh');
+    expect(headersOf(2).get('Authorization')).toBe('Bearer tok-2');
+  });
+
+  it('retries with a newer token without refreshing again', async () => {
+    fetchMock.mockImplementationOnce(async () => {
+      setAccessToken('tok-2'); // another request refreshed meanwhile
+      return json(401, { message: 'x' });
+    });
+    fetchMock.mockResolvedValueOnce(json(200, { ok: 1 }));
+    await expect(api.get('/lots')).resolves.toEqual({ ok: 1 });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(headersOf(1).get('Authorization')).toBe('Bearer tok-2');
+  });
+
+  it('never tries to refresh for login, 2FA verify or explicit-token calls', async () => {
     fetchMock.mockResolvedValueOnce(json(401, { message: 'Identifiants invalides' }));
     await expect(api.post('/auth/login', { email: 'a', password: 'b' })).rejects.toMatchObject({
       status: 401,

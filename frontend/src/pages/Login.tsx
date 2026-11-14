@@ -1,10 +1,10 @@
 import { useState, type FormEvent } from 'react';
 import { Navigate, useLocation } from 'react-router';
 import { ApiError } from '../lib/api';
-import { useAuth } from '../lib/auth';
+import { SessionStartError, useAuth } from '../lib/auth';
 import { formatDateTimeFr } from '../lib/format';
 import { AuthCard } from '../components/AuthCard';
-import { FullScreenLoader } from '../components/shell/guards';
+import { FullScreenLoader, safeRedirect } from '../components/shell/guards';
 import { TwoFactorEnroll } from '../components/TwoFactorEnroll';
 import { Alert } from '../components/ui/Alert';
 import { Button } from '../components/ui/Button';
@@ -23,6 +23,7 @@ function loginMessage(e: unknown): string {
     if (e.status === 429) return 'Trop de tentatives. Patientez un instant avant de réessayer.';
     return e.message;
   }
+  if (e instanceof SessionStartError) return e.message;
   return 'Impossible de joindre le serveur. Réessayez.';
 }
 
@@ -38,8 +39,8 @@ export default function Login() {
 
   if (status === 'loading') return <FullScreenLoader />;
   if (status === 'authenticated') {
-    const from = (location.state as { from?: string } | null)?.from;
-    return <Navigate to={from ?? '/'} replace />;
+    const from = (location.state as { from?: unknown } | null)?.from;
+    return <Navigate to={safeRedirect(from)} replace />;
   }
 
   const run = async (fn: () => Promise<void>) => {
@@ -48,6 +49,8 @@ export default function Login() {
     try {
       await fn();
     } catch (e) {
+      // The session could not be loaded: start over from the credentials.
+      if (e instanceof SessionStartError) setStep('credentials');
       setError(loginMessage(e));
     } finally {
       setBusy(false);
@@ -74,7 +77,7 @@ export default function Login() {
         <p className="mb-4 text-sm text-muted-foreground">
           Votre rôle exige la double authentification. Activez-la pour accéder à AgriPilot.
         </p>
-        <TwoFactorEnroll onFinished={completeSetup} />
+        <TwoFactorEnroll onFinished={() => run(completeSetup)} />
       </AuthCard>
     );
   }
