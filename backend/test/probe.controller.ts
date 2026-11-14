@@ -1,6 +1,7 @@
 import { Controller, Get, Post } from '@nestjs/common';
 import {
   AllowStage,
+  AnyAuthenticated,
   Ctx,
   NoFarm,
   RequirePermission,
@@ -16,6 +17,20 @@ export class ProbeController {
     return ctx;
   }
 
+  /** Farm-scoped, any role: GET may use `X-Farm-Id: all`, the POST may not. */
+  @Get('authed-farm')
+  @AnyAuthenticated()
+  authedFarmRead(@Ctx() ctx: RequestContext): RequestContext {
+    return ctx;
+  }
+
+  @Post('authed-farm')
+  @AnyAuthenticated()
+  authedFarmWrite(@Ctx() ctx: RequestContext): RequestContext {
+    return ctx;
+  }
+
+  /** Deliberately has neither marker: the guard must fail closed. */
   @Post('undecorated')
   undecorated(@Ctx() ctx: RequestContext): RequestContext {
     return ctx;
@@ -36,12 +51,14 @@ export class ProbeController {
 
   @Get('authed')
   @NoFarm()
+  @AnyAuthenticated()
   authed(@Ctx() ctx: RequestContext): RequestContext {
     return ctx;
   }
 
   @Get('setup')
   @NoFarm()
+  @AnyAuthenticated()
   @AllowStage('setup', '2fa')
   setup(@Ctx() ctx: RequestContext): RequestContext {
     return ctx;

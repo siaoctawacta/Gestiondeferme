@@ -1,4 +1,4 @@
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, Logger } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import request from 'supertest';
 import type { App } from 'supertest/types';
@@ -180,12 +180,77 @@ describe('Access guard (e2e)', () => {
     );
   });
 
-  it('refuses X-Farm-Id: all on an undecorated POST', async () => {
+  it('refuses X-Farm-Id: all on an @AnyAuthenticated write but allows it on a read', async () => {
     const post = await request(http())
-      .post('/api/_probe/undecorated')
+      .post('/api/_probe/authed-farm')
       .set('Authorization', `Bearer ${await tokenFor(auditeur)}`)
       .set('X-Farm-Id', 'all');
     expect(post.status).toBe(403);
+    const read = await get('/_probe/authed-farm', auditeur, {
+      'X-Farm-Id': 'all',
+    });
+    expect(read.status).toBe(200);
+  });
+
+  it('fails closed on a route with neither @RequirePermission nor @AnyAuthenticated', async () => {
+    const admin = (
+      await createUser({ organizationId: orgId, role: 'SUPER_ADMIN' })
+    ).id;
+    const logged = jest
+      .spyOn(Logger.prototype, 'error')
+      .mockImplementation(() => undefined);
+    try {
+      const res = await request(http())
+        .post('/api/_probe/undecorated')
+        .set('Authorization', `Bearer ${await tokenFor(admin)}`)
+        .set('X-Farm-Id', farmA);
+      expect(res.status).toBe(403);
+      expect(logged).toHaveBeenCalledWith(
+        expect.stringContaining('ProbeController.undecorated'),
+      );
+      // unauthenticated callers still get 401, not 403
+      const anon = await request(http()).post('/api/_probe/undecorated');
+      expect(anon.status).toBe(401);
+    } finally {
+      logged.mockRestore();
+    }
+  });
+
+  describe('inactive farms are read-only', () => {
+    let dormant: string;
+    beforeAll(async () => {
+      const prisma = new PrismaService();
+      try {
+        const farm = await prisma.farm.create({
+          data: { organizationId: orgId, name: 'Dormante', active: false },
+        });
+        dormant = farm.id;
+        await prisma.userFarm.create({
+          data: { userId: avicole, farmId: dormant },
+        });
+      } finally {
+        await prisma.$disconnect();
+      }
+    });
+
+    it('rejects a write with 403 and the French message', async () => {
+      const res = await get('/_probe', avicole, { 'X-Farm-Id': dormant });
+      expect(res.status).toBe(403);
+      expect((res.body as { message: string }).message).toBe(
+        'Cette ferme est désactivée',
+      );
+      const post = await request(http())
+        .post('/api/_probe/authed-farm')
+        .set('Authorization', `Bearer ${await tokenFor(avicole)}`)
+        .set('X-Farm-Id', dormant);
+      expect(post.status).toBe(403);
+    });
+
+    it('still serves reads', async () => {
+      const res = await get('/_probe/read', avicole, { 'X-Farm-Id': dormant });
+      expect(res.status).toBe(200);
+      expect((res.body as RequestContext).farmId).toBe(dormant);
+    });
   });
 
   it('401 (not 403) for a 2fa/setup token of a deleted or deactivated user', async () => {

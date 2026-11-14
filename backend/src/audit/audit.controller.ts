@@ -7,9 +7,9 @@ import { Ctx, NoFarm, RequirePermission } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import { ALL_FARMS_ROLES } from '../access/roles';
 import type { Prisma } from '../generated/prisma/client';
-import { ExportColumn, sendExport } from '../listing/export';
+import { ExportColumn } from '../listing/export';
+import { sendList } from '../listing/list-helpers';
 import { ListQueryDto, orderBy } from '../listing/list-query.dto';
-import { paginate } from '../listing/paginate';
 import { PrismaService } from '../prisma/prisma.service';
 
 class AuditQueryDto extends ListQueryDto {
@@ -32,7 +32,6 @@ class AuditQueryDto extends ListQueryDto {
 type AuditItem = Prisma.AuditLogGetPayload<object>;
 
 const SORTABLE = ['createdAt', 'userName', 'action', 'module'];
-const MAX_EXPORT_ROWS = 10_000;
 const DATE_ONLY = /^\d{4}-\d{2}-\d{2}$/;
 
 const COLUMNS: ExportColumn<AuditItem>[] = [
@@ -73,25 +72,19 @@ export class AuditController {
     @Res() res: Response,
   ): Promise<void> {
     const where = await this.buildWhere(ctx, q, farmHeader);
-    const order = orderBy(q, SORTABLE, { createdAt: 'desc' });
-    const orderList = [order, { id: 'desc' as const }];
-
-    if (q.format) {
-      const rows = await this.prisma.auditLog.findMany({
-        where,
-        orderBy: orderList,
-        take: MAX_EXPORT_ROWS,
-      });
-      await sendExport(res, q.format, 'journal-audit', rows, COLUMNS);
-      return;
-    }
-    const page = await paginate(
+    const orderList = [
+      orderBy(q, SORTABLE, { createdAt: 'desc' }),
+      { id: 'desc' as const },
+    ];
+    await sendList(
+      res,
       q,
-      (args) =>
-        this.prisma.auditLog.findMany({ where, orderBy: orderList, ...args }),
+      'journal-audit',
+      COLUMNS,
+      (range) =>
+        this.prisma.auditLog.findMany({ where, orderBy: orderList, ...range }),
       () => this.prisma.auditLog.count({ where }),
     );
-    res.json(page);
   }
 
   private async buildWhere(
@@ -103,15 +96,23 @@ export class AuditController {
       { organizationId: ctx.user.organizationId },
     ];
 
-    if (farmHeader) {
-      const farms = await this.access.resolveFarms(ctx.user, farmHeader, true);
-      and.push({ farmId: { in: farms.farmIds } });
-    } else if (!ALL_FARMS_ROLES.includes(ctx.user.role)) {
-      const own = await this.prisma.userFarm.findMany({
-        where: { userId: ctx.user.id },
-        select: { farmId: true },
-      });
-      and.push({ farmId: { in: own.map((f) => f.farmId) } });
+    const seesAll = ALL_FARMS_ROLES.includes(ctx.user.role);
+    if (!seesAll || (farmHeader && farmHeader !== 'all')) {
+      // All-farm roles also see organisation-level rows (login, user/farm/settings
+      // admin: no farm); `all` and no header are the same: no farm filter.
+      const farmIds = farmHeader
+        ? (await this.access.resolveFarms(ctx.user, farmHeader, true)).farmIds
+        : (
+            await this.prisma.farm.findMany({
+              where: this.access.visibleFarmsWhere(ctx.user),
+              select: { id: true },
+            })
+          ).map((f) => f.id);
+      and.push(
+        seesAll
+          ? { OR: [{ farmId: { in: farmIds } }, { farmId: null }] }
+          : { farmId: { in: farmIds } },
+      );
     }
 
     if (q.module) and.push({ module: q.module });

@@ -21,8 +21,15 @@ export const IS_PUBLIC_KEY = 'access:public';
 export const NO_FARM_KEY = 'access:noFarm';
 export const PERMISSION_KEY = 'access:permission';
 export const ALLOW_STAGE_KEY = 'access:allowStage';
+export const ANY_AUTHENTICATED_KEY = 'access:anyAuthenticated';
 
 export const Public = () => SetMetadata(IS_PUBLIC_KEY, true);
+/**
+ * Explicitly allows any authenticated user, whatever the role (own profile,
+ * own password...). A non-public route needs this or `@RequirePermission`:
+ * the guard rejects a route that has neither.
+ */
+export const AnyAuthenticated = () => SetMetadata(ANY_AUTHENTICATED_KEY, true);
 export const NoFarm = () => SetMetadata(NO_FARM_KEY, true);
 export const RequirePermission = (module: ModuleKey, action: Action) =>
   SetMetadata(PERMISSION_KEY, { module, action });

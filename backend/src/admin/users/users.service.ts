@@ -15,7 +15,7 @@ import type { Role } from '../../generated/prisma/enums';
 import type { ExportColumn } from '../../listing/export';
 import { ListQueryDto, orderBy } from '../../listing/list-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { containsInsensitive, orConflict } from '../shared';
+import { containsInsensitive, orConflict } from '../../listing/list-helpers';
 import type { CreateUserDto, UpdateUserDto } from './users.dto';
 
 const RESET_TTL_MS = 24 * 60 * 60 * 1000;

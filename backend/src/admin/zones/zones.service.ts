@@ -10,7 +10,11 @@ import type { Prisma } from '../../generated/prisma/client';
 import type { ExportColumn } from '../../listing/export';
 import { orderBy } from '../../listing/list-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { containsInsensitive, NAME_TAKEN } from '../shared';
+import {
+  containsInsensitive,
+  NAME_TAKEN,
+  orConflict,
+} from '../../listing/list-helpers';
 import type { CreateZoneDto, UpdateZoneDto, ZonesQueryDto } from './zones.dto';
 
 const include = {
@@ -137,6 +141,6 @@ export class ZonesService implements AuditableService {
 
   async remove(ctx: RequestContext, id: string): Promise<void> {
     await this.load(id, ctx);
-    await this.prisma.zone.delete({ where: { id } });
+    await orConflict(() => this.prisma.zone.delete({ where: { id } }));
   }
 }

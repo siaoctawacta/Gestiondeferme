@@ -9,7 +9,8 @@ import { randomInt } from 'crypto';
 import type { Request, Response } from 'express';
 import QRCode from 'qrcode';
 import type { TokenStage } from '../access/access-token';
-import { AuthService, MANDATORY_2FA_ROLES } from './auth.service';
+import { MANDATORY_2FA_ROLES } from '../access/roles';
+import { AuthService } from './auth.service';
 import { decrypt, encrypt, hashBackupCode } from './crypto';
 import { verifyPassword } from './password';
 import { TokensService } from './tokens.service';
@@ -104,6 +105,7 @@ export class TwoFactorService {
       await this.auth.auditLogin(sessionUser);
       return { backupCodes, ...session };
     }
+    await this.auth.auditSecurity(user, 'Double authentification activée');
     return { backupCodes };
   }
 
@@ -169,7 +171,9 @@ export class TwoFactorService {
         'La double authentification n’est pas activée',
       );
     }
+    await this.auth.assertNotLocked(user);
     if (!(await verifyPassword(user.passwordHash, password))) {
+      await this.auth.registerFailure(user.id);
       throw new BadRequestException('Mot de passe incorrect');
     }
     if (!(await this.consumeCode(user, code))) {
@@ -184,6 +188,7 @@ export class TwoFactorService {
         backupCodes: [],
       },
     });
+    await this.auth.auditSecurity(user, 'Double authentification désactivée');
   }
 
   /**

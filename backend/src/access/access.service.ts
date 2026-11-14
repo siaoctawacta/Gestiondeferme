@@ -4,6 +4,7 @@ import {
   Injectable,
   UnauthorizedException,
 } from '@nestjs/common';
+import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AccessClaims } from './access-token';
 import type { RequestContext } from './decorators';
@@ -29,9 +30,22 @@ export class AccessService {
     };
   }
 
+  /** Prisma filter for the farms `user` may see: the whole organisation for all-farm roles, else the assigned ones. */
+  visibleFarmsWhere(
+    user: Pick<RequestContext['user'], 'id' | 'role' | 'organizationId'>,
+  ): Prisma.FarmWhereInput {
+    return {
+      organizationId: user.organizationId,
+      ...(ALL_FARMS_ROLES.includes(user.role)
+        ? {}
+        : { userFarms: { some: { userId: user.id } } }),
+    };
+  }
+
   /**
    * Resolves the `X-Farm-Id` header against the user's visible farms.
-   * `isRead` tells whether the route only reads (required for `all`).
+   * `isRead` tells whether the route only reads (required for `all`); an
+   * inactive farm is read-only, so writes to it are refused.
    */
   async resolveFarms(
     user: RequestContext['user'],
@@ -48,21 +62,20 @@ export class AccessService {
         throw new ForbiddenException('Accès à toutes les fermes refusé');
       }
       const farms = await this.prisma.farm.findMany({
-        where: { organizationId: user.organizationId },
+        where: this.visibleFarmsWhere(user),
         select: { id: true },
       });
       return { farmId: null, allFarms: true, farmIds: farms.map((f) => f.id) };
     }
 
     const farm = await this.prisma.farm.findFirst({
-      where: {
-        id: header,
-        organizationId: user.organizationId,
-        ...(seesEveryFarm ? {} : { userFarms: { some: { userId: user.id } } }),
-      },
-      select: { id: true },
+      where: { id: header, ...this.visibleFarmsWhere(user) },
+      select: { id: true, active: true },
     });
     if (!farm) throw new ForbiddenException('Ferme non autorisée');
+    if (!farm.active && !isRead) {
+      throw new ForbiddenException('Cette ferme est désactivée');
+    }
     return { farmId: farm.id, allFarms: false, farmIds: [farm.id] };
   }
 }

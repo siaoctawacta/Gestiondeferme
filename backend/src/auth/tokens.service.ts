@@ -2,7 +2,7 @@ import { Injectable, UnauthorizedException } from '@nestjs/common';
 import { createHash, randomBytes } from 'crypto';
 import type { Request, Response } from 'express';
 import { signAccessToken } from '../access/access-token';
-import type { Role } from '../access/roles';
+import { MANDATORY_2FA_ROLES, type Role } from '../access/roles';
 import { PrismaService } from '../prisma/prisma.service';
 
 export const REFRESH_COOKIE = 'ap_refresh';
@@ -24,6 +24,8 @@ export interface SessionUserView {
   email: string;
   role: Role;
   twoFactorEnabled: boolean;
+  /** The role must enrol a second factor (the UI uses it to hide the disable action). */
+  twoFactorMandatory: boolean;
 }
 
 export const sha256 = (value: string): string =>
@@ -36,6 +38,7 @@ export function toUserView(user: SessionUser): SessionUserView {
     email: user.email,
     role: user.role,
     twoFactorEnabled: user.totpEnabledAt !== null,
+    twoFactorMandatory: MANDATORY_2FA_ROLES.includes(user.role),
   };
 }
 

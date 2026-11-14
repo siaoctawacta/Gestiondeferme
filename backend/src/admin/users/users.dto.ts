@@ -14,7 +14,7 @@ import {
 } from 'class-validator';
 import { MAX_PASSWORD_LENGTH, MIN_PASSWORD_LENGTH } from '../../auth/password';
 import { Role } from '../../generated/prisma/enums';
-import { Trim } from '../shared';
+import { Trim } from '../../listing/list-helpers';
 
 const NAME = 'Le nom est requis';
 const ROLE = 'Rôle invalide';

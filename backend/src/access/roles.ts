@@ -10,3 +10,11 @@ export const ALL_FARMS_ROLES: Role[] = [
   'PROPRIETAIRE',
   'AUDITEUR',
 ];
+
+/** Roles that must enrol a second factor before getting a session. */
+export const MANDATORY_2FA_ROLES: Role[] = [
+  'SUPER_ADMIN',
+  'PROPRIETAIRE',
+  'DIRECTEUR_FERME',
+  'COMPTABLE',
+];

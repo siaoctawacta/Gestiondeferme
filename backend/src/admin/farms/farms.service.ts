@@ -4,13 +4,17 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { RequestContext } from '../../access/decorators';
-import { ALL_FARMS_ROLES } from '../../access/roles';
+import { AccessService } from '../../access/access.service';
 import type { Prisma } from '../../generated/prisma/client';
 import type { AuditableService } from '../../audit/audited.decorator';
 import type { ExportColumn } from '../../listing/export';
 import { ListQueryDto, orderBy } from '../../listing/list-query.dto';
 import { PrismaService } from '../../prisma/prisma.service';
-import { containsInsensitive, NAME_TAKEN } from '../shared';
+import {
+  containsInsensitive,
+  NAME_TAKEN,
+  orConflict,
+} from '../../listing/list-helpers';
 import type { CreateFarmDto, UpdateFarmDto } from './farms.dto';
 
 const withCounts = {
@@ -49,16 +53,13 @@ const toItem = (f: FarmRow): FarmItem => ({
 
 @Injectable()
 export class FarmsService implements AuditableService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly access: AccessService,
+  ) {}
 
-  /** Every farm of the organisation for all-farm roles, else the assigned ones. */
   private scope(ctx: RequestContext): Prisma.FarmWhereInput {
-    return {
-      organizationId: ctx.user.organizationId,
-      ...(ALL_FARMS_ROLES.includes(ctx.user.role)
-        ? {}
-        : { userFarms: { some: { userId: ctx.user.id } } }),
-    };
+    return this.access.visibleFarmsWhere(ctx.user);
   }
 
   private where(ctx: RequestContext, q: ListQueryDto): Prisma.FarmWhereInput {
@@ -150,10 +151,12 @@ export class FarmsService implements AuditableService {
     if (farm._count.buildings > 0) {
       throw new ConflictException('Cette ferme contient des bâtiments');
     }
-    await this.prisma.$transaction([
-      this.prisma.site.deleteMany({ where: { farmId: id } }),
-      this.prisma.userFarm.deleteMany({ where: { farmId: id } }),
-      this.prisma.farm.delete({ where: { id } }),
-    ]);
+    await orConflict(() =>
+      this.prisma.$transaction([
+        this.prisma.site.deleteMany({ where: { farmId: id } }),
+        this.prisma.userFarm.deleteMany({ where: { farmId: id } }),
+        this.prisma.farm.delete({ where: { id } }),
+      ]),
+    );
   }
 }

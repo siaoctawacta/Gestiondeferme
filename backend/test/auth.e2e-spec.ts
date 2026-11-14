@@ -71,6 +71,7 @@ describe('Authentication (e2e)', () => {
       email: user.email,
       role: 'COMMERCIAL',
       twoFactorEnabled: false,
+      twoFactorMandatory: false,
     });
     const cookie = (res.headers['set-cookie'] as unknown as string[]).find(
       (c) => c.startsWith('ap_refresh='),
@@ -259,7 +260,9 @@ describe('Authentication (e2e)', () => {
       canSeeAllFarms: boolean;
     };
     expect(aBody.user.role).toBe('RESP_AVICOLE');
-    expect(aBody.farms).toEqual([{ id: farmId, name: 'Ferme Test' }]);
+    expect(aBody.farms).toEqual([
+      { id: farmId, name: 'Ferme Test', active: true },
+    ]);
     expect(aBody.canSeeAllFarms).toBe(false);
     expect(aBody.permissions.lots).toContain('create');
     expect(aBody.permissions.finance).toEqual([]);
@@ -430,5 +433,153 @@ describe('Authentication (e2e)', () => {
         [user.email, true, true],
       ],
     );
+  });
+  describe('self-service security actions', () => {
+    const securityRows = () =>
+      prisma.auditLog.findMany({
+        where: { module: 'utilisateurs' },
+        orderBy: { createdAt: 'asc' },
+      });
+
+    it('change-password writes an audit row with the user, organisation and no secret', async () => {
+      const user = await makeUser();
+      await http()
+        .post('/api/auth/change-password')
+        .set('Authorization', `Bearer ${await tokenFor(user.id)}`)
+        .send({ currentPassword: PASSWORD, newPassword: 'A-brand-new-pass-1' })
+        .expect(204);
+      const rows = await securityRows();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        action: 'OTHER',
+        module: 'utilisateurs',
+        label: 'Mot de passe modifié',
+        userId: user.id,
+        userName: user.name,
+        organizationId: orgId,
+        recordId: user.id,
+      });
+      expect(JSON.stringify(rows)).not.toContain('A-brand-new-pass-1');
+      expect(JSON.stringify(rows)).not.toContain(PASSWORD);
+    });
+
+    it('a wrong current password writes no audit row', async () => {
+      const user = await makeUser();
+      await http()
+        .post('/api/auth/change-password')
+        .set('Authorization', `Bearer ${await tokenFor(user.id)}`)
+        .send({ currentPassword: 'nope', newPassword: 'A-brand-new-pass-1' })
+        .expect(400);
+      expect(await securityRows()).toHaveLength(0);
+    });
+
+    it('reset-password redemption writes an audit row without the token', async () => {
+      const { createHash } = await import('crypto');
+      const user = await makeUser();
+      const raw = 'reset-token-for-audit-0123456789abcdef';
+      await prisma.passwordReset.create({
+        data: {
+          userId: user.id,
+          tokenHash: createHash('sha256').update(raw).digest('hex'),
+          expiresAt: new Date(Date.now() + 3600000),
+        },
+      });
+      await http()
+        .post('/api/auth/reset-password')
+        .send({ token: raw, newPassword: 'Another-pass-123' })
+        .expect(204);
+      const rows = await securityRows();
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        action: 'OTHER',
+        label: 'Mot de passe réinitialisé par lien',
+        userId: user.id,
+        userName: user.name,
+        organizationId: orgId,
+      });
+      expect(JSON.stringify(rows)).not.toContain(raw);
+      expect(JSON.stringify(rows)).not.toContain('Another-pass-123');
+    });
+
+    it('change-password counts wrong current passwords and locks the account with 423', async () => {
+      const user = await makeUser();
+      const auth = `Bearer ${await tokenFor(user.id)}`;
+      const change = (currentPassword: string) =>
+        http()
+          .post('/api/auth/change-password')
+          .set('Authorization', auth)
+          .send({ currentPassword, newPassword: 'A-brand-new-pass-1' });
+      for (let i = 0; i < 5; i += 1) {
+        expect((await change('wrong-password')).status).toBe(400);
+      }
+      const row = await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+      });
+      expect(row.failedLogins).toBe(5);
+      expect(row.lockedUntil).not.toBeNull();
+      // Locked: even the right password is refused, and so is login.
+      const locked = await change(PASSWORD);
+      expect(locked.status).toBe(423);
+      expect((await login(user.email, PASSWORD)).status).toBe(423);
+      expect(await securityRows()).toHaveLength(0);
+    });
+
+    it('a successful change-password resets the failure counter', async () => {
+      const user = await makeUser();
+      const auth = `Bearer ${await tokenFor(user.id)}`;
+      await http()
+        .post('/api/auth/change-password')
+        .set('Authorization', auth)
+        .send({ currentPassword: 'wrong', newPassword: 'A-brand-new-pass-1' })
+        .expect(400);
+      await http()
+        .post('/api/auth/change-password')
+        .set('Authorization', auth)
+        .send({ currentPassword: PASSWORD, newPassword: 'A-brand-new-pass-1' })
+        .expect(204);
+      const row = await prisma.user.findUniqueOrThrow({
+        where: { id: user.id },
+      });
+      expect(row.failedLogins).toBe(0);
+    });
+  });
+
+  it('exposes twoFactorMandatory on /me, login and refresh, and active on the farms', async () => {
+    const mandatory = await makeUser('COMMERCIAL', [farmId]);
+    const me = await http()
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${await tokenFor(mandatory.id)}`)
+      .expect(200);
+    const body = me.body as {
+      user: { twoFactorMandatory: boolean; twoFactorEnabled: boolean };
+      farms: { id: string; name: string; active: boolean }[];
+    };
+    expect(body.user.twoFactorMandatory).toBe(false);
+    expect(body.user.twoFactorEnabled).toBe(false);
+    expect(body.farms[0]).toMatchObject({ id: farmId, active: true });
+
+    const signedIn = await login(mandatory.email, PASSWORD);
+    expect(
+      (signedIn.body as { user: { twoFactorMandatory: boolean } }).user
+        .twoFactorMandatory,
+    ).toBe(false);
+    const refreshed = await http()
+      .post('/api/auth/refresh')
+      .set('Cookie', refreshCookie(signedIn))
+      .expect(200);
+    expect(
+      (refreshed.body as { user: { twoFactorMandatory: boolean } }).user
+        .twoFactorMandatory,
+    ).toBe(false);
+
+    const compta = await makeUser('COMPTABLE', [farmId]);
+    const comptaMe = await http()
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${await tokenFor(compta.id)}`)
+      .expect(200);
+    expect(
+      (comptaMe.body as { user: { twoFactorMandatory: boolean } }).user
+        .twoFactorMandatory,
+    ).toBe(true);
   });
 });

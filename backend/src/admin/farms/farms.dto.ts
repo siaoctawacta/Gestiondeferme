@@ -6,7 +6,7 @@ import {
   IsString,
   MaxLength,
 } from 'class-validator';
-import { Trim } from '../shared';
+import { Trim } from '../../listing/list-helpers';
 
 export class CreateFarmDto {
   @ApiProperty()
