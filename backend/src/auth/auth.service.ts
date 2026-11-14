@@ -116,16 +116,25 @@ export class AuthService {
       throw new UnauthorizedException(INVALID);
     }
 
-    // Conditional: a lock set by a concurrent failed attempt while we were
-    // verifying the password must still win.
-    const reset = await this.prisma.user.updateMany({
-      where: {
-        id: user.id,
-        OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }],
-      },
-      data: { failedLogins: 0, lockedUntil: null, lastLoginAt: now },
-    });
-    if (reset.count === 0) {
+    // A lock set by a concurrent failed attempt while we were verifying the
+    // password must still win. When a second factor is required the failure
+    // counter is NOT reset here (otherwise an attacker holding the password
+    // could loop password + 4 guesses forever); `verify` resets it on success.
+    const outcome = decideLoginOutcome(user.role, user.totpEnabledAt);
+    const notLocked = {
+      id: user.id,
+      OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }],
+    };
+    const proceeds =
+      outcome === 'twoFactor'
+        ? (await this.prisma.user.count({ where: notLocked })) > 0
+        : (
+            await this.prisma.user.updateMany({
+              where: notLocked,
+              data: { failedLogins: 0, lockedUntil: null, lastLoginAt: now },
+            })
+          ).count > 0;
+    if (!proceeds) {
       const current = await this.prisma.user.findUniqueOrThrow({
         where: { id: user.id },
       });
@@ -137,7 +146,7 @@ export class AuthService {
     await this.log(normalized, true, user.id, req);
 
     const session: SessionUser = user;
-    switch (decideLoginOutcome(user.role, user.totpEnabledAt)) {
+    switch (outcome) {
       case 'twoFactor':
         return {
           twoFactorRequired: true,

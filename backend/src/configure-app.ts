@@ -1,4 +1,5 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
@@ -23,7 +24,7 @@ export function configureApp(app: INestApplication): void {
         : /^\d+$/.test(trustProxy)
           ? Number(trustProxy)
           : trustProxy;
-    app.getHttpAdapter().getInstance().set('trust proxy', value);
+    (app as NestExpressApplication).set('trust proxy', value);
   }
   app.setGlobalPrefix('api');
   app.use(helmet());

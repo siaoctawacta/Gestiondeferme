@@ -3,7 +3,8 @@ import { assertEncryptionKey, decrypt, encrypt } from './crypto';
 describe('TOTP_ENC_KEY', () => {
   const original = process.env.TOTP_ENC_KEY;
   afterEach(() => {
-    process.env.TOTP_ENC_KEY = original;
+    if (original === undefined) delete process.env.TOTP_ENC_KEY;
+    else process.env.TOTP_ENC_KEY = original;
   });
 
   it('accepts 32 bytes as base64 or hex', () => {

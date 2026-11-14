@@ -10,9 +10,9 @@ import type { Request, Response } from 'express';
 import QRCode from 'qrcode';
 import type { TokenStage } from '../access/access-token';
 import { AuthService, MANDATORY_2FA_ROLES } from './auth.service';
-import { decrypt, encrypt } from './crypto';
+import { decrypt, encrypt, hashBackupCode } from './crypto';
 import { verifyPassword } from './password';
-import { sha256, TokensService } from './tokens.service';
+import { TokensService } from './tokens.service';
 import { matchTotpStep, newTotpSecret, otpauthUrl } from './totp';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -82,11 +82,15 @@ export class TwoFactorService {
     // Atomic: two concurrent enables cannot both succeed.
     const enabledAt = new Date();
     const claimed = await this.prisma.user.updateMany({
-      where: { id: userId, totpEnabledAt: null },
+      where: {
+        id: userId,
+        totpEnabledAt: null,
+        totpSecretEnc: user.totpSecretEnc,
+      },
       data: {
         totpEnabledAt: enabledAt,
         totpLastStep: step,
-        backupCodes: backupCodes.map((c) => sha256(c)),
+        backupCodes: backupCodes.map((c) => hashBackupCode(c)),
       },
     });
     if (claimed.count === 0) {
@@ -137,7 +141,7 @@ export class TwoFactorService {
         id: user.id,
         OR: [{ lockedUntil: null }, { lockedUntil: { lte: new Date() } }],
       },
-      data: { failedLogins: 0, lockedUntil: null },
+      data: { failedLogins: 0, lockedUntil: null, lastLoginAt: new Date() },
     });
     if (reset.count === 0) {
       const current = await this.prisma.user.findUniqueOrThrow({
@@ -202,7 +206,7 @@ export class TwoFactorService {
       });
       return claimed.count === 1;
     }
-    const hash = sha256(normalizeBackupCode(code));
+    const hash = hashBackupCode(normalizeBackupCode(code));
     const removed = await this.prisma.$executeRaw`
       UPDATE "User"
       SET "backupCodes" = array_remove("backupCodes", ${hash})

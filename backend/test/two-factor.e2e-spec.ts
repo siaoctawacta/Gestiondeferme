@@ -57,12 +57,12 @@ describe('Two-factor authentication (e2e)', () => {
     return { token: (b.accessToken ?? b.setupToken)!, res };
   }
 
-  async function enrol(email: string) {
+  async function enrol(email: string, step: number) {
     const { token } = await firstToken(email);
     const setup = await post('setup', token);
     const { secret } = setup.body as { secret: string };
     const enable = await post('enable', token, {
-      code: totpCode(secret, stepAt(Date.now())),
+      code: totpCode(secret, step),
     });
     return { secret, enable, setup };
   }
@@ -109,6 +109,7 @@ describe('Two-factor authentication (e2e)', () => {
   });
 
   it('setup then enable gives 8 backup codes and a full session', async () => {
+    const step = stepAt(Date.now());
     const user = await makeUser('COMPTABLE');
     const { token } = await firstToken(user.email);
     const setup = await post('setup', token);
@@ -133,7 +134,7 @@ describe('Two-factor authentication (e2e)', () => {
     expect(decrypt(pending.totpSecretEnc!)).toBe(s.secret);
 
     const enable = await post('enable', token, {
-      code: totpCode(s.secret, stepAt(Date.now())),
+      code: totpCode(s.secret, step),
     });
     expect(enable.status).toBe(201);
     const e = enable.body as Session & { backupCodes: string[] };
@@ -153,10 +154,11 @@ describe('Two-factor authentication (e2e)', () => {
   });
 
   it('enable with a wrong code is 400 and leaves 2FA disabled', async () => {
+    const step = stepAt(Date.now());
     const user = await makeUser('COMPTABLE');
     const { token } = await firstToken(user.email);
     const { secret } = (await post('setup', token)).body as { secret: string };
-    const good = totpCode(secret, stepAt(Date.now()));
+    const good = totpCode(secret, step);
     const wrong = good === '000000' ? '000001' : '000000';
     const res = await post('enable', token, { code: wrong });
     expect(res.status).toBe(400);
@@ -186,12 +188,13 @@ describe('Two-factor authentication (e2e)', () => {
   });
 
   it('rejects the setup token on verify and the 2fa token on setup/enable', async () => {
+    const step = stepAt(Date.now());
     const user = await makeUser('COMPTABLE');
     const { token: setupToken } = await firstToken(user.email);
     expect((await post('verify', setupToken, { code: '123456' })).status).toBe(
       403,
     );
-    await enrol(user.email);
+    await enrol(user.email, step);
     const ch = (await login(user.email)).body as { challengeToken: string };
     expect((await post('setup', ch.challengeToken)).status).toBe(403);
     expect(
@@ -200,8 +203,9 @@ describe('Two-factor authentication (e2e)', () => {
   });
 
   it('next login needs the challenge; verify issues the session; challenge token is blocked on /me', async () => {
+    const step = stepAt(Date.now());
     const user = await makeUser('COMPTABLE');
-    const { secret } = await enrol(user.email);
+    const { secret } = await enrol(user.email, step);
     const res = await login(user.email);
     const body = res.body as {
       twoFactorRequired: boolean;
@@ -216,12 +220,12 @@ describe('Two-factor authentication (e2e)', () => {
 
     // The enrolment code is already consumed: replaying it is refused.
     const replay = await post('verify', body.challengeToken, {
-      code: totpCode(secret, stepAt(Date.now())),
+      code: totpCode(secret, step),
     });
     expect(replay.status).toBe(401);
 
     const next = await post('verify', body.challengeToken, {
-      code: totpCode(secret, stepAt(Date.now()) + 1),
+      code: totpCode(secret, step + 1),
     });
     expect(next.status).toBe(200);
     expect(hasCookie(next)).toBe(true);
@@ -233,14 +237,15 @@ describe('Two-factor authentication (e2e)', () => {
 
     // The same code cannot be used twice.
     const again = await post('verify', body.challengeToken, {
-      code: totpCode(secret, stepAt(Date.now()) + 1),
+      code: totpCode(secret, step + 1),
     });
     expect(again.status).toBe(401);
   });
 
   it('a backup code works once', async () => {
+    const step = stepAt(Date.now());
     const user = await makeUser('COMPTABLE');
-    const { enable } = await enrol(user.email);
+    const { enable } = await enrol(user.email, step);
     const [code] = (enable.body as { backupCodes: string[] }).backupCodes;
     const ch = (await login(user.email)).body as { challengeToken: string };
     const first = await post('verify', ch.challengeToken, { code });
@@ -255,13 +260,14 @@ describe('Two-factor authentication (e2e)', () => {
   });
 
   it('writes a login log entry for each second-factor attempt', async () => {
+    const step = stepAt(Date.now());
     const user = await makeUser('COMPTABLE');
-    const { secret } = await enrol(user.email);
+    const { secret } = await enrol(user.email, step);
     const ch = (await login(user.email)).body as { challengeToken: string };
     const before = await prisma.loginLog.count({ where: { userId: user.id } });
     await post('verify', ch.challengeToken, { code: '000000' });
     await post('verify', ch.challengeToken, {
-      code: totpCode(secret, stepAt(Date.now()) + 1),
+      code: totpCode(secret, step + 1),
     });
     const logs = await prisma.loginLog.findMany({
       where: { userId: user.id },
@@ -272,8 +278,9 @@ describe('Two-factor authentication (e2e)', () => {
   });
 
   it('wrong codes lock the account like wrong passwords, and success resets the count', async () => {
+    const step = stepAt(Date.now());
     const user = await makeUser('COMPTABLE');
-    const { secret } = await enrol(user.email);
+    const { secret } = await enrol(user.email, step);
     const ch = (await login(user.email)).body as { challengeToken: string };
     for (let i = 0; i < 4; i += 1) {
       expect(
@@ -284,7 +291,7 @@ describe('Two-factor authentication (e2e)', () => {
     expect(
       (
         await post('verify', ch.challengeToken, {
-          code: totpCode(secret, stepAt(Date.now()) + 1),
+          code: totpCode(secret, step + 1),
         })
       ).status,
     ).toBe(200);
@@ -298,19 +305,43 @@ describe('Two-factor authentication (e2e)', () => {
       ).toBe(401);
     }
     const locked = await post('verify', ch.challengeToken, {
-      code: totpCode(secret, stepAt(Date.now()) - 1),
+      code: totpCode(secret, step - 1),
     });
     expect(locked.status).toBe(423);
     expect((await login(user.email)).status).toBe(423);
   });
 
-  it('disable is forbidden for mandatory roles', async () => {
+  it('logging in again does not reset the failure count (no lockout bypass)', async () => {
+    const step = stepAt(Date.now());
     const user = await makeUser('COMPTABLE');
-    const { secret, enable } = await enrol(user.email);
+    await enrol(user.email, step);
+    const first = (await login(user.email)).body as { challengeToken: string };
+    for (let i = 0; i < 4; i += 1) {
+      expect(
+        (await post('verify', first.challengeToken, { code: '000000' })).status,
+      ).toBe(401);
+    }
+    const second = (await login(user.email)).body as {
+      challengeToken: string;
+    };
+    const fifth = await post('verify', second.challengeToken, {
+      code: '000000',
+    });
+    expect(fifth.status).toBe(401); // 5th failure triggers the lock
+    expect((await login(user.email)).status).toBe(423);
+    expect(
+      (await post('verify', second.challengeToken, { code: '000000' })).status,
+    ).toBe(423);
+  });
+
+  it('disable is forbidden for mandatory roles', async () => {
+    const step = stepAt(Date.now());
+    const user = await makeUser('COMPTABLE');
+    const { secret, enable } = await enrol(user.email, step);
     const { accessToken } = enable.body as Session;
     const res = await post('disable', accessToken, {
       password: PASSWORD,
-      code: totpCode(secret, stepAt(Date.now()) + 1),
+      code: totpCode(secret, step + 1),
     });
     expect(res.status).toBe(403);
     expect(
@@ -370,8 +401,9 @@ describe('Two-factor authentication (e2e)', () => {
   });
 
   it('stored secret never contains the plain secret (enable path)', async () => {
+    const step = stepAt(Date.now());
     const user = await makeUser('COMPTABLE');
-    const { secret } = await enrol(user.email);
+    const { secret } = await enrol(user.email, step);
     const stored = await prisma.user.findUniqueOrThrow({
       where: { id: user.id },
     });

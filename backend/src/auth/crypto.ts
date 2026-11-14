@@ -1,4 +1,9 @@
-import { createCipheriv, createDecipheriv, randomBytes } from 'crypto';
+import {
+  createCipheriv,
+  createDecipheriv,
+  createHmac,
+  randomBytes,
+} from 'crypto';
 
 const IV_BYTES = 12;
 const TAG_BYTES = 16;
@@ -46,4 +51,11 @@ export function decrypt(blob: string): string {
     decipher.update(data.subarray(IV_BYTES + TAG_BYTES)),
     decipher.final(),
   ]).toString('utf8');
+}
+
+/** Keyed hash for backup codes: HMAC-SHA256 with the server key, so a DB leak alone cannot be brute-forced offline. */
+export function hashBackupCode(code: string): string {
+  return createHmac('sha256', loadKey())
+    .update(`backup-code:${code}`)
+    .digest('hex');
 }
