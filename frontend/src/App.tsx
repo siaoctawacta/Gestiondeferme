@@ -1,20 +1,79 @@
-import { BrowserRouter } from 'react-router';
+import type { ReactNode } from 'react';
+import { BrowserRouter, Route, Routes, useParams } from 'react-router';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { AuthProvider, useAuth } from './lib/auth';
+import type { ModuleKey } from './lib/modules';
 import { AppLayout } from './components/shell/AppLayout';
-import type { Action, ModuleKey, Permissions } from './lib/modules';
+import { FarmSwitcher } from './components/shell/FarmSwitcher';
 import { NAV } from './components/shell/nav';
+import { RequireAuth, RequirePermission } from './components/shell/guards';
+import Account from './pages/Account';
+import Login from './pages/Login';
+import NotFound from './pages/NotFound';
+import { Placeholder } from './pages/Placeholder';
+import ResetPassword from './pages/ResetPassword';
 
-// Placeholder until auth lands (Task 9): everything readable.
-const ALL: Permissions = Object.fromEntries(
-  NAV.flatMap((g) => g.items).map((i) => [i.slug as ModuleKey, ['read'] as Action[]]),
-) as Permissions;
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
+});
+
+const ITEMS = NAV.flatMap((g) => g.items);
+
+function Guarded({ module }: { module: ModuleKey }) {
+  return (
+    <RequirePermission module={module}>
+      <Placeholder title={ITEMS.find((i) => i.slug === module)!.label} />
+    </RequirePermission>
+  );
+}
+
+function ModuleRoute() {
+  const { module } = useParams();
+  const item = ITEMS.find((i) => i.slug === module && i.to === `/m/${module}`);
+  return item ? <Guarded module={item.slug} /> : <NotFound />;
+}
+
+function Shell({ children }: { children: ReactNode }) {
+  const { permissions } = useAuth();
+  return (
+    <AppLayout permissions={permissions!} alertCount={0} sidebarFooter={<FarmSwitcher />}>
+      {children}
+    </AppLayout>
+  );
+}
 
 export default function App() {
   return (
-    <BrowserRouter>
-      <AppLayout permissions={ALL} alertCount={14}>
-        <p className="text-sm text-muted-foreground">Bonjour — Ferme Kpalimé</p>
-        <h1 className="text-4xl font-bold">Tableau de bord</h1>
-      </AppLayout>
-    </BrowserRouter>
+    <QueryClientProvider client={queryClient}>
+      <BrowserRouter>
+        <AuthProvider>
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/reset/:token" element={<ResetPassword />} />
+            <Route
+              path="*"
+              element={
+                <RequireAuth>
+                  <Shell>
+                    <Routes>
+                      <Route path="/" element={<Guarded module="dashboard" />} />
+                      <Route path="/alertes" element={<Guarded module="alertes" />} />
+                      <Route path="/rapports" element={<Guarded module="rapports" />} />
+                      <Route path="/audit" element={<Guarded module="audit" />} />
+                      <Route path="/m/:module" element={<ModuleRoute />} />
+                      <Route path="/admin/fermes" element={<Guarded module="fermes" />} />
+                      <Route path="/admin/utilisateurs" element={<Guarded module="utilisateurs" />} />
+                      <Route path="/admin/parametres" element={<Guarded module="parametres" />} />
+                      <Route path="/compte" element={<Account />} />
+                      <Route path="*" element={<NotFound />} />
+                    </Routes>
+                  </Shell>
+                </RequireAuth>
+              }
+            />
+          </Routes>
+        </AuthProvider>
+      </BrowserRouter>
+    </QueryClientProvider>
   );
 }

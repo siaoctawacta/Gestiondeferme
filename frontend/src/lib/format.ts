@@ -13,3 +13,8 @@ export const formatPct = (n: number): string => `${n}%`;
 export function formatDate(iso: string | Date): string {
   return new Date(iso).toISOString().slice(0, 10);
 }
+
+/** `14 novembre 2026 à 15:42`, in the viewer's time zone. */
+export function formatDateTimeFr(iso: string | Date): string {
+  return new Intl.DateTimeFormat('fr-FR', { dateStyle: 'long', timeStyle: 'short' }).format(new Date(iso));
+}
