@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ThrottlerModule } from '@nestjs/throttler';
 import { AuthController } from './auth.controller';
+import { TwoFactorController } from './two-factor.controller';
+import { TwoFactorService } from './two-factor.service';
 import { AuthService } from './auth.service';
 import { TokensService } from './tokens.service';
 
@@ -15,8 +17,8 @@ import { TokensService } from './tokens.service';
         process.env.NODE_ENV === 'test' && process.env.THROTTLE_IN_TEST !== '1',
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, TokensService],
+  controllers: [AuthController, TwoFactorController],
+  providers: [AuthService, TokensService, TwoFactorService],
   exports: [TokensService],
 })
 export class AuthModule {}

@@ -20,7 +20,7 @@ import {
 
 const MAX_FAILED_LOGINS = 5;
 const LOCK_MS = 15 * 60 * 1000;
-const MANDATORY_2FA_ROLES: Role[] = [
+export const MANDATORY_2FA_ROLES: Role[] = [
   'SUPER_ADMIN',
   'PROPRIETAIRE',
   'DIRECTEUR_FERME',
@@ -60,7 +60,7 @@ export class AuthService {
     return this.dummyHash;
   }
 
-  private async log(
+  async log(
     email: string,
     success: boolean,
     userId: string | null,
@@ -153,7 +153,7 @@ export class AuthService {
     }
   }
 
-  private lockedError(lockedUntil: Date): HttpException {
+  lockedError(lockedUntil: Date): HttpException {
     return new HttpException(
       {
         statusCode: HttpStatus.LOCKED,
@@ -167,7 +167,7 @@ export class AuthService {
   }
 
   /** One atomic statement: concurrent failures cannot under-count or miss the lock. */
-  private async registerFailure(userId: string): Promise<void> {
+  async registerFailure(userId: string): Promise<void> {
     await this.prisma.$executeRaw`
       UPDATE "User"
       SET "failedLogins" = "failedLogins" + 1,

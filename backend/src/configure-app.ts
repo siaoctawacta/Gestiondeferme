@@ -2,6 +2,7 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import cookieParser from 'cookie-parser';
 import helmet from 'helmet';
+import { assertEncryptionKey } from './auth/crypto';
 
 /** Shared by main.ts and the e2e test app so both behave identically. */
 export function configureApp(app: INestApplication): void {
@@ -9,6 +10,7 @@ export function configureApp(app: INestApplication): void {
   if (!secret || secret.length < 32) {
     throw new Error('JWT_SECRET must be set and at least 32 characters long');
   }
+  assertEncryptionKey();
   const webOrigin = process.env.WEB_ORIGIN;
   if (!webOrigin) {
     throw new Error('WEB_ORIGIN must be set (CORS never allows any origin)');

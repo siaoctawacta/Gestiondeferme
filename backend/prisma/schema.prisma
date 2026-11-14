@@ -126,6 +126,7 @@ model User {
   lockedUntil    DateTime?
   totpSecretEnc  String?
   totpEnabledAt  DateTime?
+  totpLastStep   Int?
   backupCodes    String[]
   lastLoginAt    DateTime?
   createdAt      DateTime        @default(now())

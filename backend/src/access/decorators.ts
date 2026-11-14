@@ -34,3 +34,10 @@ export const Ctx = createParamDecorator(
   (_data: unknown, context: ExecutionContext): RequestContext =>
     context.switchToHttp().getRequest<Request & { ctx: RequestContext }>().ctx,
 );
+
+/** The stage of the presented token; only meaningful on routes that `@AllowStage` more than `full`. */
+export const Stage = createParamDecorator(
+  (_data: unknown, context: ExecutionContext): TokenStage =>
+    context.switchToHttp().getRequest<Request & { tokenStage: TokenStage }>()
+      .tokenStage,
+);

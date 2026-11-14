@@ -36,7 +36,9 @@ export class AccessGuard implements CanActivate {
 
     const req = context
       .switchToHttp()
-      .getRequest<Request & { ctx?: RequestContext }>();
+      .getRequest<
+        Request & { ctx?: RequestContext; tokenStage?: TokenStage }
+      >();
     const [scheme, token] = (req.headers.authorization ?? '').split(' ');
     if (scheme !== 'Bearer' || !token) {
       throw new UnauthorizedException('Authentification requise');
@@ -75,6 +77,7 @@ export class AccessGuard implements CanActivate {
       : { farmId: null, allFarms: false, farmIds: [] };
 
     req.ctx = { user, ...farms };
+    req.tokenStage = claims.stage;
     return true;
   }
 }
