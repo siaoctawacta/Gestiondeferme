@@ -2,6 +2,7 @@ generator client {
   provider     = "prisma-client"
   output       = "../src/generated/prisma"
   moduleFormat = "cjs"
+  previewFeatures = ["relationJoins"]
 }
 
 datasource db {
@@ -627,9 +628,9 @@ model FeedDistribution {
   farm          Farm         @relation(fields: [farmId], references: [id])
   date          DateTime     @db.Date
   batchId       String?
-  batch         AnimalBatch? @relation(fields: [batchId], references: [id])
+  batch         AnimalBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
   buildingId    String?
-  building      Building?    @relation(fields: [buildingId], references: [id])
+  building      Building?    @relation(fields: [buildingId], references: [id], onDelete: Restrict)
   feedProductId String?
   feedProduct   FeedProduct? @relation(fields: [feedProductId], references: [id], onDelete: Restrict)
   formulaId     String?
@@ -656,9 +657,9 @@ model WaterConsumption {
   farm       Farm         @relation(fields: [farmId], references: [id])
   date       DateTime     @db.Date
   batchId    String?
-  batch      AnimalBatch? @relation(fields: [batchId], references: [id])
+  batch      AnimalBatch? @relation(fields: [batchId], references: [id], onDelete: Restrict)
   buildingId String?
-  building   Building?    @relation(fields: [buildingId], references: [id])
+  building   Building?    @relation(fields: [buildingId], references: [id], onDelete: Restrict)
   liters     Decimal      @db.Decimal(10, 2)
   createdAt  DateTime     @default(now())
   updatedAt  DateTime     @updatedAt

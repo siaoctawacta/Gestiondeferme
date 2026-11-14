@@ -8,7 +8,7 @@ import {
   Max,
 } from 'class-validator';
 import { IsDay } from '../../herd/dto/is-day';
-import { MAX_QTY } from './feed-distribution.dto';
+import { MAX_LITERS } from './feed-distribution.dto';
 
 const WATER =
   "Le volume d'eau doit être un nombre positif (2 décimales au plus)";
@@ -34,7 +34,7 @@ export class CreateWaterDto {
   @ApiProperty({ minimum: 0 })
   @IsNumber({ maxDecimalPlaces: 2 }, { message: WATER })
   @IsPositive({ message: WATER })
-  @Max(MAX_QTY, { message: "Le volume d'eau est trop élevé" })
+  @Max(MAX_LITERS, { message: "Le volume d'eau est trop élevé" })
   liters!: number;
 }
 
@@ -48,6 +48,6 @@ export class UpdateWaterDto {
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 }, { message: WATER })
   @IsPositive({ message: WATER })
-  @Max(MAX_QTY, { message: "Le volume d'eau est trop élevé" })
+  @Max(MAX_LITERS, { message: "Le volume d'eau est trop élevé" })
   liters?: number;
 }

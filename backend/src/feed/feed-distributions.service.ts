@@ -73,56 +73,66 @@ export class FeedDistributionsService {
     private readonly feed: FeedService,
   ) {}
 
+  /**
+   * Water is its own record (target + date): the list shows it on the first
+   * distribution (by creation) of that target and date only, so a column sum
+   * never counts it twice. Moving a distribution to another date or target
+   * does not move the water record.
+   */
   private async toItems(
     rows: Row[],
     client: Tx = this.prisma,
   ): Promise<FeedDistributionItem[]> {
+    if (rows.length === 0) return [];
     const batchIds = rows.flatMap((r) => (r.batchId ? [r.batchId] : []));
     const buildingIds = rows.flatMap((r) =>
       r.buildingId ? [r.buildingId] : [],
     );
     const dates = [...new Set(rows.map((r) => r.date))];
-    const waters =
-      rows.length === 0
-        ? []
-        : await client.waterConsumption.findMany({
-            where: {
-              date: { in: dates },
-              OR: [
-                { batchId: { in: batchIds } },
-                { buildingId: { in: buildingIds } },
-              ],
-            },
-            select: {
-              batchId: true,
-              buildingId: true,
-              date: true,
-              liters: true,
-            },
-          });
+    const sameDay = {
+      date: { in: dates },
+      OR: [{ batchId: { in: batchIds } }, { buildingId: { in: buildingIds } }],
+    };
     const key = (id: string | null, date: Date) => `${id}:${date.getTime()}`;
+    const waters = await client.waterConsumption.findMany({
+      where: sameDay,
+      select: { batchId: true, buildingId: true, date: true, liters: true },
+    });
+    const peers = await client.feedDistribution.findMany({
+      where: sameDay,
+      select: { id: true, batchId: true, buildingId: true, date: true },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+    });
     const liters = new Map(
       waters.map((w) => [
         key(w.batchId ?? w.buildingId, w.date),
         Number(w.liters),
       ]),
     );
-    return rows.map((r) => ({
-      id: r.id,
-      date: formatDay(r.date),
-      target: r.batch?.code ?? r.building?.name ?? '',
-      targetKind: r.batchId ? 'LOT' : 'BATIMENT',
-      batchId: r.batchId,
-      buildingId: r.buildingId,
-      feedName: r.feedProduct?.name ?? r.formula?.name ?? '',
-      feedProductId: r.feedProductId,
-      formulaId: r.formulaId,
-      quantityKg: Number(r.quantityKg),
-      waterLiters: liters.get(key(r.batchId ?? r.buildingId, r.date)) ?? null,
-      unitCost: Number(r.unitCost),
-      cost: Number(r.cost),
-      note: r.note,
-    }));
+    const first = new Map<string, string>();
+    for (const d of peers) {
+      const k = key(d.batchId ?? d.buildingId, d.date);
+      if (!first.has(k)) first.set(k, d.id);
+    }
+    return rows.map((r) => {
+      const k = key(r.batchId ?? r.buildingId, r.date);
+      return {
+        id: r.id,
+        date: formatDay(r.date),
+        target: r.batch?.code ?? r.building?.name ?? '',
+        targetKind: r.batchId ? 'LOT' : 'BATIMENT',
+        batchId: r.batchId,
+        buildingId: r.buildingId,
+        feedName: r.feedProduct?.name ?? r.formula?.name ?? '',
+        feedProductId: r.feedProductId,
+        formulaId: r.formulaId,
+        quantityKg: Number(r.quantityKg),
+        waterLiters: first.get(k) === r.id ? (liters.get(k) ?? null) : null,
+        unitCost: Number(r.unitCost),
+        cost: Number(r.cost),
+        note: r.note,
+      };
+    });
   }
 
   listArgs(ctx: RequestContext, q: FeedListQueryDto) {
@@ -151,6 +161,7 @@ export class FeedDistributionsService {
           await this.prisma.feedDistribution.findMany({
             where,
             include,
+            relationLoadStrategy: 'join',
             orderBy: [
               order,
               ...(Object.hasOwn(order, 'date')
@@ -203,6 +214,7 @@ export class FeedDistributionsService {
     const row = await tx.feedDistribution.findFirst({
       where: { id, farmId: { in: ctx.farmIds } },
       include,
+      relationLoadStrategy: 'join',
     });
     if (!row) throw new NotFoundException(NOT_FOUND);
     return row;
@@ -251,6 +263,7 @@ export class FeedDistributionsService {
           note: dto.note,
         },
         include,
+        relationLoadStrategy: 'join',
       });
       if (dto.waterLiters !== undefined) {
         await this.water.upsertFor(tx, ctx, target, date, dto.waterLiters);
@@ -273,8 +286,13 @@ export class FeedDistributionsService {
       const before = await this.find(tx, ctx, id);
       const date = dto.date ? requireDay(dto.date) : before.date;
       if (dto.date) this.targets.assertDate(target, date);
-      const changesFeed =
+      // Only a different feed is repriced; resending the stored id keeps the stored unitCost.
+      const asked =
         dto.feedProductId !== undefined || dto.formulaId !== undefined;
+      const changesFeed =
+        asked &&
+        ((dto.feedProductId ?? null) !== before.feedProductId ||
+          (dto.formulaId ?? null) !== before.formulaId);
       const feed = changesFeed
         ? await this.resolveFeed(tx, ctx, dto)
         : {
@@ -294,6 +312,7 @@ export class FeedDistributionsService {
           note: dto.note,
         },
         include,
+        relationLoadStrategy: 'join',
       });
       if (dto.waterLiters !== undefined) {
         await this.water.upsertFor(tx, ctx, target, date, dto.waterLiters);

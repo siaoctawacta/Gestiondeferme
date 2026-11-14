@@ -16,7 +16,8 @@ const QTY = 'La quantité doit être un nombre positif (2 décimales au plus)';
 const WATER =
   "Le volume d'eau doit être un nombre positif (2 décimales au plus)";
 const ID = 'Identifiant invalide';
-export const MAX_QTY = 10_000_000;
+export const MAX_KG = 1_000_000;
+export const MAX_LITERS = 10_000_000;
 
 /** Filters shared by the distribution and water lists. */
 export class FeedListQueryDto extends ListQueryDto {
@@ -75,7 +76,7 @@ export class CreateFeedDistributionDto {
   @ApiProperty({ minimum: 0 })
   @IsNumber({ maxDecimalPlaces: 2 }, { message: QTY })
   @IsPositive({ message: QTY })
-  @Max(MAX_QTY, { message: 'La quantité est trop élevée' })
+  @Max(MAX_KG, { message: 'La quantité est trop élevée' })
   quantityKg!: number;
 
   @ApiPropertyOptional({
@@ -84,7 +85,7 @@ export class CreateFeedDistributionDto {
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 }, { message: WATER })
   @IsPositive({ message: WATER })
-  @Max(MAX_QTY, { message: "Le volume d'eau est trop élevé" })
+  @Max(MAX_LITERS, { message: "Le volume d'eau est trop élevé" })
   waterLiters?: number;
 
   @ApiPropertyOptional()
@@ -117,14 +118,14 @@ export class UpdateFeedDistributionDto {
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 }, { message: QTY })
   @IsPositive({ message: QTY })
-  @Max(MAX_QTY, { message: 'La quantité est trop élevée' })
+  @Max(MAX_KG, { message: 'La quantité est trop élevée' })
   quantityKg?: number;
 
   @ApiPropertyOptional()
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 }, { message: WATER })
   @IsPositive({ message: WATER })
-  @Max(MAX_QTY, { message: "Le volume d'eau est trop élevé" })
+  @Max(MAX_LITERS, { message: "Le volume d'eau est trop élevé" })
   waterLiters?: number;
 
   @ApiPropertyOptional({ nullable: true })

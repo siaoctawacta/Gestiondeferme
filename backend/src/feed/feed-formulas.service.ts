@@ -61,6 +61,11 @@ const toItem = (f: Row): FeedFormulaItem => ({
   })),
 });
 
+/**
+ * Deactivating a product does not touch the formulas that contain it: they
+ * keep working and are costed with the product's current price. A distribution
+ * from the formula only checks that the formula itself is active.
+ */
 @Injectable()
 export class FeedFormulasService {
   constructor(

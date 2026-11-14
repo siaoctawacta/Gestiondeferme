@@ -77,6 +77,7 @@ export class WaterService {
           await this.prisma.waterConsumption.findMany({
             where,
             include,
+            relationLoadStrategy: 'join',
             orderBy: [
               order,
               ...(Object.hasOwn(order, 'date')
@@ -117,6 +118,7 @@ export class WaterService {
     const row = await tx.waterConsumption.findFirst({
       where: { id, farmId: { in: ctx.farmIds } },
       include,
+      relationLoadStrategy: 'join',
     });
     if (!row) throw new NotFoundException(NOT_FOUND);
     return row;
@@ -135,12 +137,14 @@ export class WaterService {
         ? { batchId: target.batchId, date }
         : { buildingId: target.buildingId, date },
       include,
+      relationLoadStrategy: 'join',
     });
     if (existing) {
       const updated = await tx.waterConsumption.update({
         where: { id: existing.id },
         data: { liters },
         include,
+        relationLoadStrategy: 'join',
       });
       await this.log(tx, ctx, 'UPDATE', updated, toItem(existing));
       return;
@@ -178,6 +182,7 @@ export class WaterService {
               liters: dto.liters,
             },
             include,
+            relationLoadStrategy: 'join',
           }),
         WATER_DUPLICATE,
       );
@@ -203,6 +208,7 @@ export class WaterService {
             where: { id },
             data: { date, liters: dto.liters },
             include,
+            relationLoadStrategy: 'join',
           }),
         WATER_DUPLICATE,
       );

@@ -710,7 +710,7 @@ describe('Feed and water (e2e)', () => {
           waterLiters: 1300,
         })
       ).body as Dist;
-      expect(second.waterLiters).toBe(1300);
+      expect(second.waterLiters).toBeNull();
       expect(await prisma.waterConsumption.count()).toBe(1);
       const audits = await prisma.auditLog.findMany({
         where: { module: 'alimentation' },
@@ -978,6 +978,270 @@ describe('Feed and water (e2e)', () => {
         .send({ liters: 2 })
         .expect(404);
       await http().delete(`/api/water/${w2.id}`).set(other.headers).expect(404);
+    });
+  });
+
+  describe('history, integrity and edge cases', () => {
+    it('keeps the stored unitCost when a PATCH resends the same feed, even once it is deactivated', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const p = await product(headers);
+      const l = await lot(headers);
+      const d = (
+        await distribute(headers, { batchId: l.id, feedProductId: p.id })
+      ).body as Dist;
+      await http()
+        .patch(`/api/feed-products/${p.id}`)
+        .set(headers)
+        .send({ unitCost: 500 })
+        .expect(200);
+      const same = await http()
+        .patch(`/api/feed-distributions/${d.id}`)
+        .set(headers)
+        .send({ feedProductId: p.id, quantityKg: 100 })
+        .expect(200);
+      expect(same.body).toMatchObject({ unitCost: 340, cost: 34000 });
+      await http()
+        .patch(`/api/feed-products/${p.id}`)
+        .set(headers)
+        .send({ active: false })
+        .expect(200);
+      const off = await http()
+        .patch(`/api/feed-distributions/${d.id}`)
+        .set(headers)
+        .send({ feedProductId: p.id, quantityKg: 200 })
+        .expect(200);
+      expect(off.body).toMatchObject({ unitCost: 340, cost: 68000 });
+    });
+
+    it('refuses to delete a lot or a building that has feed or water, with a 409', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const p = await product(headers);
+      const feedLot = await lot(headers);
+      await distribute(headers, { batchId: feedLot.id, feedProductId: p.id });
+      const waterLot = await lot(headers);
+      await http()
+        .post('/api/water')
+        .set(headers)
+        .send({ batchId: waterLot.id, date: daysAgo(1), liters: 10 })
+        .expect(201);
+      for (const id of [feedLot.id, waterLot.id]) {
+        const res = await http()
+          .delete(`/api/batches/${id}`)
+          .set(headers)
+          .expect(409);
+        expect((res.body as Msg).message).toBe(
+          'Ce lot a un historique ; clôturez-le plutôt',
+        );
+      }
+      const site = await prisma.site.findFirstOrThrow({
+        where: { farmId: farmA },
+      });
+      const mk = (name: string) =>
+        prisma.building.create({
+          data: {
+            farmId: farmA,
+            siteId: site.id,
+            name,
+            type: 'AVICOLE',
+            capacity: 10,
+          },
+        });
+      const feedBld = await mk('B feed');
+      const waterBld = await mk('B water');
+      await distribute(headers, {
+        buildingId: feedBld.id,
+        feedProductId: p.id,
+      });
+      await http()
+        .post('/api/water')
+        .set(headers)
+        .send({ buildingId: waterBld.id, date: daysAgo(1), liters: 10 })
+        .expect(201);
+      for (const id of [feedBld.id, waterBld.id]) {
+        const res = await http()
+          .delete(`/api/buildings/${id}`)
+          .set(headers)
+          .expect(409);
+        expect((res.body as Msg).message).toBe(
+          'Ce bâtiment est occupé ou a un historique',
+        );
+      }
+      expect(await prisma.feedDistribution.count()).toBe(2);
+      expect(await prisma.waterConsumption.count()).toBe(2);
+    });
+
+    it('enforces the invariants in the database', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const p = await product(headers);
+      const l = await lot(headers);
+      const base = {
+        farmId: farmA,
+        date: new Date(daysAgo(1)),
+        quantityKg: 1,
+        unitCost: 1,
+        cost: 1,
+      };
+      const bad: Record<string, unknown>[] = [
+        { ...base, feedProductId: p.id },
+        { ...base, batchId: l.id, buildingId: bldA, feedProductId: p.id },
+        { ...base, batchId: l.id },
+        { ...base, batchId: l.id, feedProductId: p.id, quantityKg: 0 },
+        { ...base, batchId: l.id, feedProductId: p.id, unitCost: -1 },
+        { ...base, batchId: l.id, feedProductId: p.id, cost: -1 },
+      ];
+      for (const data of bad) {
+        await expect(
+          prisma.feedDistribution.create({ data: data as never }),
+        ).rejects.toThrow();
+      }
+      for (const data of [
+        { farmId: farmA, date: new Date(daysAgo(1)), liters: 5 },
+        {
+          farmId: farmA,
+          date: new Date(daysAgo(1)),
+          liters: 5,
+          batchId: l.id,
+          buildingId: bldA,
+        },
+        { farmId: farmA, date: new Date(daysAgo(1)), liters: 0, batchId: l.id },
+      ]) {
+        await expect(
+          prisma.waterConsumption.create({ data }),
+        ).rejects.toThrow();
+      }
+      await expect(
+        prisma.feedProduct.create({
+          data: {
+            organizationId: orgId,
+            name: 'neg',
+            kind: 'MATIERE_PREMIERE',
+            unitCost: -1,
+          },
+        }),
+      ).rejects.toThrow();
+      const f = await prisma.feedFormula.create({
+        data: {
+          organizationId: orgId,
+          name: 'F',
+          species: 'AVICOLE',
+          stage: 'X',
+        },
+      });
+      await expect(
+        prisma.feedFormulaItem.create({
+          data: { formulaId: f.id, feedProductId: p.id, percentage: 0 },
+        }),
+      ).rejects.toThrow();
+    });
+
+    it('shows the day water on the first distribution of a target and date only', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const p = await product(headers);
+      const l = await lot(headers);
+      const first = (
+        await distribute(headers, {
+          batchId: l.id,
+          feedProductId: p.id,
+          quantityKg: 10,
+          waterLiters: 800,
+        })
+      ).body as Dist;
+      const second = (
+        await distribute(headers, {
+          batchId: l.id,
+          feedProductId: p.id,
+          quantityKg: 20,
+        })
+      ).body as Dist;
+      expect(first.waterLiters).toBe(800);
+      expect(second.waterLiters).toBeNull();
+      const list = await http()
+        .get(`/api/feed-distributions?batchId=${l.id}&sort=quantityKg:desc`)
+        .set(headers);
+      expect(
+        (list.body as Page<Dist>).items.map((i) => [
+          i.quantityKg,
+          i.waterLiters,
+        ]),
+      ).toEqual([
+        [20, null],
+        [10, 800],
+      ]);
+    });
+
+    it('rejects amounts that would overflow the cost column with a 400', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      await http()
+        .post('/api/feed-products')
+        .set(headers)
+        .send({
+          name: 'Trop cher',
+          kind: 'MATIERE_PREMIERE',
+          unitCost: 1_000_000,
+        })
+        .expect(400);
+      const p = await product(headers, { name: 'Max', unitCost: 999_999 });
+      const l = await lot(headers);
+      const res = await distribute(
+        headers,
+        { batchId: l.id, feedProductId: p.id, quantityKg: 2_000_000 },
+        400,
+      );
+      expect((res.body as Msg).message).toContain(
+        'La quantité est trop élevée',
+      );
+      await distribute(
+        headers,
+        { batchId: l.id, feedProductId: p.id, quantityKg: 1_000_000 },
+        201,
+      );
+    });
+
+    it('moves a distribution to another date with its water, leaving the old water record alone', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const p = await product(headers);
+      const l = await lot(headers);
+      const d = (
+        await distribute(headers, {
+          batchId: l.id,
+          feedProductId: p.id,
+          waterLiters: 700,
+        })
+      ).body as Dist;
+      const moved = await http()
+        .patch(`/api/feed-distributions/${d.id}`)
+        .set(headers)
+        .send({ date: daysAgo(3), waterLiters: 900 })
+        .expect(200);
+      expect(moved.body).toMatchObject({ date: daysAgo(3), waterLiters: 900 });
+      const water = await http().get('/api/water').set(headers);
+      expect(
+        (water.body as Page<Water>).items.map((w) => [w.date, w.liters]),
+      ).toEqual([
+        [daysAgo(1), 700],
+        [daysAgo(3), 900],
+      ]);
+    });
+
+    it('keeps the water record when its distribution is deleted', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const p = await product(headers);
+      const l = await lot(headers);
+      const d = (
+        await distribute(headers, {
+          batchId: l.id,
+          feedProductId: p.id,
+          waterLiters: 700,
+        })
+      ).body as Dist;
+      await http()
+        .delete(`/api/feed-distributions/${d.id}`)
+        .set(headers)
+        .expect(200);
+      const water = await http().get('/api/water').set(headers).expect(200);
+      expect((water.body as Page<Water>).items.map((w) => w.liters)).toEqual([
+        700,
+      ]);
     });
   });
 

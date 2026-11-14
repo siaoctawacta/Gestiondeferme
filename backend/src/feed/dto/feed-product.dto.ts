@@ -16,6 +16,8 @@ import { ListQueryDto } from '../../listing/list-query.dto';
 
 export const FEED_KINDS = ['MATIERE_PREMIERE', 'ALIMENT_COMPLET'] as const;
 const COST = 'Le coût doit être un nombre positif ou nul (2 décimales au plus)';
+/** With `MAX_KG` below, keeps `quantityKg × unitCost` inside Decimal(14,2). */
+export const MAX_UNIT_COST = 999_999;
 const KIND = "Le type d'aliment est invalide";
 
 /** `?active=true|false` → boolean (anything else fails validation). */
@@ -52,7 +54,7 @@ export class CreateFeedProductDto {
   @ApiProperty({ minimum: 0, description: 'FCFA par kg' })
   @IsNumber({ maxDecimalPlaces: 2 }, { message: COST })
   @Min(0, { message: COST })
-  @Max(1_000_000_000, { message: 'Le coût est trop élevé' })
+  @Max(MAX_UNIT_COST, { message: 'Le coût est trop élevé' })
   unitCost!: number;
 
   @ApiPropertyOptional({ default: true })
@@ -79,7 +81,7 @@ export class UpdateFeedProductDto {
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 }, { message: COST })
   @Min(0, { message: COST })
-  @Max(1_000_000_000, { message: 'Le coût est trop élevé' })
+  @Max(MAX_UNIT_COST, { message: 'Le coût est trop élevé' })
   unitCost?: number;
 
   @ApiPropertyOptional()
