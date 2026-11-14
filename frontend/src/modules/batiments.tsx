@@ -1,6 +1,6 @@
 import type { ModuleConfig, StatusDef } from '../components/module/types';
 import { Pill } from '../components/ui/Pill';
-import { formatNumber } from '../lib/format';
+import { formatNumber, formatPct } from '../lib/format';
 
 export interface Building {
   id: string;
@@ -73,7 +73,7 @@ export const batiments: ModuleConfig<Building> = {
       header: 'TAUX OCC.',
       render: (b) => (
         <Pill strong tone={b.occupationRate >= 90 ? 'warning' : b.occupationRate === 0 ? 'neutral' : 'success'}>
-          {b.occupationRate}%
+          {formatPct(b.occupationRate)}
         </Pill>
       ),
     },

@@ -263,7 +263,7 @@ describe('lot detail', () => {
     expect(screen.queryByRole('button', { name: 'Transférer' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clôturer' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Rouvrir' })).toBeInTheDocument();
-    expect(screen.getByText('Mortalité', { selector: 'p' }).nextElementSibling).toHaveTextContent('1.0%');
+    expect(screen.getByText('Mortalité', { selector: 'p' }).nextElementSibling).toHaveTextContent('1%');
     expect(screen.getByText('Poids moyen', { selector: 'p' }).nextElementSibling).toHaveTextContent('—');
   });
 

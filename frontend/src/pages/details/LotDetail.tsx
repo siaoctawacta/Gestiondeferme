@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import type { ModuleKey } from '../../lib/modules';
 import { useAuth } from '../../lib/auth';
-import { formatNumber } from '../../lib/format';
+import { formatNumber, formatPct } from '../../lib/format';
 import { farmKey, useFarmQuery } from '../../lib/query';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
@@ -175,7 +175,7 @@ export function LotDetail({ id }: { id: string }) {
         }
         stats={[
           { label: 'Vivants', value: formatNumber(batch.alive) },
-          { label: 'Mortalité', value: dash(batch.mortalityRate, (n) => `${oneDecimal(n)}%`) },
+          { label: 'Mortalité', value: dash(batch.mortalityRate, formatPct) },
           { label: 'Âge (jours)', value: dash(batch.ageDays, formatNumber) },
           { label: 'Poids moyen', value: dash(batch.averageWeightG, formatNumber) },
           { label: 'GMD', value: dash(perf?.dailyGainG, (n) => `${oneDecimal(n)} g/j`) },

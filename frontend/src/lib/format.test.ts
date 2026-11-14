@@ -12,6 +12,9 @@ describe('format', () => {
     expect(formatPct(87)).toBe('87%');
     expect(formatPct(5)).toBe('5%');
     expect(formatPct(1.66)).toBe('1.7%');
+    for (const [n, out] of [[1.95, '2%'], [2.45, '2.5%'], [0, '0%'], [99.96, '100%'], [-0, '0%'], [-0.04, '0%'], [1e-7, '0%'], [-3.65, '-3.7%'], [NaN, '—'], [Infinity, '—']] as const) {
+      expect(formatPct(n)).toBe(out);
+    }
   });
   it('formats ISO dates as YYYY-MM-DD', () => {
     expect(formatDate('2026-10-22T00:00:00Z')).toBe('2026-10-22');

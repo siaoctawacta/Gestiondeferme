@@ -1,3 +1,5 @@
+import { formatPct } from './format';
+
 export type Priority = 'NORMALE' | 'HAUTE' | 'URGENTE';
 
 /** Response of `GET /api/dashboard`. */
@@ -32,4 +34,4 @@ export interface DashboardDto {
 }
 
 /** A rate, or `—` when it cannot be computed yet. */
-export const rateOrDash = (rate: number | null): string => (rate === null ? '—' : `${rate}%`);
+export const rateOrDash = (rate: number | null): string => (rate === null ? '—' : formatPct(rate));

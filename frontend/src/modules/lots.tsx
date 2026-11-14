@@ -2,7 +2,7 @@ import { RecordDialog } from '../components/module/RecordDialog';
 import type { FormMap, ModuleConfig } from '../components/module/types';
 import { Pill, type PillTone } from '../components/ui/Pill';
 import { useAuth } from '../lib/auth';
-import { formatNumber } from '../lib/format';
+import { formatNumber, formatPct } from '../lib/format';
 import { LotDetail } from '../pages/details/LotDetail';
 import {
   AVIAN_TYPES, STATUSES, TYPE_LABELS, clean, num, orDash, text, today, type Batch,
@@ -34,7 +34,7 @@ export const lots: ModuleConfig<Batch> = {
     {
       key: 'mortalityRate',
       header: 'MORTALITÉ',
-      render: (b) => (b.mortalityRate === null ? '—' : <Pill tone={mortalityTone(b.mortalityRate)}>{Math.round(b.mortalityRate * 10) / 10}%</Pill>),
+      render: (b) => (b.mortalityRate === null ? '—' : <Pill tone={mortalityTone(b.mortalityRate)}>{formatPct(b.mortalityRate)}</Pill>),
     },
   ],
   fields: [

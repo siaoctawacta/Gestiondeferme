@@ -8,8 +8,21 @@ export function formatNumber(n: number): string {
 
 export const formatMoney = (n: number): string => `${formatNumber(n)} FCFA`;
 
-/** At most one decimal (a trailing `.0` is dropped) and no space before `%`: `87%`, `3.6%`. */
-export const formatPct = (n: number): string => `${Number(n.toFixed(1))}%`;
+/** `n` shifted by `by` decimal places, on its decimal representation (no binary-float drift). */
+function shift(n: number, by: number): number {
+  const [mantissa, exp = '0'] = String(n).split('e');
+  return Number(`${mantissa}e${Number(exp) + by}`);
+}
+
+/**
+ * THE percent formatter: rounded half away from zero to at most one decimal, a trailing `.0` dropped, no space
+ * before `%` (`87%`, `3.6%`); `—` for a non-finite value. Callers handle `null` themselves.
+ */
+export function formatPct(n: number): string {
+  if (!Number.isFinite(n)) return '—';
+  const rounded = shift(Math.round(shift(Math.abs(n), 1)), -1) * Math.sign(n) || 0;
+  return `${rounded}%`;
+}
 
 const NO_DATE = '—';
 const pad = (n: number) => String(n).padStart(2, '0');
