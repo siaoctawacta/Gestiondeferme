@@ -1,0 +1,58 @@
+import { UnauthorizedException } from '@nestjs/common';
+import jwt from 'jsonwebtoken';
+import { ALL_ROLES, Role } from './roles';
+
+export type TokenStage = 'full' | '2fa' | 'setup';
+const STAGES: TokenStage[] = ['full', '2fa', 'setup'];
+
+export interface AccessClaims {
+  sub: string;
+  role: Role;
+  org: string;
+  stage: TokenStage;
+}
+
+export const ACCESS_TOKEN_TTL_SECONDS = 15 * 60;
+
+function secret(): string {
+  const s = process.env.JWT_SECRET;
+  if (!s) throw new Error('JWT_SECRET is not set');
+  return s;
+}
+
+export function signAccessToken(claims: AccessClaims): string {
+  return jwt.sign(
+    { role: claims.role, org: claims.org, stage: claims.stage },
+    secret(),
+    {
+      algorithm: 'HS256',
+      subject: claims.sub,
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+    },
+  );
+}
+
+/** Throws UnauthorizedException when the token is malformed, forged or expired. */
+export function verifyAccessToken(token: string): AccessClaims {
+  let payload: unknown;
+  try {
+    payload = jwt.verify(token, secret(), { algorithms: ['HS256'] });
+  } catch {
+    throw new UnauthorizedException('Token invalide ou expiré');
+  }
+  const p = payload as Partial<AccessClaims>;
+  if (
+    typeof p.sub !== 'string' ||
+    typeof p.org !== 'string' ||
+    !ALL_ROLES.includes(p.role as Role) ||
+    !STAGES.includes(p.stage as TokenStage)
+  ) {
+    throw new UnauthorizedException('Token invalide');
+  }
+  return {
+    sub: p.sub,
+    role: p.role as Role,
+    org: p.org,
+    stage: p.stage as TokenStage,
+  };
+}
