@@ -1,0 +1,235 @@
+import { BadRequestException, Injectable } from '@nestjs/common';
+import type { RequestContext } from '../access/decorators';
+import type { AnimalCategory, BatchType } from '../generated/prisma/enums';
+import { formatDay } from '../herd/days';
+import { HerdLedgerService } from '../herd/herd-ledger.service';
+import type { ExportColumn } from '../listing/export';
+import { PrismaService } from '../prisma/prisma.service';
+import {
+  ANIMAL_STATUSES,
+  LIVE_STATUSES,
+  latestWeights,
+} from './animals.service';
+import type { HerdListQueryDto } from './dto/animal.dto';
+
+type PigCategory =
+  AnimalCategory | Extract<BatchType, 'PORCELET' | 'ENGRAISSEMENT'>;
+
+const CATEGORY_LABEL: Record<PigCategory, string> = {
+  TRUIE: 'Truie',
+  VERRAT: 'Verrat',
+  COCHETTE: 'Cochette',
+  PORCELET: 'Porcelets',
+  ENGRAISSEMENT: 'Engraissement',
+};
+/** Accepted `category` filter values: the enum names and the labels, any case. */
+const CATEGORY_ALIASES = new Map<string, PigCategory>([
+  ...(Object.entries(CATEGORY_LABEL) as [PigCategory, string][]).flatMap(
+    ([key, label]): [string, PigCategory][] => [
+      [key.toLowerCase(), key],
+      [label.toLowerCase(), key],
+    ],
+  ),
+]);
+
+const STATUS_LABEL: Record<string, string> = {
+  ACTIF: 'Actif',
+  GESTANTE: 'Gestante',
+  ALLAITANTE: 'Allaitante',
+  VENDU: 'Vendu',
+  MORT: 'Mort',
+  REFORME: 'Réformé',
+  EN_COURS: 'En cours',
+  CLOTURE: 'Clôturé',
+};
+const FILTER_STATUSES = [...ANIMAL_STATUSES, 'EN_COURS', 'CLOTURE'];
+const COUNT_KEYS = [
+  'ACTIF',
+  'GESTANTE',
+  'ALLAITANTE',
+  'VENDU',
+  'MORT',
+  'REFORME',
+  'CLOTURE',
+] as const;
+
+export interface HerdRow {
+  kind: 'ANIMAL' | 'LOT';
+  id: string;
+  identifier: string;
+  category: string;
+  breedName: string | null;
+  buildingName: string;
+  birthDate: string | null;
+  entryDate: string | null;
+  /** Latest weighing, kg. */
+  weightKg: number | null;
+  /** Animals housed: 1 for an animal still on the farm, the live count for an open lot, else 0. */
+  headcount: number;
+  /** Animal status, or `EN_COURS` / `CLOTURE` for a lot. */
+  status: string;
+}
+
+interface Internal {
+  key: PigCategory;
+  row: HerdRow;
+}
+
+export const HERD_COLUMNS: ExportColumn<HerdRow>[] = [
+  { header: 'Identifiant', value: (r) => r.identifier },
+  { header: 'Catégorie', value: (r) => r.category },
+  { header: 'Race', value: (r) => r.breedName },
+  { header: 'Bâtiment', value: (r) => r.buildingName },
+  { header: 'Date de naissance', value: (r) => r.birthDate ?? r.entryDate },
+  { header: 'Poids (kg)', value: (r) => r.weightKg },
+  { header: 'Statut', value: (r) => STATUS_LABEL[r.status] ?? r.status },
+];
+
+/** Pig animals and pig lots in one list, as the reference "cheptel porcin" page shows them. */
+@Injectable()
+export class HerdListService {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ledger: HerdLedgerService,
+  ) {}
+
+  private async rows(ctx: RequestContext): Promise<Internal[]> {
+    const farmId = { in: ctx.farmIds };
+    const [animals, lots] = await Promise.all([
+      this.prisma.animal.findMany({
+        where: { farmId },
+        include: {
+          breed: { select: { name: true } },
+          building: { select: { name: true } },
+        },
+      }),
+      this.prisma.animalBatch.findMany({
+        where: { farmId, species: 'PORCIN' },
+        include: {
+          breed: { select: { name: true } },
+          building: { select: { name: true } },
+        },
+      }),
+    ]);
+    const lotIds = lots.map((l) => l.id);
+    const [weights, alive, lotWeighings] = await Promise.all([
+      latestWeights(
+        this.prisma,
+        animals.map((a) => a.id),
+      ),
+      this.ledger.liveCounts(lotIds),
+      this.prisma.weighing.findMany({
+        where: { batchId: { in: lotIds } },
+        orderBy: [{ batchId: 'asc' }, { date: 'desc' }, { createdAt: 'desc' }],
+        distinct: ['batchId'],
+        select: { batchId: true, averageWeightG: true },
+      }),
+    ]);
+    const lotWeight = new Map(
+      lotWeighings.map((w) => [
+        w.batchId,
+        Math.round(w.averageWeightG / 100) / 10,
+      ]),
+    );
+    const rows: Internal[] = [
+      ...animals.map((a): Internal => ({
+        key: a.category,
+        row: {
+          kind: 'ANIMAL',
+          id: a.id,
+          identifier: a.tag,
+          category: CATEGORY_LABEL[a.category],
+          breedName: a.breed?.name ?? null,
+          buildingName: a.building.name,
+          birthDate: a.birthDate ? formatDay(a.birthDate) : null,
+          entryDate: null,
+          weightKg: weights.get(a.id) ?? null,
+          headcount: LIVE_STATUSES.includes(a.status) ? 1 : 0,
+          status: a.status,
+        },
+      })),
+      ...lots.map((l): Internal => {
+        const key = l.type === 'PORCELET' ? 'PORCELET' : 'ENGRAISSEMENT';
+        return {
+          key,
+          row: {
+            kind: 'LOT',
+            id: l.id,
+            identifier: l.code,
+            category: CATEGORY_LABEL[key],
+            breedName: l.breed?.name ?? null,
+            buildingName: l.building.name,
+            birthDate: null,
+            entryDate: formatDay(l.entryDate),
+            weightKg: lotWeight.get(l.id) ?? null,
+            headcount: l.status === 'EN_COURS' ? (alive.get(l.id) ?? 0) : 0,
+            status: l.status,
+          },
+        };
+      }),
+    ];
+    return rows.sort(
+      (a, b) =>
+        (a.row.identifier < b.row.identifier
+          ? -1
+          : a.row.identifier > b.row.identifier
+            ? 1
+            : 0) || (a.row.id < b.row.id ? -1 : 1),
+    );
+  }
+
+  private matchesStatus(row: HerdRow, status: string): boolean {
+    if (status === 'ACTIF') {
+      return row.kind === 'LOT'
+        ? row.status === 'EN_COURS'
+        : row.status === 'ACTIF';
+    }
+    return row.status === status;
+  }
+
+  /** `find` / `count` / `extra` for `sendList`, all sharing one read of the herd. */
+  listArgs(ctx: RequestContext, q: HerdListQueryDto) {
+    if (q.status && !FILTER_STATUSES.includes(q.status)) {
+      throw new BadRequestException('Statut invalide');
+    }
+    let category: PigCategory | undefined;
+    if (q.category) {
+      category = CATEGORY_ALIASES.get(q.category.trim().toLowerCase());
+      if (!category) throw new BadRequestException('Catégorie invalide');
+    }
+    const search = q.search?.trim().toLowerCase();
+    let loaded: Promise<Internal[]> | undefined;
+    const all = () => (loaded ??= this.rows(ctx));
+    const filtered = async () =>
+      (await all())
+        .filter(
+          (r) =>
+            (!q.status || this.matchesStatus(r.row, q.status)) &&
+            (!category || r.key === category) &&
+            (!search || r.row.identifier.toLowerCase().includes(search)),
+        )
+        .map((r) => r.row);
+    return {
+      find: async (range: { skip?: number; take: number }) =>
+        (await filtered()).slice(
+          range.skip ?? 0,
+          (range.skip ?? 0) + range.take,
+        ),
+      count: async () => (await filtered()).length,
+      extra: async () => {
+        const rows = (await all()).map((r) => r.row);
+        const statusCounts = Object.fromEntries(
+          COUNT_KEYS.map((k) => [k, 0]),
+        ) as Record<(typeof COUNT_KEYS)[number], number>;
+        for (const r of rows) {
+          const k = r.status === 'EN_COURS' ? 'ACTIF' : r.status;
+          statusCounts[k as keyof typeof statusCounts] += 1;
+        }
+        return {
+          statusCounts,
+          totalPigs: rows.reduce((sum, r) => sum + r.headcount, 0),
+        };
+      },
+    };
+  }
+}

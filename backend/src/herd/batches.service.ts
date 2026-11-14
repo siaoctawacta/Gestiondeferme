@@ -275,20 +275,25 @@ export class BatchesService {
   /**
    * Creates a batch. Pass `tx` to create it inside the caller's transaction
    * (hatching, farrowing): then the audit row and the capacity check share it.
+   * `motherAnimalId` (the sow of a farrowing) is not part of the public body.
    */
   create(
     ctx: RequestContext,
     dto: CreateBatchDto,
     tx?: Tx,
+    motherAnimalId?: string,
   ): Promise<BatchItem> {
-    if (tx) return this.createIn(tx, ctx, dto);
-    return this.prisma.$transaction((t) => this.createIn(t, ctx, dto));
+    if (tx) return this.createIn(tx, ctx, dto, motherAnimalId);
+    return this.prisma.$transaction((t) =>
+      this.createIn(t, ctx, dto, motherAnimalId),
+    );
   }
 
   private async createIn(
     tx: Tx,
     ctx: RequestContext,
     dto: CreateBatchDto,
+    motherAnimalId?: string,
   ): Promise<BatchItem> {
     const farmId = ctx.farmId;
     if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
@@ -322,6 +327,7 @@ export class BatchesService {
             supplierName: dto.supplierName,
             purchasePrice: dto.purchasePrice,
             responsibleId: dto.responsibleId,
+            motherAnimalId,
             notes: dto.notes,
           },
           include,

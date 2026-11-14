@@ -65,6 +65,44 @@ enum BatchEventType {
   REFORME
 }
 
+enum AnimalCategory {
+  TRUIE
+  VERRAT
+  COCHETTE
+}
+
+enum AnimalSex {
+  F
+  M
+}
+
+enum AnimalStatus {
+  ACTIF
+  GESTANTE
+  ALLAITANTE
+  VENDU
+  MORT
+  REFORME
+}
+
+enum AnimalExitReason {
+  VENDU
+  MORT
+  REFORME
+}
+
+enum BreedingMethod {
+  SAILLIE
+  IA
+}
+
+enum BreedingStatus {
+  GESTATION
+  MISE_BAS
+  SEVRAGE
+  ECHEC
+}
+
 enum AuditAction {
   CREATE
   UPDATE
@@ -90,23 +128,27 @@ model Organization {
 }
 
 model Farm {
-  id             String          @id @default(cuid())
-  organizationId String
-  organization   Organization    @relation(fields: [organizationId], references: [id])
-  name           String
-  location       String?
-  active         Boolean         @default(true)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  sites          Site[]
-  buildings      Building[]
-  zones          Zone[]
-  userFarms      UserFarm[]
-  batches        AnimalBatch[]
-  batchEvents    BatchEvent[]
-  weighings      Weighing[]
-  eggProductions EggProduction[]
-  incubations    Incubation[]
+  id              String           @id @default(cuid())
+  organizationId  String
+  organization    Organization     @relation(fields: [organizationId], references: [id])
+  name            String
+  location        String?
+  active          Boolean          @default(true)
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+  sites           Site[]
+  buildings       Building[]
+  zones           Zone[]
+  userFarms       UserFarm[]
+  batches         AnimalBatch[]
+  batchEvents     BatchEvent[]
+  weighings       Weighing[]
+  eggProductions  EggProduction[]
+  incubations     Incubation[]
+  animals         Animal[]
+  animalWeighings AnimalWeighing[]
+  heats           Heat[]
+  breedingRecords BreedingRecord[]
 }
 
 model Site {
@@ -135,6 +177,7 @@ model Building {
   updatedAt DateTime       @updatedAt
   zones     Zone[]
   batches   AnimalBatch[]
+  animals   Animal[]
 
   @@unique([farmId, name])
   @@index([siteId])
@@ -278,6 +321,7 @@ model Breed {
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
   batches        AnimalBatch[]
+  animals        Animal[]
 
   @@unique([organizationId, species, name])
 }
@@ -301,8 +345,9 @@ model AnimalBatch {
   responsible         User?           @relation(fields: [responsibleId], references: [id], onDelete: Restrict)
   status              BatchStatus     @default(EN_COURS)
   closedAt            DateTime?
-  /// Sow of a piglet batch; the animals table (and its foreign key) arrive with the pig module.
+  /// Sow of a piglet batch.
   motherAnimalId      String?
+  mother              Animal?         @relation("SowLitters", fields: [motherAnimalId], references: [id], onDelete: Restrict)
   notes               String?
   createdAt           DateTime        @default(now())
   updatedAt           DateTime        @updatedAt
@@ -312,12 +357,14 @@ model AnimalBatch {
   eggProductions      EggProduction[]
   sourceOfIncubations Incubation[]    @relation("IncubationSource")
   hatchedFrom         Incubation?     @relation("IncubationChicks")
+  litterOf            BreedingRecord? @relation("BreedingLitter")
 
   @@unique([farmId, code])
   @@index([farmId])
   @@index([breedId])
   @@index([buildingId])
   @@index([responsibleId])
+  @@index([motherAnimalId])
 }
 
 model BatchEvent {
@@ -414,4 +461,104 @@ model Incubation {
   @@unique([farmId, code])
   @@index([farmId])
   @@index([sourceBatchId])
+}
+
+model Animal {
+  id         String            @id @default(cuid())
+  farmId     String
+  farm       Farm              @relation(fields: [farmId], references: [id])
+  tag        String
+  category   AnimalCategory
+  breedId    String?
+  breed      Breed?            @relation(fields: [breedId], references: [id], onDelete: Restrict)
+  sex        AnimalSex
+  birthDate  DateTime?         @db.Date
+  sireId     String?
+  sire       Animal?           @relation("Sire", fields: [sireId], references: [id], onDelete: Restrict)
+  damId      String?
+  dam        Animal?           @relation("Dam", fields: [damId], references: [id], onDelete: Restrict)
+  buildingId String
+  building   Building          @relation(fields: [buildingId], references: [id])
+  status     AnimalStatus      @default(ACTIF)
+  exitDate   DateTime?         @db.Date
+  exitReason AnimalExitReason?
+  notes      String?
+  createdAt  DateTime          @default(now())
+  updatedAt  DateTime          @updatedAt
+  sired      Animal[]          @relation("Sire")
+  born       Animal[]          @relation("Dam")
+  weighings  AnimalWeighing[]
+  heats      Heat[]
+  breedings  BreedingRecord[]  @relation("BreedingSow")
+  services   BreedingRecord[]  @relation("BreedingBoar")
+  litters    AnimalBatch[]     @relation("SowLitters")
+
+  @@unique([farmId, tag])
+  @@index([farmId])
+  @@index([breedId])
+  @@index([sireId])
+  @@index([damId])
+  @@index([buildingId])
+}
+
+model AnimalWeighing {
+  id        String   @id @default(cuid())
+  farmId    String
+  farm      Farm     @relation(fields: [farmId], references: [id])
+  animalId  String
+  animal    Animal   @relation(fields: [animalId], references: [id])
+  date      DateTime @db.Date
+  weightKg  Decimal  @db.Decimal(6, 1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([farmId])
+  @@index([animalId, date])
+}
+
+model Heat {
+  id        String   @id @default(cuid())
+  farmId    String
+  farm      Farm     @relation(fields: [farmId], references: [id])
+  animalId  String
+  animal    Animal   @relation(fields: [animalId], references: [id])
+  date      DateTime @db.Date
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([farmId])
+  @@index([animalId, date])
+}
+
+model BreedingRecord {
+  id                    String         @id @default(cuid())
+  farmId                String
+  farm                  Farm           @relation(fields: [farmId], references: [id])
+  sowId                 String
+  sow                   Animal         @relation("BreedingSow", fields: [sowId], references: [id])
+  method                BreedingMethod
+  boarId                String?
+  boar                  Animal?        @relation("BreedingBoar", fields: [boarId], references: [id], onDelete: Restrict)
+  semenLabel            String?
+  serviceDate           DateTime       @db.Date
+  expectedFarrowingDate DateTime       @db.Date
+  status                BreedingStatus @default(GESTATION)
+  farrowingDate         DateTime?      @db.Date
+  bornTotal             Int?
+  bornAlive             Int?
+  stillborn             Int?
+  litterBatchId         String?        @unique
+  litterBatch           AnimalBatch?   @relation("BreedingLitter", fields: [litterBatchId], references: [id], onDelete: Restrict)
+  weaningDate           DateTime?      @db.Date
+  weanedCount           Int?
+  failureDate           DateTime?      @db.Date
+  note                  String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  @@index([farmId])
+  @@index([farmId, serviceDate])
+  @@index([sowId])
+  @@index([boarId])
 }
