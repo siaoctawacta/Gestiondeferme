@@ -90,14 +90,14 @@ model Organization {
 }
 
 model Farm {
-  id             String        @id @default(cuid())
+  id             String          @id @default(cuid())
   organizationId String
-  organization   Organization  @relation(fields: [organizationId], references: [id])
+  organization   Organization    @relation(fields: [organizationId], references: [id])
   name           String
   location       String?
-  active         Boolean       @default(true)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  active         Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
   sites          Site[]
   buildings      Building[]
   zones          Zone[]
@@ -105,6 +105,8 @@ model Farm {
   batches        AnimalBatch[]
   batchEvents    BatchEvent[]
   weighings      Weighing[]
+  eggProductions EggProduction[]
+  incubations    Incubation[]
 }
 
 model Site {
@@ -281,32 +283,35 @@ model Breed {
 }
 
 model AnimalBatch {
-  id             String       @id @default(cuid())
-  farmId         String
-  farm           Farm         @relation(fields: [farmId], references: [id])
-  code           String
-  species        Species
-  type           BatchType
-  breedId        String?
-  breed          Breed?       @relation(fields: [breedId], references: [id], onDelete: Restrict)
-  buildingId     String
-  building       Building     @relation(fields: [buildingId], references: [id])
-  entryDate      DateTime     @db.Date
-  initialCount   Int
-  supplierName   String?
-  purchasePrice  Decimal?     @db.Decimal(14, 2)
-  responsibleId  String?
-  responsible    User?        @relation(fields: [responsibleId], references: [id], onDelete: Restrict)
-  status         BatchStatus  @default(EN_COURS)
-  closedAt       DateTime?
+  id                  String          @id @default(cuid())
+  farmId              String
+  farm                Farm            @relation(fields: [farmId], references: [id])
+  code                String
+  species             Species
+  type                BatchType
+  breedId             String?
+  breed               Breed?          @relation(fields: [breedId], references: [id], onDelete: Restrict)
+  buildingId          String
+  building            Building        @relation(fields: [buildingId], references: [id])
+  entryDate           DateTime        @db.Date
+  initialCount        Int
+  supplierName        String?
+  purchasePrice       Decimal?        @db.Decimal(14, 2)
+  responsibleId       String?
+  responsible         User?           @relation(fields: [responsibleId], references: [id], onDelete: Restrict)
+  status              BatchStatus     @default(EN_COURS)
+  closedAt            DateTime?
   /// Sow of a piglet batch; the animals table (and its foreign key) arrive with the pig module.
-  motherAnimalId String?
-  notes          String?
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
-  events         BatchEvent[] @relation("BatchEvents")
-  relatedEvents  BatchEvent[] @relation("RelatedBatch")
-  weighings      Weighing[]
+  motherAnimalId      String?
+  notes               String?
+  createdAt           DateTime        @default(now())
+  updatedAt           DateTime        @updatedAt
+  events              BatchEvent[]    @relation("BatchEvents")
+  relatedEvents       BatchEvent[]    @relation("RelatedBatch")
+  weighings           Weighing[]
+  eggProductions      EggProduction[]
+  sourceOfIncubations Incubation[]    @relation("IncubationSource")
+  hatchedFrom         Incubation?     @relation("IncubationChicks")
 
   @@unique([farmId, code])
   @@index([farmId])
@@ -356,4 +361,57 @@ model Weighing {
 
   @@index([farmId])
   @@index([batchId, date])
+}
+
+enum IncubationStatus {
+  EN_COURS
+  ECLOSE
+  ECHEC
+}
+
+model EggProduction {
+  id           String      @id @default(cuid())
+  farmId       String
+  farm         Farm        @relation(fields: [farmId], references: [id])
+  batchId      String
+  batch        AnimalBatch @relation(fields: [batchId], references: [id])
+  date         DateTime    @db.Date
+  collected    Int
+  broken       Int         @default(0)
+  downgraded   Int         @default(0)
+  toIncubation Int         @default(0)
+  note         String?
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  @@unique([batchId, date])
+  @@index([farmId])
+  @@index([farmId, date])
+}
+
+model Incubation {
+  id                String           @id @default(cuid())
+  farmId            String
+  farm              Farm             @relation(fields: [farmId], references: [id])
+  code              String
+  sourceBatchId     String?
+  sourceBatch       AnimalBatch?     @relation("IncubationSource", fields: [sourceBatchId], references: [id], onDelete: Restrict)
+  incubator         String?
+  startDate         DateTime         @db.Date
+  eggsSet           Int
+  candlingDate      DateTime?        @db.Date
+  fertileEggs       Int?
+  expectedHatchDate DateTime         @db.Date
+  status            IncubationStatus @default(EN_COURS)
+  hatchDate         DateTime?        @db.Date
+  chicksHatched     Int?
+  chickBatchId      String?          @unique
+  chickBatch        AnimalBatch?     @relation("IncubationChicks", fields: [chickBatchId], references: [id], onDelete: Restrict)
+  note              String?
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+
+  @@unique([farmId, code])
+  @@index([farmId])
+  @@index([sourceBatchId])
 }
