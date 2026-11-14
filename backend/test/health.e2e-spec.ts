@@ -24,8 +24,11 @@ describe('Health & validation (e2e)', () => {
   it('rejects unknown body fields', async () => {
     const res = await request(app.getHttpServer() as App)
       .post('/api/auth/login')
-      .send({ email: 'a@b.c', password: 'x', evil: 1 });
+      .send({ email: 'user@example.com', password: 'x', evil: 1 });
     expect(res.status).toBe(400);
+    expect((res.body as { message: string[] }).message).toContain(
+      'property evil should not exist',
+    );
   });
 
   it('stub login answers 501 for a valid body', async () => {
