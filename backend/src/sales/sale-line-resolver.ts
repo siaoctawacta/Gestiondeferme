@@ -2,12 +2,14 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
 import { SettingsService } from '../admin/settings/settings.service';
-import { lineAmount, sumAmounts } from '../common/money';
+import { MAX_PAYMENT } from '../common/limits';
+import { lineAmount } from '../common/money';
 import type { Prisma } from '../generated/prisma/client';
 import type { SaleLineKind } from '../generated/prisma/enums';
-import { MAX_PAYMENT } from '../purchases/dto/purchase.dto';
 import type { SaleLineDto } from './dto/sale-line.dto';
+import { documentTotal } from './sale-money';
 import {
+  canLay,
   defaultDesignation,
   lineShapeError,
   type LineSource,
@@ -98,7 +100,7 @@ export class SaleLineResolver {
     const [batches, animals, items] = await Promise.all([
       tx.animalBatch.findMany({
         where: { id: { in: batchIds }, farmId },
-        select: { id: true, species: true, type: true },
+        select: { id: true, code: true, species: true, type: true },
       }),
       tx.animal.findMany({
         where: { id: { in: animalIds }, farmId },
@@ -130,6 +132,11 @@ export class SaleLineResolver {
 
     const resolved = lines.map((l, position): ResolvedLine => {
       const batch = l.batchId ? batchById.get(l.batchId) : undefined;
+      if (l.kind === 'OEUFS' && batch && !canLay(batch)) {
+        throw new BadRequestException(
+          `Le lot ${batch.code} ne produit pas d'œufs`,
+        );
+      }
       const animal = l.animalId ? animalById.get(l.animalId) : undefined;
       const item = l.stockItemId ? itemById.get(l.stockItemId) : undefined;
       let unit = l.unit || null;
@@ -166,7 +173,7 @@ export class SaleLineResolver {
         weightKg: l.weightKg == null ? null : new Decimal(l.weightKg),
       };
     });
-    const total = sumAmounts(resolved.map((l) => l.amount));
+    const total = documentTotal(resolved);
     if (total.gt(MAX_TOTAL)) throw new BadRequestException(TOO_BIG);
     return { lines: resolved, total };
   }

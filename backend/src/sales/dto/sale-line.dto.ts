@@ -11,7 +11,7 @@ import {
 } from 'class-validator';
 import { Trim } from '../../listing/list-helpers';
 import { SaleLineKind } from '../../generated/prisma/enums';
-import { MAX_PRICE, MAX_QUANTITY } from '../../purchases/dto/purchase.dto';
+import { MAX_PRICE, MAX_QUANTITY } from '../../common/limits';
 
 const ID = 'Identifiant invalide';
 const QTY = 'La quantité doit être un nombre positif (2 décimales au plus)';

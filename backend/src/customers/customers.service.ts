@@ -100,21 +100,6 @@ export class CustomersService {
     private readonly access: AccessService,
   ) {}
 
-  /** The farms whose invoices make the balance: the header's farm, else every visible farm. */
-  private async balanceFarms(
-    ctx: RequestContext,
-    header: string | undefined,
-  ): Promise<string[]> {
-    if (header && header !== 'all') {
-      return (await this.access.resolveFarms(ctx.user, header, true)).farmIds;
-    }
-    const farms = await this.prisma.farm.findMany({
-      where: this.access.visibleFarmsWhere(ctx.user),
-      select: { id: true },
-    });
-    return farms.map((f) => f.id);
-  }
-
   /**
    * The standing of each customer over `farmIds`. No invoice exists yet: every
    * customer stands at 0 until the invoices land (the receivables function then
@@ -149,7 +134,7 @@ export class CustomersService {
       ...(q.search ? { name: containsInsensitive(q.search) } : {}),
     };
     const order = orderBy(q, SORTABLE, { name: 'asc' });
-    const farmIds = await this.balanceFarms(ctx, header);
+    const farmIds = await this.access.farmsForHeader(ctx, header);
     return {
       find: async (range: { skip?: number; take: number }) => {
         const rows = await this.prisma.customer.findMany({
@@ -172,7 +157,7 @@ export class CustomersService {
     id: string,
     header: string | undefined,
   ): Promise<CustomerDetail> {
-    return this.read(ctx, id, await this.balanceFarms(ctx, header));
+    return this.read(ctx, id, await this.access.farmsForHeader(ctx, header));
   }
 
   private async read(
@@ -236,7 +221,7 @@ export class CustomersService {
     header: string | undefined,
   ): Promise<CustomerItem> {
     // A farm header the user cannot see is refused before anything is written.
-    const farmIds = await this.balanceFarms(ctx, header);
+    const farmIds = await this.access.farmsForHeader(ctx, header);
     return orConflict(async () => {
       await this.prisma.$transaction(async (tx) => {
         const before = await tx.customer.findFirst({

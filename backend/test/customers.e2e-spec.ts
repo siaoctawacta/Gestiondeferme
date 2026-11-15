@@ -70,7 +70,8 @@ describe('Customers (e2e)', () => {
   const http = () => world.http();
   const create = (over: Record<string, unknown> = PALMIER, status = 201) =>
     world.post<Customer>(seller, '/customers', over, status);
-  const msg = (r: Msg) => (Array.isArray(r.message) ? r.message : r.message);
+  const msg = (r: Msg) =>
+    Array.isArray(r.message) ? r.message.join(' | ') : r.message;
   const list = async (h: Headers, query: Record<string, string> = {}) =>
     (await http().get('/api/customers').query(query).set(h).expect(200))
       .body as Page<Customer>;

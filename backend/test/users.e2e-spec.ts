@@ -803,6 +803,8 @@ describe('Users and settings (e2e)', () => {
         'farrowingWarningDays',
         'vaccinationWarningDays',
         'gestationDays',
+        'invoiceDueDays',
+        'eggsPerTray',
       ]) {
         for (const bad of [1.5, 0.5, -3, 0, '7', null]) {
           await put(key, bad).expect(400);

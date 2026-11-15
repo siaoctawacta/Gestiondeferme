@@ -1,5 +1,10 @@
 import { Decimal } from '@prisma/client/runtime/client';
-import { balanceOf, creditLineAmount, documentTotal } from './sale-money';
+import {
+  balanceOf,
+  creditable,
+  creditLineAmount,
+  documentTotal,
+} from './sale-money';
 
 const D = (v: number | string) => new Decimal(v);
 
@@ -114,5 +119,63 @@ describe('sale money', () => {
         creditLineAmount(line, { quantity: D(0), amount: D(0) }, D(0)),
       ).toThrow();
     });
+  });
+});
+
+describe('credit of a line that rounds to almost nothing', () => {
+  // 0.04 × 0.55 = 0.022 -> a line of 0.02; 0.01 × 0.55 = 0.0055 -> 0.01 each time.
+  const line = { quantity: D(0.04), unitPrice: D(0.55), amount: D(0.02) };
+
+  it('never credits more than is left of the line, nor a negative amount', () => {
+    let already = { quantity: D(0), amount: D(0) };
+    const credited: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      const amount = creditLineAmount(line, already, D(0.01));
+      credited.push(amount.toString());
+      already = {
+        quantity: already.quantity.add(0.01),
+        amount: already.amount.add(amount),
+      };
+    }
+    expect(credited).toEqual(['0.01', '0.01', '0', '0']);
+    expect(already.amount.toString()).toBe('0.02');
+  });
+
+  it('caps a partial credit at the amount left, and the completing one takes exactly that', () => {
+    const l = { quantity: D(3), unitPrice: D(0.33), amount: D(0.99) };
+    // Earlier credits were rounded up: 1 + 1 credited 0.34 + 0.34, 0.32 is left for the last unit.
+    const already = { quantity: D(2), amount: D(0.68) };
+    expect(creditLineAmount(l, already, D(1)).toString()).toBe('0.31');
+    expect(
+      creditLineAmount(l, { quantity: D(1), amount: D(0.98) }, D(1)).toString(),
+    ).toBe('0.01');
+    expect(
+      creditLineAmount(l, { quantity: D(1), amount: D(0.98) }, D(1)).gte(0),
+    ).toBe(true);
+  });
+});
+
+describe('creditable', () => {
+  const line = { quantity: D(2.5), amount: D(833.33) };
+
+  it('is the whole line before any credit note', () => {
+    const c = creditable(line, { quantity: D(0), amount: D(0) });
+    expect(c.quantity.toString()).toBe('2.5');
+    expect(c.amount.toString()).toBe('833.33');
+  });
+
+  it('is what is left after earlier credit notes', () => {
+    const c = creditable(line, { quantity: D(1.25), amount: D(416.66) });
+    expect(c.quantity.toString()).toBe('1.25');
+    expect(c.amount.toString()).toBe('416.67');
+  });
+
+  it('is nothing once the line is fully credited, never negative', () => {
+    const c = creditable(line, { quantity: D(2.5), amount: D(833.33) });
+    expect(c.quantity.toString()).toBe('0');
+    expect(c.amount.toString()).toBe('0');
+    const over = creditable(line, { quantity: D(3), amount: D(900) });
+    expect(over.quantity.toString()).toBe('0');
+    expect(over.amount.toString()).toBe('0');
   });
 });

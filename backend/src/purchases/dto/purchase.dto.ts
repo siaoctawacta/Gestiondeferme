@@ -15,16 +15,17 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import {
+  MAX_LINES,
+  MAX_PAYMENT,
+  MAX_PRICE,
+  MAX_QUANTITY,
+} from '../../common/limits';
 import { Activity } from '../../generated/prisma/enums';
 import { IsDay } from '../../herd/dto/is-day';
 import { Trim } from '../../listing/list-helpers';
 import { ListQueryDto } from '../../listing/list-query.dto';
 
-/** With `MAX_PRICE`, keeps `quantity × unitPrice` of a line inside Decimal(14,2). */
-export const MAX_QUANTITY = 1_000_000;
-export const MAX_PRICE = 1_000_000;
-export const MAX_PAYMENT = 999_999_999_999.99;
-export const MAX_LINES = 100;
 export const PAYMENT_METHODS = [
   'ESPECES',
   'VIREMENT',

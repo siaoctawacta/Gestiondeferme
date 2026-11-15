@@ -78,21 +78,6 @@ export class SuppliersService {
     private readonly access: AccessService,
   ) {}
 
-  /** The farms whose purchases make the balance: the header's farm, else every visible farm. */
-  private async balanceFarms(
-    ctx: RequestContext,
-    header: string | undefined,
-  ): Promise<string[]> {
-    if (header && header !== 'all') {
-      return (await this.access.resolveFarms(ctx.user, header, true)).farmIds;
-    }
-    const farms = await this.prisma.farm.findMany({
-      where: this.access.visibleFarmsWhere(ctx.user),
-      select: { id: true },
-    });
-    return farms.map((f) => f.id);
-  }
-
   /** Balance per supplier: Σ stored amounts of the received purchases − Σ payments. */
   private async balances(
     supplierIds: string[],
@@ -136,7 +121,7 @@ export class SuppliersService {
       ...(q.search ? { name: containsInsensitive(q.search) } : {}),
     };
     const order = orderBy(q, SORTABLE, { name: 'asc' });
-    const farmIds = await this.balanceFarms(ctx, header);
+    const farmIds = await this.access.farmsForHeader(ctx, header);
     return {
       find: async (range: { skip?: number; take: number }) => {
         const rows = await this.prisma.supplier.findMany({
@@ -159,7 +144,7 @@ export class SuppliersService {
     id: string,
     header: string | undefined,
   ): Promise<SupplierItem> {
-    return this.read(ctx, id, await this.balanceFarms(ctx, header));
+    return this.read(ctx, id, await this.access.farmsForHeader(ctx, header));
   }
 
   private async read(
@@ -216,7 +201,7 @@ export class SuppliersService {
     header: string | undefined,
   ): Promise<SupplierItem> {
     // A farm header the user cannot see is refused before anything is written.
-    const farmIds = await this.balanceFarms(ctx, header);
+    const farmIds = await this.access.farmsForHeader(ctx, header);
     return orConflict(async () => {
       await this.prisma.$transaction(async (tx) => {
         const before = await tx.supplier.findFirst({

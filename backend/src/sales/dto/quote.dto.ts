@@ -14,7 +14,7 @@ import {
 import { IsDay } from '../../herd/dto/is-day';
 import { Trim } from '../../listing/list-helpers';
 import { ListQueryDto } from '../../listing/list-query.dto';
-import { MAX_LINES } from '../../purchases/dto/purchase.dto';
+import { MAX_LINES } from '../../common/limits';
 import { SaleLineDto } from './sale-line.dto';
 
 const LINES = 'Un devis comporte au moins une ligne';

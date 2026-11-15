@@ -9,6 +9,7 @@ import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import { assertNotFuture, formatDay, requireDay } from '../common/days';
 import { nextDocumentNumber } from '../common/document-numbers';
+import { MAX_PAYMENT } from '../common/limits';
 import { lockRow } from '../common/lock-row';
 import {
   lineAmount,
@@ -27,7 +28,6 @@ import {
   StockLedgerService,
   type RecordInput,
 } from '../stock/stock-ledger.service';
-import { MAX_PAYMENT } from './dto/purchase.dto';
 import type {
   CancelPurchaseDto,
   CreatePaymentDto,

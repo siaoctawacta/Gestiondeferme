@@ -70,6 +70,25 @@ export class AccessService {
   }
 
   /**
+   * The farms a READ that only uses the header to choose what a derived figure
+   * counts (supplier or customer balance) looks at: the header's farm (refused
+   * when the user cannot see it), else every farm the user can see.
+   */
+  async farmsForHeader(
+    ctx: RequestContext,
+    header: string | undefined,
+  ): Promise<string[]> {
+    if (header && header !== 'all') {
+      return (await this.resolveFarms(ctx.user, header, true)).farmIds;
+    }
+    const farms = await this.prisma.farm.findMany({
+      where: this.visibleFarmsWhere(ctx.user),
+      select: { id: true },
+    });
+    return farms.map((f) => f.id);
+  }
+
+  /**
    * Resolves the `X-Farm-Id` header against the user's visible farms.
    * `isRead` tells whether the route only reads (required for `all`); an
    * inactive farm is read-only, so writes to it are refused.

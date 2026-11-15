@@ -30,8 +30,10 @@ import {
   type QuoteRow,
 } from './sale-view';
 import {
+  expiredQuoteWhere,
   QUOTE_STATUS_LIST,
   quoteRefusal,
+  quoteStatusWhere,
   quoteStatusAfter,
   type DisplayQuoteStatus,
   type QuoteAction,
@@ -74,21 +76,6 @@ export class QuotesService {
     return value as DisplayQuoteStatus;
   }
 
-  /** `ENVOYE` and `EXPIRE` split the sent quotes on their validity. */
-  private statusWhere(status: DisplayQuoteStatus): Prisma.QuoteWhereInput {
-    const day = today();
-    if (status === 'EXPIRE') {
-      return { status: 'ENVOYE', validUntil: { lt: day } };
-    }
-    if (status === 'ENVOYE') {
-      return {
-        status: 'ENVOYE',
-        OR: [{ validUntil: null }, { validUntil: { gte: day } }],
-      };
-    }
-    return { status };
-  }
-
   private where(
     ctx: RequestContext,
     q: QuoteQueryDto,
@@ -96,7 +83,7 @@ export class QuotesService {
   ): Prisma.QuoteWhereInput {
     const and: Prisma.QuoteWhereInput[] = [];
     if (withStatus && q.status)
-      and.push(this.statusWhere(this.status(q.status)));
+      and.push(quoteStatusWhere(this.status(q.status), today()));
     if (q.search) {
       and.push({
         OR: [
@@ -141,7 +128,7 @@ export class QuotesService {
             _count: { _all: true },
           }),
           this.prisma.quote.count({
-            where: { AND: [base, this.statusWhere('EXPIRE')] },
+            where: { AND: [base, expiredQuoteWhere(today())] },
           }),
         ]);
         const counts = Object.fromEntries(

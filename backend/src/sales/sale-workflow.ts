@@ -1,4 +1,5 @@
 import type { Decimal } from '@prisma/client/runtime/client';
+import type { Prisma } from '../generated/prisma/client';
 
 /*
  * The whole workflow of the sales documents, and the ONLY place a sale status
@@ -92,6 +93,27 @@ export function displayQuoteStatus(
   return status === 'ENVOYE' && validUntil !== null && validUntil < today
     ? 'EXPIRE'
     : status;
+}
+
+/** The database side of the expiry rule above: a sent quote whose `validUntil` is before `day`. */
+export const expiredQuoteWhere = (day: Date): Prisma.QuoteWhereInput => ({
+  status: 'ENVOYE',
+  validUntil: { lt: day },
+});
+
+/** The filter of one displayed status (`EXPIRE` and `ENVOYE` split the sent quotes on their validity). */
+export function quoteStatusWhere(
+  status: DisplayQuoteStatus,
+  day: Date,
+): Prisma.QuoteWhereInput {
+  if (status === 'EXPIRE') return expiredQuoteWhere(day);
+  if (status === 'ENVOYE') {
+    return {
+      status: 'ENVOYE',
+      OR: [{ validUntil: null }, { validUntil: { gte: day } }],
+    };
+  }
+  return { status };
 }
 
 // ---------------------------------------------------------------- invoices

@@ -69,6 +69,7 @@ describe('Quotes (e2e)', () => {
   let keeper: Headers;
   let customerId: string;
   let lotId: string;
+  let layerId: string;
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -92,6 +93,7 @@ describe('Quotes (e2e)', () => {
       })
     ).id;
     lotId = (await world.lot(director)).id;
+    layerId = (await world.lot(director, { type: 'PONDEUSE' })).id;
   });
 
   afterAll(async () => {
@@ -255,10 +257,10 @@ describe('Quotes (e2e)', () => {
             unitPrice: 250000,
             weightKg: 180,
           },
-          { kind: 'OEUFS', batchId: lotId, quantity: 400, unitPrice: 2500 },
+          { kind: 'OEUFS', batchId: layerId, quantity: 400, unitPrice: 2500 },
           {
             kind: 'OEUFS',
-            batchId: lotId,
+            batchId: layerId,
             unit: 'OEUF',
             quantity: 90,
             unitPrice: 85,
@@ -293,7 +295,7 @@ describe('Quotes (e2e)', () => {
         .expect(200);
       expect((await get(q.id)).lines[1].eggsPerUnit).toBe(30);
       const next = await quote({
-        lines: [{ kind: 'OEUFS', batchId: lotId, quantity: 1, unitPrice: 1 }],
+        lines: [{ kind: 'OEUFS', batchId: layerId, quantity: 1, unitPrice: 1 }],
       });
       expect(next.lines[0].eggsPerUnit).toBe(24);
     });
@@ -335,15 +337,23 @@ describe('Quotes (e2e)', () => {
       expect(await refused({ lines: [lotLine({ unitPrice: -1 })] })).toContain(
         'prix unitaire',
       );
+      expect(await refused({ lines: [lotLine({ kind: 'AUTRE' })] })).toContain(
+        'Le type de ligne est invalide',
+      );
+      const lotCode = (
+        await prisma.animalBatch.findUniqueOrThrow({ where: { id: lotId } })
+      ).code;
       expect(
-        await refused({ lines: [lotLine({ kind: 'AUTRE' })] }),
-      ).toBeTruthy();
+        await refused({
+          lines: [{ kind: 'OEUFS', batchId: lotId, quantity: 1, unitPrice: 1 }],
+        }),
+      ).toBe(`Le lot ${lotCode} ne produit pas d'œufs`);
       expect(
         await refused({
           lines: [
             {
               kind: 'OEUFS',
-              batchId: lotId,
+              batchId: layerId,
               unit: 'CAISSE',
               quantity: 1,
               unitPrice: 1,
@@ -813,9 +823,11 @@ describe('Quotes (e2e)', () => {
   });
 
   describe('permissions and scope', () => {
-    it('lets the seller write, the accountant and director read, the keeper see nothing', async () => {
+    it('lets the seller write, the accountant, director, owner and auditor read, the keeper see nothing', async () => {
       const q = await quote();
-      for (const h of [accountant, director]) {
+      const owner = await world.actor('PROPRIETAIRE');
+      const auditor = await world.actor('AUDITEUR');
+      for (const h of [accountant, director, owner, auditor]) {
         await world.post(h, '/quotes', body(), 403);
         await http()
           .patch(`/api/quotes/${q.id}`)
@@ -920,7 +932,7 @@ describe('Quotes (e2e)', () => {
         make({ kind: 'LOT', batchId: lotId, eggsPerUnit: 30 }),
       ).rejects.toThrow(/QuoteLine_kind_check/);
       await expect(make({ kind: 'OEUFS', batchId: lotId })).rejects.toThrow(
-        /QuoteLine_kind_check/,
+        /QuoteLine_(kind|eggUnit)_check/,
       );
       await expect(
         make({ kind: 'ARTICLE', stockItemId: item.id, batchId: lotId }),
@@ -931,7 +943,56 @@ describe('Quotes (e2e)', () => {
       await expect(make({ quantity: 0, amount: 0 })).rejects.toThrow(
         /QuoteLine_quantity_check/,
       );
-      await expect(make({ position: 0 })).rejects.toThrow();
+      await expect(make({ position: -1 })).rejects.toThrow(
+        /QuoteLine_position_check/,
+      );
+      await expect(make({ position: 0 })).rejects.toThrow(/Unique constraint/);
+      const sow = await world.animal(director, { tag: 'TR-001' });
+      await expect(
+        make({ kind: 'ANIMAL', animalId: sow.id, quantity: 2, amount: 20 }),
+      ).rejects.toThrow(/QuoteLine_kind_check/);
+      await expect(
+        make({ kind: 'SERVICE', stockItemId: item.id }),
+      ).rejects.toThrow(/QuoteLine_kind_check/);
+      await expect(
+        make({
+          kind: 'OEUFS',
+          batchId: layerId,
+          eggsPerUnit: 30,
+          unit: 'CAISSE',
+        }),
+      ).rejects.toThrow(/QuoteLine_eggUnit_check/);
+      await expect(
+        make({ kind: 'OEUFS', batchId: layerId, eggsPerUnit: 30, unit: null }),
+      ).rejects.toThrow(/QuoteLine_eggUnit_check/);
+      await expect(
+        make({
+          kind: 'OEUFS',
+          batchId: layerId,
+          eggsPerUnit: 30,
+          unit: 'OEUF',
+        }),
+      ).rejects.toThrow(/QuoteLine_eggUnit_check/);
+      await prisma.quoteLine.create({
+        data: {
+          ...base,
+          position: 20,
+          kind: 'OEUFS',
+          batchId: layerId,
+          eggsPerUnit: 1,
+          unit: 'OEUF',
+        },
+      });
+      await prisma.quoteLine.create({
+        data: {
+          ...base,
+          position: 21,
+          kind: 'OEUFS',
+          batchId: layerId,
+          eggsPerUnit: 24,
+          unit: 'PLATEAU',
+        },
+      });
       await expect(
         prisma.quote.update({ where: { id: q.id }, data: { total: -1 } }),
       ).rejects.toThrow(/Quote_total_check/);

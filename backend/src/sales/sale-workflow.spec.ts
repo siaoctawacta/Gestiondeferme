@@ -2,6 +2,8 @@ import { Decimal } from '@prisma/client/runtime/client';
 import {
   canQuote,
   displayQuoteStatus,
+  expiredQuoteWhere,
+  quoteStatusWhere,
   INVOICE_ACTIONS,
   INVOICE_STATUS_LIST,
   invoiceStatusOf,
@@ -105,6 +107,20 @@ describe('quote workflow', () => {
     expect(displayQuoteStatus('BROUILLON', '2026-11-01', '2026-11-11')).toBe(
       'BROUILLON',
     );
+  });
+
+  it('writes the expiry rule once, as a database filter too', () => {
+    const day = new Date('2026-11-11T00:00:00Z');
+    expect(expiredQuoteWhere(day)).toEqual({
+      status: 'ENVOYE',
+      validUntil: { lt: day },
+    });
+    expect(quoteStatusWhere('EXPIRE', day)).toEqual(expiredQuoteWhere(day));
+    expect(quoteStatusWhere('ENVOYE', day)).toEqual({
+      status: 'ENVOYE',
+      OR: [{ validUntil: null }, { validUntil: { gte: day } }],
+    });
+    expect(quoteStatusWhere('ACCEPTE', day)).toEqual({ status: 'ACCEPTE' });
   });
 
   it('lets an expired quote still be accepted, refused or converted, not sent', () => {
