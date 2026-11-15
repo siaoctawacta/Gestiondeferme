@@ -149,6 +149,23 @@ describe('Stock (e2e)', () => {
     return (res.body as Mv[])[0];
   }
 
+  /** Like `entry` but hands back the response, whatever its status. */
+  function entry409(
+    h: Headers,
+    itemId: string,
+    quantity: number,
+    date = daysAgo(40),
+  ) {
+    return move(h, {
+      itemId,
+      type: 'ENTREE',
+      date,
+      quantity,
+      unitCost: 10,
+      reason: 'ACHAT',
+    });
+  }
+
   function exit(
     h: Headers,
     itemId: string,
@@ -1378,6 +1395,177 @@ describe('Stock (e2e)', () => {
       await http().get('/api/stock').set(h).expect(403);
       await http().get('/api/stock/movements').set(h).expect(403);
       await http().get('/api/inventories').set(h).expect(403);
+    });
+  });
+
+  describe('final fix wave: the ledger', () => {
+    async function validatedCount(
+      h: Headers,
+      itemId: string,
+      date: string,
+      qty: number,
+    ) {
+      const session = (
+        await http().post('/api/inventories').set(h).send({ date }).expect(201)
+      ).body as Inventory;
+      await http()
+        .put(`/api/inventories/${session.id}/lines`)
+        .set(h)
+        .send({ lines: [{ itemId, countedQty: qty }] })
+        .expect(200);
+      await http()
+        .post(`/api/inventories/${session.id}/validate`)
+        .set(h)
+        .expect(201);
+    }
+
+    it('a validated inventory closes the past: the reviewer repro through manual movements', async () => {
+      const { headers: h } = await actor('DIRECTEUR_FERME');
+      const it = await item(h, 'Aliment ponte');
+      await entry(h, it.id, 100, 10, daysAgo(20)); // lot 100 on D1
+      const out = await exit(h, it.id, 10, daysAgo(15)).expect(201); // D5
+      await validatedCount(h, it.id, daysAgo(10), 80); // D10: theoretical 90 → −10
+      const locked = `Un inventaire validé le ${daysAgo(10)} verrouille les mouvements antérieurs de Aliment ponte`;
+      const id = (out.body as Mv[])[0].id;
+      const before = (await list(h)).items[0];
+
+      for (const res of [
+        await http()
+          .patch(`/api/stock/movements/${id}`)
+          .set(h)
+          .send({ quantity: 20 }),
+        await http().delete(`/api/stock/movements/${id}`).set(h),
+        await entry409(h, it.id, 50, daysAgo(12)),
+        await exit(h, it.id, 1, daysAgo(11)),
+      ]) {
+        expect(res.status).toBe(409);
+        expect((res.body as Msg).message).toBe(locked);
+      }
+      expect((await list(h)).items[0]).toEqual(before);
+      expect(before.quantity).toBe(80);
+
+      // The count day, after the count, stays open: level = counted − quantity.
+      await exit(h, it.id, 7, daysAgo(10)).expect(201);
+      expect((await list(h)).items[0].quantity).toBe(73);
+    });
+
+    it('a count with no difference closes the past too; another article and another farm stay open', async () => {
+      const { headers: h } = await actor('DIRECTEUR_FERME');
+      const a = await item(h, 'A');
+      const b = await item(h, 'B');
+      await entry(h, a.id, 10, 5, daysAgo(20));
+      await entry(h, b.id, 10, 5, daysAgo(20));
+      await validatedCount(h, a.id, daysAgo(10), 10);
+      expect(
+        (await http().get('/api/stock/movements?type=AJUSTEMENT').set(h)).body,
+      ).toMatchObject({ total: 0 });
+      expect((await exit(h, a.id, 1, daysAgo(12))).status).toBe(409);
+      await exit(h, b.id, 1, daysAgo(12)).expect(201);
+      const other = (await actor('DIRECTEUR_FERME', [farmA, farmB], farmB))
+        .headers;
+      await entry(other, a.id, 5, 5, daysAgo(30));
+      await exit(other, a.id, 1, daysAgo(12)).expect(201);
+    });
+
+    it('keeps an emptied lot but lists no lot that has no movement; a lot emptied by exits stays listed', async () => {
+      const { headers: h } = await actor('DIRECTEUR_FERME');
+      const it = await item(h, 'Vaccin', {
+        category: 'VACCIN',
+        unit: 'flacon',
+      });
+      const gone = await entry(h, it.id, 4, 100, daysAgo(10), {
+        lotNumber: 'GONE',
+      });
+      const used = await entry(h, it.id, 3, 100, daysAgo(10), {
+        lotNumber: 'USED',
+      });
+      await exit(h, it.id, 3, daysAgo(5), {
+        stockBatchId: used.batchId,
+      }).expect(201);
+      await http().delete(`/api/stock/movements/${gone.id}`).set(h).expect(200);
+      const detail = (
+        await http().get(`/api/stock/${it.id}`).set(h).expect(200)
+      ).body as { batches: { lotNumber: string; quantity: number }[] };
+      expect(detail.batches.map((b) => [b.lotNumber, b.quantity])).toEqual([
+        ['USED', 0],
+      ]);
+      expect(
+        await prisma.stockBatch.count({ where: { stockItemId: it.id } }),
+      ).toBe(2);
+    });
+
+    it('reads GET /stock and GET /stock/:id with a fixed number of queries whatever the history', async () => {
+      const { headers: h } = await actor('DIRECTEUR_FERME');
+      const it = await item(h, 'Aliment ponte');
+      await entry(h, it.id, 1000, 10, daysAgo(40));
+      const measure = async () => {
+        const served = app.get(PrismaService);
+        const counts = { n: 0 };
+        const spies = (
+          ['findMany', 'groupBy', 'count', 'findFirst', 'findUnique'] as const
+        ).flatMap((method) =>
+          [
+            served.stockMovement,
+            served.stockBatch,
+            served.stockItem,
+            served.farmStockItem,
+            served.farm,
+          ].map((delegate) => {
+            const original = delegate[method].bind(delegate) as (
+              ...a: unknown[]
+            ) => unknown;
+            return jest.spyOn(delegate, method as never).mockImplementation(((
+              ...a: unknown[]
+            ) => {
+              counts.n += 1;
+              return original(...a);
+            }) as never);
+          }),
+        );
+        try {
+          await list(h);
+          await http().get(`/api/stock/${it.id}`).set(h).expect(200);
+        } finally {
+          spies.forEach((spy) => spy.mockRestore());
+        }
+        return counts.n;
+      };
+      const small = await measure();
+      for (let i = 0; i < 12; i++) {
+        await exit(h, it.id, 1, daysAgo(30 - i)).expect(201);
+      }
+      expect(await measure()).toBe(small);
+      expect((await list(h)).items[0].quantity).toBe(988);
+    });
+
+    it('an article cannot be retyped or deleted under a movement in flight: never a 500', async () => {
+      const { headers: h } = await actor('DIRECTEUR_FERME');
+      const codes: number[] = [];
+      for (let round = 0; round < 5; round++) {
+        const it = await item(h, `Race ${round}`);
+        const [moved, changed, removed] = await Promise.all([
+          entry409(h, it.id, 5, daysAgo(2)),
+          http()
+            .patch(`/api/stock-items/${it.id}`)
+            .set(h)
+            .send({ unit: 'sac' }),
+          http().delete(`/api/stock-items/${it.id}`).set(h),
+        ]);
+        codes.push(moved.status, changed.status, removed.status);
+        const movements = await prisma.stockMovement.count({
+          where: { stockItemId: it.id },
+        });
+        const current = await prisma.stockItem.findUnique({
+          where: { id: it.id },
+        });
+        if (current) {
+          // Retyped only when no movement came in.
+          expect(movements > 0 ? current.unit : 'kg').toBe('kg');
+        } else {
+          expect(movements).toBe(0);
+        }
+      }
+      expect(codes.filter((c) => c >= 500)).toEqual([]);
     });
   });
 });

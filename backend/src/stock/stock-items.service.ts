@@ -30,6 +30,8 @@ export const HAS_MOVEMENTS =
   'Cet article a des mouvements : désactivez-le plutôt';
 export const UNIT_LOCKED =
   "Cet article a des mouvements : l'unité et la catégorie ne peuvent plus changer";
+export const FEED_LINKED =
+  "Cet article est lié à un aliment : l'unité et la catégorie ne peuvent pas changer";
 const SORTABLE = ['name', 'category'];
 
 export const toItem = (i: StockItem): StockItemItem => ({
@@ -82,6 +84,22 @@ export class StockItemsService {
     return row;
   }
 
+  /**
+   * Locks the article row `FOR UPDATE`, scoped to the organisation. The ledger
+   * takes `FOR KEY SHARE` on the article before every write, so this waits for
+   * the writes in flight, and the writes that come after wait for us and see
+   * the result: a movement cannot slip in between the "no movement" check and
+   * the change or the deletion, and no writer meets a half-deleted article.
+   */
+  private async lock(
+    tx: Prisma.TransactionClient,
+    ctx: RequestContext,
+    id: string,
+  ): Promise<void> {
+    await tx.$queryRaw`SELECT id FROM "StockItem"
+      WHERE id = ${id} AND "organizationId" = ${ctx.user.organizationId} FOR UPDATE`;
+  }
+
   private log(
     tx: Prisma.TransactionClient,
     ctx: RequestContext,
@@ -130,15 +148,22 @@ export class StockItemsService {
   ): Promise<StockItemItem> {
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
+        await this.find(tx, ctx, id);
+        await this.lock(tx, ctx, id);
         const before = await this.find(tx, ctx, id);
         const changesMeasure =
           (dto.unit !== undefined && dto.unit !== before.unit) ||
           (dto.category !== undefined && dto.category !== before.category);
-        if (
-          changesMeasure &&
-          (await tx.stockMovement.count({ where: { stockItemId: id } })) > 0
-        ) {
-          throw new ConflictException(UNIT_LOCKED);
+        if (changesMeasure) {
+          if (
+            (await tx.stockMovement.count({ where: { stockItemId: id } })) > 0
+          ) {
+            throw new ConflictException(UNIT_LOCKED);
+          }
+          // A feed product reads its article as kilograms of feed.
+          if (await tx.feedProduct.findFirst({ where: { stockItemId: id } })) {
+            throw new ConflictException(FEED_LINKED);
+          }
         }
         const updated = await tx.stockItem.update({
           where: { id },
@@ -153,6 +178,8 @@ export class StockItemsService {
   remove(ctx: RequestContext, id: string): Promise<void> {
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
+        await this.find(tx, ctx, id);
+        await this.lock(tx, ctx, id);
         const before = await this.find(tx, ctx, id);
         if (
           (await tx.stockMovement.count({ where: { stockItemId: id } })) > 0

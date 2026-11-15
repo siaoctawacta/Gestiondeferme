@@ -144,6 +144,20 @@ describe('replay', () => {
   });
 });
 
+describe('replay on a read (strict: false)', () => {
+  it('never throws on a damaged history: it reports what the movements add up to', () => {
+    const damaged = [
+      mv('2026-01-01', 'ENTREE', 10, 5),
+      mv('2026-01-02', 'SORTIE', -15),
+      mv('2026-01-03', 'ENTREE', 5, 8),
+    ];
+    expect(() => replay(damaged)).toThrow(InsufficientStock);
+    const r = replay(damaged, { strict: false });
+    expect(r.quantity.toNumber()).toBe(0);
+    expect(r.averageCost.isFinite()).toBe(true);
+  });
+});
+
 describe('assertBucketsNonNegative', () => {
   const batched = (
     date: string,
@@ -156,22 +170,34 @@ describe('assertBucketsNonNegative', () => {
 
   it('accepts exits covered by their own batch', () => {
     expect(() =>
-      assertBucketsNonNegative([
-        batched('2026-01-01', 10, 'A'),
-        batched('2026-01-02', -10, 'A'),
-        batched('2026-01-02', 5, null),
-        batched('2026-01-03', -5, null),
-      ]),
+      assertBucketsNonNegative(
+        [
+          batched('2026-01-01', 10, 'A'),
+          batched('2026-01-02', -10, 'A'),
+          batched('2026-01-02', 5, null),
+          batched('2026-01-03', -5, null),
+        ],
+        'Maïs',
+      ),
     ).not.toThrow();
   });
 
   it('rejects a batch taken below zero even when the item has stock elsewhere', () => {
     expect(() =>
-      assertBucketsNonNegative([
-        batched('2026-01-01', 10, 'A'),
-        batched('2026-01-01', 100, 'B'),
-        batched('2026-01-02', -11, 'A'),
-      ]),
-    ).toThrow(InsufficientStock);
+      assertBucketsNonNegative(
+        [
+          batched('2026-01-01', 10, 'A'),
+          batched('2026-01-01', 100, 'B'),
+          batched('2026-01-02', -11, 'A'),
+        ],
+        'Maïs',
+      ),
+    ).toThrow(new InsufficientStock('Maïs'));
+  });
+
+  it('names the article in the refusal', () => {
+    expect(() =>
+      assertBucketsNonNegative([batched('2026-01-02', -1, 'A')], 'Maïs'),
+    ).toThrow('Stock insuffisant pour Maïs');
   });
 });

@@ -113,13 +113,9 @@ export class HealthStock {
     const old = before ? exitOf(before, ctx) : null;
     const next = after ? exitOf(after, ctx) : null;
     if (before && old && !next) {
-      await this.ledger.reverseBySource(
-        tx,
-        'HEALTH_ACT',
-        before.id,
-        undefined,
-        [before.farmId],
-      );
+      await this.ledger.reverseBySource(tx, 'HEALTH_ACT', before.id, [
+        before.farmId,
+      ]);
     } else if (after && next && !old) {
       await this.ledger.recordMany(tx, [
         { ...next, sourceType: 'HEALTH_ACT', sourceId: after.id },
@@ -130,7 +126,6 @@ export class HealthStock {
         'HEALTH_ACT',
         after.id,
         [next],
-        undefined,
         [after.farmId],
       );
     }

@@ -787,6 +787,10 @@ model FarmStockItem {
   stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
   minQty      Decimal   @default(0) @db.Decimal(12, 2)
   maxQty      Decimal?  @db.Decimal(12, 2)
+  /// Cache of the ledger replay, written by the stock ledger under this row's lock at every commit: the sum of the pair's movements.
+  quantity    Decimal   @default(0) @db.Decimal(14, 2)
+  /// Cache of the weighted-average cost at full replay precision. NULL = not computed yet (rows that predate the cache): readers replay such a pair, the next write persists it.
+  averageCost Decimal?  @db.Decimal(40, 20)
   createdAt   DateTime  @default(now())
   updatedAt   DateTime  @updatedAt
 

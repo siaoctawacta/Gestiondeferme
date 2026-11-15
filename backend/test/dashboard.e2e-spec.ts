@@ -4,6 +4,7 @@ import type { App } from 'supertest/types';
 import { HealthAlertsService } from '../src/indicators/alerts/health-alerts.service';
 import { StockAlertsService } from '../src/indicators/alerts/stock-alerts.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { StockLedgerService } from '../src/stock/stock-ledger.service';
 import type { DashboardDto } from '../src/dashboard/dashboard.types';
 import {
   createFarm,
@@ -705,36 +706,41 @@ describe('Dashboard (e2e)', () => {
       quantity: number,
       lot?: { number: string; expiry: number },
     ) {
-      const batch = lot
-        ? await prisma.stockBatch.create({
-            data: {
+      // Through the ledger, like the application: it keeps the quantity cache.
+      const ledger = app.get(StockLedgerService);
+      const batch = await prisma.$transaction(async (tx) => {
+        const created = lot
+          ? await ledger.createBatch(tx, {
               farmId,
               stockItemId,
               lotNumber: lot.number,
               expiryDate: ahead(lot.expiry),
               receivedDate: day(60),
-            },
-          })
-        : null;
-      await prisma.stockMovement.create({
-        data: {
+            })
+          : null;
+        await ledger.record(tx, {
           farmId,
           stockItemId,
-          stockBatchId: batch?.id ?? null,
+          stockBatchId: created?.id ?? null,
           date: day(40),
           type: 'ENTREE',
           quantity,
           unitCost: 100,
           reason: 'ACHAT',
-          operationId: `op-${Math.random()}`,
-          createdById: userId,
-        },
+          userId,
+        });
+        return created;
       });
       return batch?.id;
     }
 
+    /** The pair's row exists once the ledger has seen it: set the minimum on it, or create it. */
     const threshold = (farmId: string, stockItemId: string, minQty: number) =>
-      prisma.farmStockItem.create({ data: { farmId, stockItemId, minQty } });
+      prisma.farmStockItem.upsert({
+        where: { farmId_stockItemId: { farmId, stockItemId } },
+        update: { minQty },
+        create: { farmId, stockItemId, minQty, averageCost: 0 },
+      });
 
     async function poultryLot(
       code: string,
@@ -863,20 +869,19 @@ describe('Dashboard (e2e)', () => {
         number: 'L-E',
         expiry: -5,
       });
-      await prisma.stockMovement.create({
-        data: {
+      // An expired lot can only leave as a loss, never as a treatment.
+      await prisma.$transaction((tx) =>
+        app.get(StockLedgerService).record(tx, {
           farmId: farmA,
           stockItemId: vaccin,
           stockBatchId: emptied,
           date: day(1),
           type: 'SORTIE',
           quantity: -5,
-          unitCost: 100,
-          reason: 'TRAITEMENT',
-          operationId: 'op-out',
-          createdById: userId,
-        },
-      });
+          reason: 'PERTE',
+          userId,
+        }),
+      );
       const body = await alerts(farmA);
       expect(rows(body)).toEqual([
         [
@@ -1157,8 +1162,8 @@ describe('Dashboard (e2e)', () => {
       await populate(6, 'b');
       expect((await alerts(farmA)).total).toBeGreaterThan(20);
       const large = await measure();
-      // thresholds, movements, lots, their sums, article and farm names, 2 health reads, and the request's own farm scope lookup
-      expect(small).toBe(9);
+      // thresholds with their cached quantities, lots, their sums, article and farm names, 2 health reads, and the request's own farm scope lookup
+      expect(small).toBe(8);
       expect(large).toBe(small);
       // Two farms in view cost the same.
       await stockIn(farmB, await item('Article B'), 5);

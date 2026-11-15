@@ -174,13 +174,9 @@ export class FeedService
   ): Promise<{ unitCost?: Decimal; cost?: Decimal } | void> {
     if (!after) {
       if (before) {
-        await this.ledger.reverseBySource(
-          tx,
-          'FEED_DISTRIBUTION',
-          before.id,
-          undefined,
-          [before.farmId],
-        );
+        await this.ledger.reverseBySource(tx, 'FEED_DISTRIBUTION', before.id, [
+          before.farmId,
+        ]);
       }
       return;
     }
@@ -197,22 +193,17 @@ export class FeedService
     let results: RecordResult[] = [];
     if (before) {
       if (plan.inputs.length === 0) {
-        await this.ledger.reverseBySource(
-          tx,
-          'FEED_DISTRIBUTION',
-          after.id,
-          undefined,
-          [after.farmId],
-        );
+        await this.ledger.reverseBySource(tx, 'FEED_DISTRIBUTION', after.id, [
+          after.farmId,
+        ]);
       } else {
-        ({ results } = await this.ledger.replaceBySource(
+        results = await this.ledger.replaceBySource(
           tx,
           'FEED_DISTRIBUTION',
           after.id,
           plan.inputs,
-          undefined,
           [after.farmId],
-        ));
+        );
       }
     } else if (plan.inputs.length > 0) {
       results = await this.ledger.recordMany(

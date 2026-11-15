@@ -1943,4 +1943,92 @@ describe('Health acts, vaccination plans and biosecurity (e2e)', () => {
       expect(lot).toHaveProperty('withdrawalUntil', null);
     });
   });
+
+  describe('final fix wave: stock ledger', () => {
+    async function validatedCount(itemId: string, date: string, qty: number) {
+      const session = await world.post<Id>(h, '/inventories', { date });
+      await http()
+        .put(`/api/inventories/${session.id}/lines`)
+        .set(h)
+        .send({ lines: [{ itemId, countedQty: qty }] })
+        .expect(200);
+      await http()
+        .post(`/api/inventories/${session.id}/validate`)
+        .set(h)
+        .expect(201);
+    }
+
+    it('a validated inventory locks the acts positioned before it, not those on or after the count day', async () => {
+      const it = await stocked('Gumboro');
+      const a = await done({
+        stockItemId: it.id,
+        quantity: 2,
+        date: daysAgo(10),
+        productName: undefined,
+      });
+      const planned = await act({
+        stockItemId: it.id,
+        date: daysAgo(3),
+        productName: undefined,
+      });
+      expect((await detail(it.id)).quantity).toBe(10);
+      await validatedCount(it.id, daysAgo(5), 9); // theoretical 10: −1
+      const locked = `Un inventaire validé le ${daysAgo(5)} verrouille les mouvements antérieurs de Gumboro`;
+
+      const edit = await http()
+        .patch(`/api/health-acts/${a.id}`)
+        .set(h)
+        .send({ quantity: 3 })
+        .expect(409);
+      expect(message(edit)).toBe(locked);
+      const del = await http()
+        .delete(`/api/health-acts/${a.id}`)
+        .set(h)
+        .expect(409);
+      expect(message(del)).toBe(locked);
+      expect(
+        message(
+          await complete(
+            planned.id,
+            { doneDate: daysAgo(7), quantity: 1 },
+            409,
+          ),
+        ),
+      ).toBe(locked);
+      expect((await detail(it.id)).quantity).toBe(9);
+
+      // The count day itself, after the count, and later days stay open.
+      await complete(planned.id, { doneDate: daysAgo(5), quantity: 1 });
+      expect((await detail(it.id)).quantity).toBe(8);
+    });
+
+    it("never answers 500 when an act names a lot while the lot's only entry is deleted (several rounds)", async () => {
+      for (let round = 0; round < 6; round++) {
+        const it = await item(`Race ${round}`);
+        const mv = (await entry(it.id, 5, {
+          lotNumber: `R${round}`,
+          expiryDate: '2030-01-01',
+        })) as unknown as { id: string }[];
+        const batch = (await detail(it.id)).batches[0].id;
+        const planned = await act({ stockItemId: it.id, date: daysAgo(1) });
+        const [completed, removed] = await Promise.all([
+          http()
+            .post(`/api/health-acts/${planned.id}/complete`)
+            .set(h)
+            .send({ doneDate: daysAgo(0), quantity: 1, stockBatchId: batch }),
+          http().delete(`/api/stock/movements/${mv[0].id}`).set(h),
+        ]);
+        expect([200, 400, 409]).toContain(completed.status);
+        expect([200, 400, 409]).toContain(removed.status);
+        // One of them wins: the exit consumed the lot, or the entry is gone.
+        expect(completed.status === 200 && removed.status === 200).toBe(false);
+        if (removed.status === 200) {
+          expect((await detail(it.id)).quantity).toBe(0);
+          expect((await detail(it.id)).batches).toEqual([]);
+        } else {
+          expect((await detail(it.id)).quantity).toBe(4);
+        }
+      }
+    });
+  });
 });

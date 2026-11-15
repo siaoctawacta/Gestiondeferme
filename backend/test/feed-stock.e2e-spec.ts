@@ -706,6 +706,25 @@ describe('Feed distributions consume stock (e2e)', () => {
       expect(await level(item.id)).toMatchObject({ quantity: 90 });
     });
 
+    it('an article linked to a feed product cannot change unit or category, even with no movement (409)', async () => {
+      const { item } = await stocked('Maïs', []);
+      for (const body of [{ unit: 'sac' }, { category: 'CONSOMMABLE' }]) {
+        const res = await http()
+          .patch(`/api/stock-items/${item.id}`)
+          .set(h)
+          .send(body)
+          .expect(409);
+        expect((res.body as Msg).message).toBe(
+          "Cet article est lié à un aliment : l'unité et la catégorie ne peuvent pas changer",
+        );
+      }
+      await http()
+        .patch(`/api/stock-items/${item.id}`)
+        .set(h)
+        .send({ name: 'Maïs grain' })
+        .expect(200);
+    });
+
     it('a linked article cannot be deleted even with no movement (409)', async () => {
       const item = await stockItem('Maïs');
       await product('Maïs', 300, { stockItemId: item.id });
@@ -1050,5 +1069,65 @@ describe('Feed distributions consume stock (e2e)', () => {
       'DELETE',
       'UPDATE',
     ]);
+  });
+
+  describe('a validated inventory closes the past', () => {
+    it('the reviewer repro: lot 100 on D1, distribution 10 on D5, count 80 on D10; the D5 distribution is locked', async () => {
+      const { item, product: p } = await stocked('Maïs', [[100, 300]]);
+      const d = await distribute({
+        feedProductId: p.id,
+        quantityKg: 10,
+        date: daysAgo(15),
+      });
+      const session = await world.post<Id>(h, '/inventories', {
+        date: daysAgo(10),
+      });
+      await http()
+        .put(`/api/inventories/${session.id}/lines`)
+        .set(h)
+        .send({ lines: [{ itemId: item.id, countedQty: 80 }] })
+        .expect(200);
+      await http()
+        .post(`/api/inventories/${session.id}/validate`)
+        .set(h)
+        .expect(201);
+      expect((await level(item.id)).quantity).toBe(80);
+      const locked = `Un inventaire validé le ${daysAgo(10)} verrouille les mouvements antérieurs de Maïs`;
+
+      const edit = await patch(d.id, { quantityKg: 20 }, 409);
+      expect((edit.body as Msg).message).toBe(locked);
+      const del = await http()
+        .delete(`/api/feed-distributions/${d.id}`)
+        .set(h)
+        .expect(409);
+      expect((del.body as Msg).message).toBe(locked);
+      const late = await distribute(
+        { feedProductId: p.id, date: daysAgo(12) },
+        409,
+      );
+      expect((late as unknown as Msg).message).toBe(locked);
+      expect((await level(item.id)).quantity).toBe(80);
+      expect((await exits(item.id)).map((m) => m.quantity)).toEqual([-10]);
+
+      // The count day and later days stay open: level = counted − quantity.
+      await distribute({
+        feedProductId: p.id,
+        quantityKg: 5,
+        date: daysAgo(10),
+      });
+      expect((await level(item.id)).quantity).toBe(75);
+      // A distribution made after the count can still be edited or deleted.
+      const after = await distribute({
+        feedProductId: p.id,
+        quantityKg: 5,
+        date: daysAgo(3),
+      });
+      await patch(after.id, { quantityKg: 8 });
+      await http()
+        .delete(`/api/feed-distributions/${after.id}`)
+        .set(h)
+        .expect(200);
+      expect((await level(item.id)).quantity).toBe(75);
+    });
   });
 });

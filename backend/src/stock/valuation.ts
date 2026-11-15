@@ -6,8 +6,8 @@ export const INSUFFICIENT = 'Stock insuffisant';
 
 /** The running quantity (of an item, or of one of its batches) would dip below zero. */
 export class InsufficientStock extends BadRequestException {
-  constructor() {
-    super(INSUFFICIENT);
+  constructor(article?: string) {
+    super(article ? `${INSUFFICIENT} pour ${article}` : INSUFFICIENT);
   }
 }
 
@@ -31,7 +31,6 @@ export interface TimelineStep<T extends ReplayMovement> {
   /** The cost this movement carries: its own for an entry, the running average for an exit. */
   unitCost: Decimal;
   quantityAfter: Decimal;
-  averageAfter: Decimal;
 }
 
 export interface Replay<T extends ReplayMovement> {
@@ -59,9 +58,14 @@ const ZERO = new Decimal(0);
  * Replays the history of one (farm, item): entries move the weighted-average
  * cost, exits are valued at the running average and leave it alone. Throws
  * `InsufficientStock` as soon as the running quantity dips below zero, even if
- * a later entry would bring it back.
+ * a later entry would bring it back. A read (`strict: false`) never throws: it
+ * reports what the history adds up to, so a damaged history cannot turn a
+ * page into a 500.
  */
-export function replay<T extends ReplayMovement>(movements: T[]): Replay<T> {
+export function replay<T extends ReplayMovement>(
+  movements: T[],
+  { strict = true }: { strict?: boolean } = {},
+): Replay<T> {
   let quantity = ZERO;
   let average = ZERO;
   const timeline: TimelineStep<T>[] = [];
@@ -71,37 +75,34 @@ export function replay<T extends ReplayMovement>(movements: T[]): Replay<T> {
       // A cost left to the average is frozen at 2 decimals, as it is stored.
       unitCost = movement.unitCost ?? average.toDecimalPlaces(2);
       const total = quantity.add(movement.quantity);
-      average = quantity
-        .mul(average)
-        .add(movement.quantity.mul(unitCost))
-        .div(total);
+      // Only a lenient read of a damaged history can reach a total at or below 0.
+      average = total.gt(0)
+        ? quantity.mul(average).add(movement.quantity.mul(unitCost)).div(total)
+        : unitCost;
       quantity = total;
     } else {
       unitCost = average;
       quantity = quantity.add(movement.quantity);
-      if (quantity.lt(0)) throw new InsufficientStock();
+      if (strict && quantity.lt(0)) throw new InsufficientStock();
     }
-    timeline.push({
-      movement,
-      unitCost,
-      quantityAfter: quantity,
-      averageAfter: average,
-    });
+    timeline.push({ movement, unitCost, quantityAfter: quantity });
   }
   return { quantity, averageCost: average, timeline };
 }
 
 /**
  * The quantity of each bucket (a batch, or the stock held in no batch) may
- * never dip below zero either: an exit names the batch it takes from.
+ * never dip below zero either: an exit names the batch it takes from. The
+ * refusal names the article.
  */
 export function assertBucketsNonNegative(
   movements: (ReplayMovement & { stockBatchId: string | null })[],
+  article: string,
 ): void {
   const balance = new Map<string | null, Decimal>();
   for (const m of [...movements].sort(byReplayOrder)) {
     const next = (balance.get(m.stockBatchId) ?? ZERO).add(m.quantity);
-    if (next.lt(0)) throw new InsufficientStock();
+    if (next.lt(0)) throw new InsufficientStock(article);
     balance.set(m.stockBatchId, next);
   }
 }

@@ -2,7 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { RequestContext } from '../../access/decorators';
 import { formatDay } from '../../common/days';
 import { PrismaService } from '../../prisma/prisma.service';
-import { levelKey, StockLedgerService } from '../../stock/stock-ledger.service';
+import { StockLedgerService } from '../../stock/stock-ledger.service';
 import { AlertsRegistry } from './alerts-registry';
 import {
   stockAlertRules,
@@ -14,8 +14,8 @@ import {
 /**
  * Reads the stock tables for the stock and expiry alert rules and registers
  * them. A fixed number of queries whatever the number of articles and lots:
- * the thresholds, the movements (one replay for every level), the lots with
- * their quantities, and the names of the articles of those lots.
+ * the thresholds with their cached quantities, the lots with their quantities,
+ * and the names of the articles of those lots.
  */
 @Injectable()
 export class StockAlertsService implements StockAlertData, OnModuleInit {
@@ -45,22 +45,19 @@ export class StockAlertsService implements StockAlertData, OnModuleInit {
         farmId: true,
         stockItemId: true,
         minQty: true,
+        quantity: true,
         farm: { select: { name: true } },
         stockItem: { select: { name: true, unit: true } },
       },
       relationLoadStrategy: 'join',
     });
-    if (limits.length === 0) return [];
-    const levels = await this.ledger.levels(ctx.farmIds, [
-      ...new Set(limits.map((l) => l.stockItemId)),
-    ]);
+    // The quantity is the ledger's cache on the same row: no replay.
     return limits.map((l) => ({
       farmId: l.farmId,
       itemId: l.stockItemId,
       name: l.stockItem.name,
       unit: l.stockItem.unit,
-      quantity:
-        levels.get(levelKey(l.farmId, l.stockItemId))?.quantity.toNumber() ?? 0,
+      quantity: l.quantity.toNumber(),
       minQty: l.minQty.toNumber(),
       ...(ctx.farmIds.length > 1 ? { farmName: l.farm.name } : {}),
     }));

@@ -1,14 +1,16 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ConflictException } from '@nestjs/common';
 import { migrateTestDb, resetDb } from './setup';
 import { AuditService } from '../src/audit/audit.service';
 import type { RequestContext } from '../src/access/decorators';
 import type { StockMovementType } from '../src/generated/prisma/enums';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
+  ensureFarmStockItem,
   levelKey,
   StockLedgerService,
   type RecordInput,
 } from '../src/stock/stock-ledger.service';
+import { replay } from '../src/stock/valuation';
 
 const day = (s: string) => new Date(`${s}T00:00:00.000Z`);
 const DAY_MS = 86_400_000;
@@ -33,6 +35,24 @@ describe('StockLedgerService (test database)', () => {
 
   afterAll(async () => {
     await prisma.$disconnect();
+  });
+
+  /**
+   * Property over every scenario of this file: whatever the history went
+   * through, the (farm, article) cache equals a full replay of its movements.
+   */
+  afterEach(async () => {
+    const pairs = await prisma.farmStockItem.findMany();
+    for (const pair of pairs) {
+      const rows = await prisma.stockMovement.findMany({
+        where: { farmId: pair.farmId, stockItemId: pair.stockItemId },
+      });
+      const full = replay(rows, { strict: false });
+      expect(pair.quantity.toString()).toBe(full.quantity.toString());
+      expect(
+        pair.averageCost === null ? null : pair.averageCost.toString(),
+      ).toBe(full.averageCost.toString());
+    }
   });
 
   beforeEach(async () => {
@@ -231,7 +251,9 @@ describe('StockLedgerService (test database)', () => {
       await exit('2026-01-04', 120);
       await expect(
         prisma.$transaction((tx) => ledger.remove(tx, first.movements[0].id)),
-      ).rejects.toThrow(new BadRequestException('Stock insuffisant'));
+      ).rejects.toThrow(
+        new BadRequestException('Stock insuffisant pour Aliment ponte'),
+      );
       expect(await stored()).toHaveLength(3);
     });
 
@@ -439,7 +461,9 @@ describe('StockLedgerService (test database)', () => {
         prisma.$transaction((tx) =>
           ledger.update(tx, received.id, { quantity: 20 }),
         ),
-      ).rejects.toThrow(new BadRequestException('Stock insuffisant'));
+      ).rejects.toThrow(
+        new BadRequestException('Stock insuffisant pour Aliment ponte'),
+      );
       expect(await batchQty()).toEqual({ A: 20 });
     });
 
@@ -854,13 +878,12 @@ describe('StockLedgerService (test database)', () => {
         unitCost: 20,
       });
       await exit('2026-01-05', 10, src);
-      const { removed, results } = await prisma.$transaction((tx) =>
+      const results = await prisma.$transaction((tx) =>
         ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 's1', [
           base(item2, 30),
           base(item, 5),
         ]),
       );
-      expect(removed).toHaveLength(1);
       expect(results.map((r) => r.cost.toNumber())).toEqual([600, 50]);
       expect((await level(item)).quantity).toBe(95);
       expect((await level(item2)).quantity).toBe(70);
@@ -1200,7 +1223,9 @@ describe('StockLedgerService (test database)', () => {
         prisma.$transaction((tx) =>
           ledger.reverseBySource(tx, 'FEED_DISTRIBUTION', 'entry-source'),
         ),
-      ).rejects.toThrow(new BadRequestException('Stock insuffisant'));
+      ).rejects.toThrow(
+        new BadRequestException('Stock insuffisant pour Aliment ponte'),
+      );
       expect(await stored()).toHaveLength(3);
     });
 
@@ -1212,7 +1237,7 @@ describe('StockLedgerService (test database)', () => {
       ).toEqual([]);
     });
 
-    it('drops the batch of a reversed entry that nothing else uses', async () => {
+    it('keeps the lot of a reversed entry, empty and unlisted (no orphan deletion, no race with a reader naming it)', async () => {
       await prisma.$transaction(async (tx) => {
         const b = await ledger.createBatch(tx, {
           farmId,
@@ -1236,7 +1261,8 @@ describe('StockLedgerService (test database)', () => {
       await prisma.$transaction((tx) =>
         ledger.reverseBySource(tx, 'PURCHASE', 'p1'),
       );
-      expect(await prisma.stockBatch.count()).toBe(0);
+      expect(await prisma.stockBatch.count()).toBe(1);
+      expect(await ledger.batchLevels([farmId], [item])).toEqual([]);
     });
   });
 
@@ -1386,7 +1412,7 @@ describe('StockLedgerService (test database)', () => {
       });
     });
 
-    it('audits update, remove and reverseBySource once each', async () => {
+    it('audits update and remove once each; reverseBySource leaves the audit to the owning module', async () => {
       const e = await entry('2026-01-01', 100, 100);
       const a = { ctx: withCtx() };
       await prisma.$transaction((tx) =>
@@ -1407,13 +1433,13 @@ describe('StockLedgerService (test database)', () => {
         ),
       );
       await prisma.$transaction((tx) =>
-        ledger.reverseBySource(tx, 'PURCHASE', 'p9', a),
+        ledger.reverseBySource(tx, 'PURCHASE', 'p9'),
       );
       expect(
         (await prisma.auditLog.findMany({ orderBy: { createdAt: 'asc' } })).map(
           (r) => r.action,
         ),
-      ).toEqual(['UPDATE', 'DELETE', 'DELETE']);
+      ).toEqual(['UPDATE', 'DELETE']);
     });
   });
 
@@ -1479,6 +1505,281 @@ describe('StockLedgerService (test database)', () => {
         now,
       );
       expect(per.get(levelKey(farmId, item))?.toNumber()).toBe(300);
+    });
+  });
+
+  describe('a validated inventory closes the past', () => {
+    const LOCKED =
+      'Un inventaire validé le 2026-01-10 verrouille les mouvements antérieurs de Aliment ponte';
+    const feed = (n: number, date = '2026-01-05') =>
+      ({
+        farmId,
+        stockItemId: item,
+        date: day(date),
+        type: 'SORTIE' as const,
+        quantity: -n,
+        reason: 'CONSOMMATION' as const,
+        userId,
+      }) satisfies RecordInput;
+
+    /** What the inventories service does: adjust by counted − theoretical, then flip the session. */
+    async function validatedCount(
+      date: string,
+      counted: number,
+      id = item,
+      farm = farmId,
+    ) {
+      const theoretical =
+        (await ledger.quantitiesAt(farm, [id], day(date))).get(id) ?? 0;
+      const session = await prisma.inventorySession.create({
+        data: {
+          farmId: farm,
+          date: day(date),
+          createdById: userId,
+          lines: {
+            create: [
+              {
+                stockItemId: id,
+                theoreticalQty: theoretical,
+                countedQty: counted,
+              },
+            ],
+          },
+        },
+      });
+      const difference = counted - Number(theoretical);
+      if (difference !== 0) {
+        await record({
+          type: 'AJUSTEMENT',
+          reason: 'INVENTAIRE',
+          quantity: difference,
+          date: day(date),
+          stockItemId: id,
+          farmId: farm,
+          sourceType: 'INVENTORY',
+          sourceId: session.id,
+        });
+      }
+      await prisma.inventorySession.update({
+        where: { id: session.id },
+        data: {
+          status: 'VALIDEE',
+          validatedById: userId,
+          validatedAt: new Date(),
+        },
+      });
+    }
+
+    async function counted() {
+      await entry('2026-01-01', 100, 10);
+      await prisma.$transaction((tx) =>
+        ledger.recordMany(tx, [
+          {
+            ...feed(10),
+            sourceType: 'FEED_DISTRIBUTION',
+            sourceId: 'd5',
+          },
+        ]),
+      );
+      await validatedCount('2026-01-10', 80); // theoretical 90: −10
+      expect((await level()).quantity).toBe(80);
+    }
+
+    it('refuses to edit or delete a movement dated before the count, and changes nothing', async () => {
+      await counted();
+      const before = await prisma.stockMovement.findMany({
+        orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+      });
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 'd5', [feed(20)]),
+        ),
+      ).rejects.toThrow(new ConflictException(LOCKED));
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.reverseBySource(tx, 'FEED_DISTRIBUTION', 'd5'),
+        ),
+      ).rejects.toThrow(new ConflictException(LOCKED));
+      const entryId = before[0].id;
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.update(tx, entryId, { quantity: 120 }),
+        ),
+      ).rejects.toThrow(LOCKED);
+      await expect(
+        prisma.$transaction((tx) => ledger.remove(tx, entryId)),
+      ).rejects.toThrow(LOCKED);
+      expect(
+        await prisma.stockMovement.findMany({
+          orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+        }),
+      ).toEqual(before);
+      expect((await level()).quantity).toBe(80);
+    });
+
+    it('refuses a new movement dated before the count (a back-dated reception, a late distribution)', async () => {
+      await counted();
+      await expect(entry('2026-01-03', 50, 10)).rejects.toThrow(LOCKED);
+      await expect(exit('2026-01-09', 5)).rejects.toThrow(LOCKED);
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.recordMany(tx, [
+            {
+              ...feed(5, '2026-01-04'),
+              sourceType: 'HEALTH_ACT',
+              sourceId: 'a',
+            },
+          ]),
+        ),
+      ).rejects.toThrow(LOCKED);
+      expect(await prisma.stockMovement.count()).toBe(3);
+      expect((await level()).quantity).toBe(80);
+    });
+
+    it('allows a movement on the count day after the count: the level is counted − quantity', async () => {
+      await counted();
+      await exit('2026-01-10', 7);
+      await entry('2026-01-12', 5, 10);
+      expect((await level()).quantity).toBe(78);
+      // An operation after the count is re-planned in place, date and position kept.
+      await prisma.$transaction((tx) =>
+        ledger.recordMany(tx, [
+          {
+            ...feed(3, '2026-01-11'),
+            sourceType: 'FEED_DISTRIBUTION',
+            sourceId: 'd11',
+          },
+        ]),
+      );
+      await prisma.$transaction((tx) =>
+        ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 'd11', [
+          feed(4, '2026-01-11'),
+        ]),
+      );
+      await prisma.$transaction((tx) =>
+        ledger.reverseBySource(tx, 'FEED_DISTRIBUTION', 'd11'),
+      );
+      expect((await level()).quantity).toBe(78);
+    });
+
+    it('locks a movement entered the day of the count before the count was validated', async () => {
+      await entry('2026-01-01', 100, 10);
+      const same = await entry('2026-01-10', 10, 10);
+      await validatedCount('2026-01-10', 100);
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.update(tx, same.movements[0].id, { quantity: 20 }),
+        ),
+      ).rejects.toThrow(LOCKED);
+    });
+
+    it('locks too when the count had no difference (no adjustment was written)', async () => {
+      await entry('2026-01-01', 100, 10);
+      await validatedCount('2026-01-10', 100);
+      expect(await prisma.stockMovement.count()).toBe(1);
+      await expect(entry('2026-01-05', 5, 10)).rejects.toThrow(LOCKED);
+      await entry('2026-01-10', 5, 10);
+    });
+
+    it('does not lock another article or another farm', async () => {
+      await entry('2026-01-01', 100, 10);
+      await record({
+        type: 'ENTREE',
+        stockItemId: item2,
+        date: day('2026-01-01'),
+        quantity: 10,
+        unitCost: 5,
+      });
+      await record({
+        type: 'ENTREE',
+        farmId: otherFarmId,
+        date: day('2026-01-01'),
+        quantity: 10,
+        unitCost: 5,
+      });
+      await validatedCount('2026-01-10', 100);
+      await exit('2026-01-05', 3, { stockItemId: item2 });
+      await exit('2026-01-05', 3, { farmId: otherFarmId });
+      await expect(exit('2026-01-05', 3)).rejects.toThrow(LOCKED);
+    });
+
+    it('uses the latest count when there are several', async () => {
+      await entry('2026-01-01', 100, 10);
+      await validatedCount('2026-01-10', 100);
+      await validatedCount('2026-01-20', 100);
+      await expect(entry('2026-01-15', 1, 10)).rejects.toThrow(
+        'Un inventaire validé le 2026-01-20',
+      );
+    });
+  });
+
+  describe('the quantity and average cost cache', () => {
+    it('is written by every kind of write, to the replay of the history', async () => {
+      await entry('2026-01-01', 100, 10);
+      await entry('2026-01-02', 100, 20);
+      const out = await exit('2026-01-03', 50);
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, out.movements[0].id, { quantity: -70 }),
+      );
+      await prisma.$transaction((tx) =>
+        ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 'c1', [
+          {
+            farmId,
+            stockItemId: item,
+            date: day('2026-01-04'),
+            type: 'SORTIE',
+            quantity: -5,
+            reason: 'CONSOMMATION',
+            userId,
+          },
+        ]),
+      );
+      await prisma.$transaction((tx) => ledger.remove(tx, out.movements[0].id));
+      const pair = await prisma.farmStockItem.findFirstOrThrow({
+        where: { farmId, stockItemId: item },
+      });
+      expect(pair.quantity.toNumber()).toBe(195);
+      expect(pair.averageCost?.toNumber()).toBe(15);
+      expect((await level()).quantity).toBe(195);
+    });
+
+    it('answers levels() from the cache: no replay, whatever the history', async () => {
+      await entry('2026-01-01', 100, 10);
+      for (let i = 0; i < 5; i++) await exit(`2026-01-0${i + 2}`, 1);
+      // Tamper with the cache: levels() shows what the cache says.
+      await prisma.farmStockItem.updateMany({
+        data: { quantity: 7, averageCost: 3 },
+      });
+      expect(await level()).toEqual({ quantity: 7, averageCost: 3, value: 21 });
+      await prisma.farmStockItem.updateMany({
+        data: { quantity: 95, averageCost: 10 },
+      });
+    });
+
+    it('replays a pair whose average is not cached (rows from before the cache), and the next write persists it', async () => {
+      await entry('2026-01-01', 100, 10);
+      await entry('2026-01-02', 100, 20);
+      await prisma.farmStockItem.updateMany({
+        data: { quantity: 0, averageCost: null },
+      });
+      expect(await level()).toEqual({
+        quantity: 200,
+        averageCost: 15,
+        value: 3000,
+      });
+      await exit('2026-01-03', 10);
+      const pair = await prisma.farmStockItem.findFirstOrThrow({
+        where: { farmId, stockItemId: item },
+      });
+      expect(pair.quantity.toNumber()).toBe(190);
+      expect(pair.averageCost?.toNumber()).toBe(15);
+    });
+
+    it('a pair with no movement reads as 0 at 0', async () => {
+      await prisma.$transaction(async (tx) => {
+        await ensureFarmStockItem(tx, farmId, item);
+      });
+      expect(await level()).toEqual({ quantity: 0, averageCost: 0, value: 0 });
     });
   });
 });

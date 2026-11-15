@@ -1,12 +1,13 @@
 import { randomUUID } from 'crypto';
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
-import { addDays, assertNotFuture, today } from '../common/days';
+import { addDays, assertNotFuture, formatDay, today } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import { Prisma } from '../generated/prisma/client';
 import type {
@@ -35,18 +36,14 @@ type Num = number | string | Dec;
 const D = (v: Num): Dec => new Prisma.Decimal(v);
 const ZERO = D(0);
 
-export const EXPIRED_BATCH = 'Lot périmé';
-export const PARTLY_EXPIRED =
-  'Stock insuffisant (une partie du stock est périmée)';
-export const INVALID_ITEM = 'Article invalide pour cette ferme';
+const EXPIRED_BATCH = 'Lot périmé';
+const PARTLY_EXPIRED = 'Stock insuffisant (une partie du stock est périmée)';
+const INVALID_ITEM = 'Article invalide pour cette ferme';
 export const INVALID_BATCH = 'Lot invalide pour cet article';
 export const MOVEMENT_NOT_FOUND = 'Mouvement introuvable';
 
 /** Reasons that consume stock for production: they may not draw on an expired lot. */
-export const CONSUMPTION_REASONS: StockReason[] = [
-  'CONSOMMATION',
-  'TRAITEMENT',
-];
+const CONSUMPTION_REASONS: StockReason[] = ['CONSOMMATION', 'TRAITEMENT'];
 
 /** The operations that write ledger movements (`sourceType`); each task that adds one adds it here. */
 export const STOCK_SOURCES = [
@@ -79,8 +76,9 @@ export interface RecordInput {
   note?: string | null;
   userId: string;
   /**
-   * When given, the ledger writes the operation's audit row itself, in the same
-   * transaction (one row per call, whatever the number of movements).
+   * When given, the ledger writes this input's audit row itself, in the same
+   * transaction: one row per input, whatever the number of movements (pieces)
+   * it ends up as.
    */
   audit?: { ctx: RequestContext };
 }
@@ -146,6 +144,8 @@ interface Work extends ReplayMovement {
   createdById: string;
   fresh: boolean;
   removed: boolean;
+  /** Where the row sat in the history when it was loaded (null for a new row). */
+  origin: { date: Date; createdAt: Date } | null;
   /** The cost in the database, to write only what changed. */
   storedCost: Dec | null;
   patch: Prisma.StockMovementUncheckedUpdateInput;
@@ -162,6 +162,12 @@ interface State {
   expiryChanged: Set<string>;
   /** Creation time of the next new movement: after everything already written. */
   next: number;
+  /**
+   * The latest validated inventory of this pair: the history before it is
+   * closed. `at` is when it was validated: on the count day, a movement created
+   * before that moment was part of what was counted, one created after is not.
+   */
+  count: { date: Date; at: Date } | null;
 }
 
 type AddBase = Pick<
@@ -238,23 +244,24 @@ export class StockLedgerService {
    * Edits an operation: replaces everything `sourceType`/`sourceId` wrote with
    * `inputs` (which get that source), under ONE set of locks (the union of the
    * old and new items, in ascending order) and one validation. A source owner
-   * calls this on edit instead of reversing then recording. Nothing is
-   * written when a resulting history is refused.
+   * calls this on edit instead of reversing then recording; it audits itself.
+   * Nothing is written when a resulting history is refused. Results line up
+   * with `inputs`.
    */
   async replaceBySource(
     tx: Tx,
     sourceType: StockSourceType,
     sourceId: string,
     inputs: Omit<RecordInput, 'sourceType' | 'sourceId' | 'audit'>[],
-    audit?: { ctx: RequestContext },
     farmIds?: string[],
-  ): Promise<{ removed: StockMovement[]; results: RecordResult[] }> {
+  ): Promise<RecordResult[]> {
     const old = await tx.stockMovement.findMany({
       where: {
         sourceType,
         sourceId,
         ...(farmIds ? { farmId: { in: farmIds } } : {}),
       },
+      orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     });
     const normalised = inputs.map((i) =>
       this.normalise({ ...i, sourceType, sourceId }),
@@ -301,21 +308,7 @@ export class StockLedgerService {
       return { input, rows: this.plan(state, input, claimed) };
     });
     const created = await this.commit(tx, states);
-    const results = await this.results(tx, states, planned, created, false);
-    const first = old[0] ?? results[0]?.movements[0];
-    if (audit && first) {
-      await this.log(
-        tx,
-        audit.ctx,
-        'UPDATE',
-        first.farmId,
-        sourceId,
-        `${sourceType} · ${old.length} → ${results.reduce((n, r) => n + r.movements.length, 0)} mouvement(s) de stock`,
-        old.map(toAudit),
-        results.flatMap((r) => r.movements).map(toAudit),
-      );
-    }
-    return { removed: old, results };
+    return this.results(tx, states, planned, created);
   }
 
   /** A lot received; its quantity is the sum of the movements that carry it. */
@@ -337,9 +330,10 @@ export class StockLedgerService {
    * Edits a hand-entered operation. An entry changes its own row (and its
    * lot). An exit is re-planned as a whole under one lock: its pieces are
    * dropped and its quantity (the whole operation's, signed) is allocated
-   * again from the lots as of the new date (a single-lot exit keeps that lot
-   * first), so a bigger quantity can draw on other lots. The operation keeps
-   * its `operationId`.
+   * again from the lots as of the new date: FEFO is re-run, except for an exit
+   * that named its lot (`lotExplicit`), which stays strictly on that lot. A
+   * bigger quantity can therefore draw on other lots. The operation keeps its
+   * `operationId`.
    */
   async update(
     tx: Tx,
@@ -523,7 +517,6 @@ export class StockLedgerService {
     tx: Tx,
     sourceType: StockSourceType,
     sourceId: string,
-    audit?: { ctx: RequestContext },
     farmIds?: string[],
   ): Promise<StockMovement[]> {
     const found = await tx.stockMovement.findMany({
@@ -540,23 +533,18 @@ export class StockLedgerService {
       for (const row of state.rows) if (ids.has(row.id)) row.removed = true;
     }
     await this.commit(tx, states);
-    if (audit) {
-      await this.log(
-        tx,
-        audit.ctx,
-        'DELETE',
-        found[0].farmId,
-        sourceId,
-        `Annulation ${sourceType} · ${found.length} mouvement(s) de stock`,
-        found.map(toAudit),
-      );
-    }
     return found;
   }
 
   // ----------------------------------------------------------------- reads
 
-  /** Quantity, weighted-average cost and value of each (farm, item) that has movements. */
+  /**
+   * Quantity, weighted-average cost and value of each (farm, item) the ledger
+   * knows, read from the cache `commit` keeps on `FarmStockItem`: no replay, a
+   * fixed number of queries whatever the history. A pair whose average cost is
+   * not cached yet (rows from before the cache) is replayed leniently, for this
+   * read only: the next write to the pair persists it. Never throws.
+   */
   async levels(
     farmIds: string[],
     itemIds?: string[],
@@ -564,41 +552,71 @@ export class StockLedgerService {
   ): Promise<Map<string, StockLevel>> {
     const result = new Map<string, StockLevel>();
     if (farmIds.length === 0 || itemIds?.length === 0) return result;
-    const rows = await client.stockMovement.findMany({
+    const cached = await client.farmStockItem.findMany({
       where: {
         farmId: { in: farmIds },
         ...(itemIds ? { stockItemId: { in: itemIds } } : {}),
       },
       select: {
-        id: true,
         farmId: true,
         stockItemId: true,
-        date: true,
-        createdAt: true,
-        type: true,
         quantity: true,
-        unitCost: true,
+        averageCost: true,
       },
     });
-    const groups = new Map<string, typeof rows>();
-    for (const r of rows) {
-      const k = levelKey(r.farmId, r.stockItemId);
-      const group = groups.get(k);
-      if (group) group.push(r);
-      else groups.set(k, [r]);
+    const uncached = cached.filter((c) => c.averageCost === null);
+    const replayed = new Map<string, { quantity: Dec; averageCost: Dec }>();
+    if (uncached.length > 0) {
+      const rows = await client.stockMovement.findMany({
+        where: {
+          OR: uncached.map((c) => ({
+            farmId: c.farmId,
+            stockItemId: c.stockItemId,
+          })),
+        },
+        select: {
+          id: true,
+          farmId: true,
+          stockItemId: true,
+          date: true,
+          createdAt: true,
+          type: true,
+          quantity: true,
+          unitCost: true,
+        },
+      });
+      const groups = new Map<string, typeof rows>();
+      for (const r of rows) {
+        const k = levelKey(r.farmId, r.stockItemId);
+        const group = groups.get(k);
+        if (group) group.push(r);
+        else groups.set(k, [r]);
+      }
+      for (const [k, history] of groups) {
+        replayed.set(k, replay(history, { strict: false }));
+      }
     }
-    for (const [k, history] of groups) {
-      const { quantity, averageCost } = replay(history);
+    for (const c of cached) {
+      const k = levelKey(c.farmId, c.stockItemId);
+      const known =
+        c.averageCost === null
+          ? (replayed.get(k) ?? { quantity: ZERO, averageCost: ZERO })
+          : { quantity: c.quantity, averageCost: c.averageCost };
       result.set(k, {
-        quantity,
-        averageCost,
-        value: quantity.mul(averageCost).toDecimalPlaces(2),
+        quantity: known.quantity,
+        averageCost: known.averageCost,
+        value: known.quantity.mul(known.averageCost).toDecimalPlaces(2),
       });
     }
     return result;
   }
 
-  /** The batches of the given farms (and items), each with the quantity it still holds. */
+  /**
+   * The batches of the given farms (and items), each with the quantity it still
+   * holds. A lot with no movement left (its entry was deleted: the ledger keeps
+   * the empty lot) holds nothing and has no history: it is not listed. A lot
+   * that is empty but has movements stays.
+   */
   async batchLevels(
     farmIds: string[],
     itemIds?: string[],
@@ -621,10 +639,11 @@ export class StockLedgerService {
     const held = new Map(
       sums.map((s) => [s.stockBatchId, s._sum.quantity ?? ZERO]),
     );
-    return batches.map((batch) => ({
-      batch,
-      quantity: held.get(batch.id) ?? ZERO,
-    }));
+    return batches.flatMap((batch) =>
+      held.has(batch.id)
+        ? [{ batch, quantity: held.get(batch.id) ?? ZERO }]
+        : [],
+    );
   }
 
   /** Quantity held on `date` (movements dated on or before it), per item. */
@@ -720,6 +739,9 @@ export class StockLedgerService {
       },
     });
     if (!item) throw new BadRequestException(INVALID_ITEM);
+    // Held to the end of the transaction: the article cannot be deleted, nor
+    // retyped (`FOR UPDATE`), under a write in flight.
+    await tx.$queryRaw`SELECT id FROM "StockItem" WHERE id = ${stockItemId} FOR KEY SHARE`;
     return item;
   }
 
@@ -733,9 +755,13 @@ export class StockLedgerService {
     pairs: Pair[],
   ): Promise<Map<string, State>> {
     const items = await this.lockPairs(tx, pairs);
+    const counts = await this.latestCounts(
+      tx,
+      [...items.values()].map((i) => i.pair),
+    );
     const states = new Map<string, State>();
     for (const [key, { pair, item }] of items) {
-      states.set(key, await this.load(tx, pair, item));
+      states.set(key, await this.load(tx, pair, item, counts.get(key) ?? null));
     }
     return states;
   }
@@ -782,7 +808,54 @@ export class StockLedgerService {
     return locked;
   }
 
-  private async load(tx: Tx, pair: Pair, item: StockItem): Promise<State> {
+  /**
+   * The latest validated count of each pair, from the validated inventory
+   * lines: one query for all the pairs (a count with no difference wrote no
+   * movement, the lines are what says it happened).
+   */
+  private async latestCounts(
+    tx: Tx,
+    pairs: Pair[],
+  ): Promise<Map<string, { date: Date; at: Date }>> {
+    const counts = new Map<string, { date: Date; at: Date }>();
+    if (pairs.length === 0) return counts;
+    const wanted = new Set(pairs.map(pairKey));
+    const lines = await tx.inventoryLine.findMany({
+      where: {
+        stockItemId: { in: [...new Set(pairs.map((p) => p.stockItemId))] },
+        session: {
+          status: 'VALIDEE',
+          farmId: { in: [...new Set(pairs.map((p) => p.farmId))] },
+        },
+      },
+      select: {
+        stockItemId: true,
+        session: { select: { farmId: true, date: true, validatedAt: true } },
+      },
+    });
+    for (const { stockItemId, session } of lines) {
+      const key = levelKey(session.farmId, stockItemId);
+      if (!wanted.has(key)) continue;
+      const at = session.validatedAt ?? session.date;
+      const known = counts.get(key);
+      if (
+        !known ||
+        session.date.getTime() > known.date.getTime() ||
+        (session.date.getTime() === known.date.getTime() &&
+          at.getTime() > known.at.getTime())
+      ) {
+        counts.set(key, { date: session.date, at });
+      }
+    }
+    return counts;
+  }
+
+  private async load(
+    tx: Tx,
+    pair: Pair,
+    item: StockItem,
+    count: { date: Date; at: Date } | null,
+  ): Promise<State> {
     const [rows, batches] = await Promise.all([
       tx.stockMovement.findMany({
         where: pair,
@@ -801,6 +874,7 @@ export class StockLedgerService {
       batchPatches: new Map(),
       expiryChanged: new Set(),
       next: Math.max(Date.now(), latest + 1),
+      count,
       rows: rows.map((r) => ({
         id: r.id,
         farmId: r.farmId,
@@ -820,6 +894,7 @@ export class StockLedgerService {
         createdById: r.createdById,
         fresh: false,
         removed: false,
+        origin: { date: r.date, createdAt: r.createdAt },
         storedCost: r.unitCost,
         patch: {},
       })),
@@ -895,11 +970,14 @@ export class StockLedgerService {
   }
 
   /**
-   * Writes the pieces of an operation. Where `old` (already marked removed)
-   * has a row on the same lot it is reused: same id, only the changed fields
-   * written. An operation keeps its place in its day (the first old row's
-   * creation time) when its date is unchanged; one that moves to another day
-   * goes to the end of that day like a new movement.
+   * Writes the pieces of an exit operation. Where `old` (already marked
+   * removed) has a row on the same lot it is reused: same id, only the changed
+   * fields written. An operation keeps its place in its day (the first old
+   * row's creation time) when its date is unchanged; one that moves to another
+   * day goes to the end of that day like a new movement. (An entry edited by
+   * `update` does not come through here: it changes its own row and keeps its
+   * creation time, so on a new day it sorts among that day's movements by when
+   * it was first created.)
    */
   private place(
     state: State,
@@ -970,6 +1048,7 @@ export class StockLedgerService {
         unitCost: piece.quantity.gt(0) ? base.unitCost : null,
         fresh: true,
         removed: false,
+        origin: null,
         storedCost: null,
         patch: {},
       };
@@ -1065,8 +1144,41 @@ export class StockLedgerService {
     return results;
   }
 
-  /** Replays the live movements of a history; throws 400 when it breaks a rule (quantity, lot, expiry). */
+  /**
+   * A validated inventory closes the past of its (farm, article): what was
+   * counted would otherwise be shifted by a later write that lands before it.
+   * Refuses (409) any row this operation adds, removes or moves (its quantity,
+   * date, cost or place) whose position, before or after the change, is before
+   * the latest count: an earlier day, or the count day but created before the
+   * count was validated. Same-day writes after the count, and edits that keep
+   * a position after it, pass.
+   */
+  private assertAfterCount(state: State): void {
+    const { count } = state;
+    if (!count) return;
+    const before = (p: { date: Date; createdAt: Date }): boolean =>
+      p.date.getTime() < count.date.getTime() ||
+      (p.date.getTime() === count.date.getTime() &&
+        p.createdAt.getTime() < count.at.getTime());
+    for (const r of state.rows) {
+      const positions: { date: Date; createdAt: Date }[] = r.fresh
+        ? [r]
+        : r.removed
+          ? [r.origin!]
+          : MOVES_STOCK.some((key) => key in r.patch)
+            ? [r.origin!, r]
+            : [];
+      if (positions.some(before)) {
+        throw new ConflictException(
+          `Un inventaire validé le ${formatDay(count.date)} verrouille les mouvements antérieurs de ${state.item.name}`,
+        );
+      }
+    }
+  }
+
+  /** Replays the live movements of a history; throws when it breaks a rule (closed past, quantity, lot, expiry). */
   private validate(state: State) {
+    this.assertAfterCount(state);
     const live = state.rows.filter((r) => !r.removed);
     // Only what this operation writes, or draws from a lot whose expiry it
     // changes, is checked: an old consumption already past its lot's expiry
@@ -1088,7 +1200,7 @@ export class StockLedgerService {
         );
       }
     }
-    assertBucketsNonNegative(live);
+    assertBucketsNonNegative(live, state.item.name);
     return replay(live);
   }
 
@@ -1108,11 +1220,11 @@ export class StockLedgerService {
   ): Promise<Map<string, StockMovement>> {
     const plans = [...states.values()].map((state) => ({
       state,
-      timeline: this.validate(state).timeline,
+      replayed: this.validate(state),
     }));
     const created = new Map<string, StockMovement>();
-    for (const { state, timeline } of plans) {
-      for (const [id, m] of await this.flush(tx, state, timeline)) {
+    for (const { state, replayed } of plans) {
+      for (const [id, m] of await this.flush(tx, state, replayed)) {
         created.set(id, m);
       }
     }
@@ -1121,14 +1233,17 @@ export class StockLedgerService {
 
   /**
    * Writes the difference of a validated history: batch changes, removed rows
-   * deleted, new rows created with their final cost, and only the rows whose
-   * fields or cost changed updated.
+   * deleted, new rows created with their final cost, only the rows whose
+   * fields or cost changed updated, and the (farm, article) cache of quantity
+   * and average cost refreshed, under the lock the caller holds. A lot left
+   * with no movement is kept (deleting it would race with a reader naming it).
    */
   private async flush(
     tx: Tx,
     state: State,
-    timeline: ReturnType<typeof replay<Work>>['timeline'],
+    replayed: ReturnType<typeof replay<Work>>,
   ): Promise<Map<string, StockMovement>> {
+    const { timeline } = replayed;
     const created = new Map<string, StockMovement>();
     for (const [id, data] of state.batchPatches) {
       await tx.stockBatch.update({ where: { id }, data });
@@ -1138,20 +1253,6 @@ export class StockLedgerService {
       await tx.stockMovement.deleteMany({
         where: { id: { in: gone.map((r) => r.id) } },
       });
-      // A batch whose last movement went with them goes too.
-      const live = new Set(
-        state.rows.filter((r) => !r.removed).map((r) => r.stockBatchId),
-      );
-      const orphans = [
-        ...new Set(
-          gone.flatMap((r) =>
-            r.stockBatchId && !live.has(r.stockBatchId) ? [r.stockBatchId] : [],
-          ),
-        ),
-      ];
-      if (orphans.length > 0) {
-        await tx.stockBatch.deleteMany({ where: { id: { in: orphans } } });
-      }
     }
     for (const step of timeline) {
       const row = step.movement;
@@ -1192,6 +1293,10 @@ export class StockLedgerService {
         await tx.stockMovement.update({ where: { id: row.id }, data });
       }
     }
+    await tx.farmStockItem.update({
+      where: { farmId_stockItemId: state.pair },
+      data: { quantity: replayed.quantity, averageCost: replayed.averageCost },
+    });
     return created;
   }
 
@@ -1213,6 +1318,9 @@ export class StockLedgerService {
 }
 
 const pairKey = (p: Pair): string => levelKey(p.farmId, p.stockItemId);
+
+/** Edits that move stock (its quantity, its day, its place in the day, its cost): refused before a validated count. */
+const MOVES_STOCK = ['date', 'quantity', 'unitCost', 'createdAt'] as const;
 
 function assertExpiryAfterReception(expiry: Date | null, received: Date): void {
   if (expiry && expiry.getTime() < received.getTime()) {
@@ -1275,8 +1383,8 @@ export async function ensureFarmStockItem(
   farmId: string,
   stockItemId: string,
 ): Promise<{ id: string }> {
-  await tx.$executeRaw`INSERT INTO "FarmStockItem" ("id", "farmId", "stockItemId", "updatedAt")
-    VALUES (${randomUUID()}, ${farmId}, ${stockItemId}, now())
+  await tx.$executeRaw`INSERT INTO "FarmStockItem" ("id", "farmId", "stockItemId", "averageCost", "updatedAt")
+    VALUES (${randomUUID()}, ${farmId}, ${stockItemId}, 0, now())
     ON CONFLICT ("farmId", "stockItemId") DO NOTHING`;
   return tx.farmStockItem.findUniqueOrThrow({
     where: { farmId_stockItemId: { farmId, stockItemId } },
