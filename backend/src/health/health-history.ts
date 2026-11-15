@@ -30,12 +30,14 @@ export class HealthHistory
 
   /**
    * The latest end among the done acts (not cancelled) that state a
-   * withdrawal: done date + treatment days + withdrawal days.
+   * withdrawal: done date + treatment days + withdrawal days. Read inside the
+   * caller's transaction when it gives one (a sale sees the act it just made).
    */
   async withdrawalUntil(
     target: { batchId: string } | { animalId: string },
+    tx?: Prisma.TransactionClient,
   ): Promise<Date | null> {
-    const acts = await this.prisma.healthAct.findMany({
+    const acts = await (tx ?? this.prisma).healthAct.findMany({
       where: {
         ...target,
         status: 'REALISE',

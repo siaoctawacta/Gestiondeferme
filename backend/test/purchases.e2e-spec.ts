@@ -45,6 +45,7 @@ interface Row extends Id {
   remaining: number;
 }
 interface Detail extends Row {
+  activity: string;
   supplierId: string;
   supplierPhone: string | null;
   supplierAddress: string | null;
@@ -791,6 +792,7 @@ describe('Suppliers and purchases (e2e)', () => {
             orderNumber,
             date: new Date(date),
             status,
+            amount: qty * price,
             requestedById: userId,
             ...(status === 'COMMANDEE'
               ? {
@@ -807,6 +809,7 @@ describe('Suppliers and purchases (e2e)', () => {
                   position: 0,
                   quantity: qty,
                   unitPrice: price,
+                  amount: qty * price,
                 },
               ],
             },
@@ -1132,17 +1135,29 @@ describe('Suppliers and purchases (e2e)', () => {
       const p = await prisma.purchase.create({
         data: { ...(await base()), reference: 'DA-0001' },
       });
-      const line = (over: object) =>
-        prisma.purchaseItem.create({
+      // The stored amount and category follow the line, so each case reaches the constraint it is about.
+      const line = (over: {
+        quantity?: number;
+        unitPrice?: number;
+        receivedQuantity?: number;
+        [key: string]: unknown;
+      }) => {
+        const { quantity = 1, unitPrice = 1, receivedQuantity } = over;
+        return prisma.purchaseItem.create({
           data: {
             purchaseId: p.id,
             stockItemId: itemId,
             position: 0,
-            quantity: 1,
-            unitPrice: 1,
+            quantity,
+            unitPrice,
+            amount: (receivedQuantity ?? quantity) * unitPrice,
+            ...(receivedQuantity
+              ? { expenseCategory: 'ALIMENT' as const }
+              : {}),
             ...over,
           },
         });
+      };
       await expect(line({ quantity: 0 })).rejects.toThrow(
         'PurchaseItem_quantity_check',
       );
@@ -1174,6 +1189,52 @@ describe('Suppliers and purchases (e2e)', () => {
           },
         }),
       ).rejects.toThrow('SupplierPayment_amount_check');
+    });
+
+    it('refuses stored amounts and categories that contradict their line', async () => {
+      const p = await prisma.purchase.create({
+        data: { ...(await base()), reference: 'DA-0001' },
+      });
+      const line = (over: object) =>
+        prisma.purchaseItem.create({
+          data: {
+            purchaseId: p.id,
+            stockItemId: itemId,
+            position: 0,
+            quantity: 3,
+            unitPrice: 1.1,
+            amount: 3.3,
+            ...over,
+          },
+        });
+      await expect(line({ amount: 3.31 })).rejects.toThrow(
+        'PurchaseItem_amount_check',
+      );
+      // the amount follows the received quantity once there is one
+      await expect(
+        line({
+          receivedQuantity: 2,
+          expenseCategory: 'ALIMENT',
+          lotNumber: 'L1',
+        }),
+      ).rejects.toThrow('PurchaseItem_amount_check');
+      await expect(
+        line({ receivedQuantity: 2, amount: 2.2, lotNumber: 'L1' }),
+      ).rejects.toThrow('PurchaseItem_expenseCategory_check');
+      await expect(line({ expenseCategory: 'SANTE' })).rejects.toThrow(
+        'PurchaseItem_expenseCategory_check',
+      );
+      await expect(
+        line({
+          receivedQuantity: 0,
+          amount: 0,
+          expenseCategory: 'SANTE',
+        }),
+      ).rejects.toThrow('PurchaseItem_expenseCategory_check');
+      await line({ receivedQuantity: 0, amount: 0 });
+      await expect(
+        prisma.purchase.update({ where: { id: p.id }, data: { amount: -1 } }),
+      ).rejects.toThrow('Purchase_amount_check');
     });
 
     it('keeps references and order numbers unique per organisation and refuses deleting what is referenced', async () => {
@@ -1561,6 +1622,236 @@ describe('Suppliers and purchases (e2e)', () => {
         .set(all)
         .expect(403);
       expect((await get(r.id)).payments).toHaveLength(1);
+    });
+  });
+
+  describe('stored amounts, expense category, activity and counters', () => {
+    interface Stored {
+      amount: string;
+      lines: { amount: string; expenseCategory: string | null }[];
+    }
+    /** What the database holds for one purchase, read raw (the column is the truth finance reads). */
+    const stored = async (id: string): Promise<Stored> => {
+      const [p] = await prisma.$queryRaw<{ amount: string }[]>`
+        SELECT "amount"::text AS amount FROM "Purchase" WHERE id = ${id}`;
+      const lines = await prisma.$queryRaw<
+        { amount: string; expenseCategory: string | null }[]
+      >`SELECT "amount"::text AS amount, "expenseCategory"::text AS "expenseCategory"
+        FROM "PurchaseItem" WHERE "purchaseId" = ${id} ORDER BY "position"`;
+      return { amount: p.amount, lines };
+    };
+    /** Purchases whose stored amount is not the sum of their stored line amounts. */
+    const drifting = () =>
+      prisma.$queryRaw<{ id: string }[]>`
+        SELECT p.id FROM "Purchase" p
+        WHERE p."amount" <> COALESCE(
+          (SELECT SUM(i."amount") FROM "PurchaseItem" i WHERE i."purchaseId" = p.id), 0)`;
+
+    it('stores 930 000 on create, 868 000 and ALIMENT on reception, and keeps the category when the article changes', async () => {
+      const p = await request();
+      expect(await stored(p.id)).toEqual({
+        amount: '930000.00',
+        lines: [{ amount: '930000.00', expenseCategory: null }],
+      });
+      await act(director, p.id, 'validate');
+      await act(director, p.id, 'order');
+      const recv = await act(
+        keeper,
+        p.id,
+        'receive',
+        receiveBody({
+          lines: [{ itemId, receivedQuantity: 2800, lotNumber: 'L1' }],
+        }),
+      );
+      expect(recv.amount).toBe(868000);
+      expect(await stored(p.id)).toEqual({
+        amount: '868000.00',
+        lines: [{ amount: '868000.00', expenseCategory: 'ALIMENT' }],
+      });
+      await prisma.stockItem.update({
+        where: { id: itemId },
+        data: { category: 'CONSOMMABLE' },
+      });
+      expect((await stored(p.id)).lines[0].expenseCategory).toBe('ALIMENT');
+      expect(await supplierBalance()).toBe(868000);
+      expect(await drifting()).toEqual([]);
+    });
+
+    it('reads the supplier balance from the stored column', async () => {
+      const p = await received();
+      expect(await supplierBalance()).toBe(930000);
+      await prisma.$executeRaw`UPDATE "Purchase" SET "amount" = 1234 WHERE id = ${p.id}`;
+      expect(await supplierBalance()).toBe(1234);
+    });
+
+    it('keeps Purchase.amount equal to the sum of its line amounts after create, edit, reception and for a zero amount', async () => {
+      const second = (await stockItem('Maïs')).id;
+      // rounding per line, then sum: 2.5 × 333.33 = 833.33 and 0.5 × 0.05 = 0.03 (0.025 rounds up)
+      const p = await request(stockMgr, {
+        lines: [
+          { itemId, quantity: 2.5, unitPrice: 333.33 },
+          { itemId: second, quantity: 0.5, unitPrice: 0.05 },
+          { itemId: second, quantity: 0.5, unitPrice: 0.05 },
+        ],
+      });
+      expect(p.amount).toBe(833.39);
+      expect(await stored(p.id)).toEqual({
+        amount: '833.39',
+        lines: [
+          { amount: '833.33', expenseCategory: null },
+          { amount: '0.03', expenseCategory: null },
+          { amount: '0.03', expenseCategory: null },
+        ],
+      });
+      const edited = (
+        await http()
+          .patch(`/api/purchases/${p.id}`)
+          .set(stockMgr)
+          .send({ lines: [{ itemId, quantity: 4, unitPrice: 12.5 }] })
+          .expect(200)
+      ).body as Detail;
+      expect(edited.amount).toBe(50);
+      expect(await stored(p.id)).toEqual({
+        amount: '50.00',
+        lines: [{ amount: '50.00', expenseCategory: null }],
+      });
+      await act(director, p.id, 'validate');
+      await act(director, p.id, 'order');
+      await act(keeper, p.id, 'receive', {
+        date: daysAgo(2),
+        lines: [{ itemId, receivedQuantity: 3.3 }],
+      });
+      expect(await stored(p.id)).toEqual({
+        amount: '41.25',
+        lines: [{ amount: '41.25', expenseCategory: 'ALIMENT' }],
+      });
+      // a purchase worth 0: stored 0, settled at reception
+      const free = await request(stockMgr, {
+        lines: [{ itemId, quantity: 5, unitPrice: 0 }],
+      });
+      await act(director, free.id, 'validate');
+      await act(director, free.id, 'order');
+      const got = await act(keeper, free.id, 'receive', {
+        date: daysAgo(2),
+        lines: [{ itemId, receivedQuantity: 5 }],
+      });
+      expect(got).toMatchObject({ status: 'PAYEE', amount: 0 });
+      expect((await stored(free.id)).amount).toBe('0.00');
+      expect(await drifting()).toEqual([]);
+    });
+
+    it('gives a line received at 0 neither a category nor an amount', async () => {
+      const second = (await stockItem('Maïs')).id;
+      const p = await ordered({
+        lines: [
+          { itemId, quantity: 10, unitPrice: 100 },
+          { itemId: second, quantity: 10, unitPrice: 50 },
+        ],
+      });
+      await act(keeper, p.id, 'receive', {
+        date: daysAgo(2),
+        lines: [
+          { itemId, receivedQuantity: 10 },
+          { itemId: second, receivedQuantity: 0 },
+        ],
+      });
+      expect(await stored(p.id)).toEqual({
+        amount: '1000.00',
+        lines: [
+          { amount: '1000.00', expenseCategory: 'ALIMENT' },
+          { amount: '0.00', expenseCategory: null },
+        ],
+      });
+    });
+
+    it('snapshots the category of each article at reception', async () => {
+      const med = (
+        await stockItem('Amoxicilline', {
+          category: 'MEDICAMENT',
+          unit: 'flacon',
+        })
+      ).id;
+      const vac = (
+        await stockItem('Gumboro', { category: 'VACCIN', unit: 'flacon' })
+      ).id;
+      const mat = (
+        await stockItem('Abreuvoir', { category: 'MATERIEL', unit: 'pièce' })
+      ).id;
+      const con = (
+        await stockItem('Gants', { category: 'CONSOMMABLE', unit: 'boîte' })
+      ).id;
+      const ids = [itemId, med, vac, mat, con];
+      const p = await ordered({
+        lines: ids.map((id) => ({ itemId: id, quantity: 1, unitPrice: 10 })),
+      });
+      await act(keeper, p.id, 'receive', {
+        date: daysAgo(2),
+        lines: ids.map((id) => ({ itemId: id, receivedQuantity: 1 })),
+      });
+      expect((await stored(p.id)).lines.map((l) => l.expenseCategory)).toEqual([
+        'ALIMENT',
+        'SANTE',
+        'SANTE',
+        'MATERIEL',
+        'CONSOMMABLES',
+      ]);
+    });
+
+    it('carries an activity, Général by default, editable only in DEMANDE', async () => {
+      expect((await request()).activity).toBe('GENERAL');
+      const p = await request(stockMgr, { activity: 'AVICOLE' });
+      expect(p.activity).toBe('AVICOLE');
+      expect((await get(p.id)).activity).toBe('AVICOLE');
+      const listed = (
+        await http().get('/api/purchases').set(director).expect(200)
+      ).body as Page<Row & { activity: string }>;
+      expect(listed.items.map((r) => r.activity).sort()).toEqual([
+        'AVICOLE',
+        'GENERAL',
+      ]);
+      const patched = (
+        await http()
+          .patch(`/api/purchases/${p.id}`)
+          .set(stockMgr)
+          .send({ activity: 'PORCIN' })
+          .expect(200)
+      ).body as Detail;
+      expect(patched.activity).toBe('PORCIN');
+      await act(director, p.id, 'validate');
+      const res = await http()
+        .patch(`/api/purchases/${p.id}`)
+        .set(stockMgr)
+        .send({ activity: 'AVICOLE' })
+        .expect(409);
+      expect(msg(res.body)).toBe('Seule une demande peut être modifiée');
+      expect((await get(p.id)).activity).toBe('PORCIN');
+    });
+
+    it('refuses an unknown or null activity (400)', async () => {
+      await request(stockMgr, { activity: 'MARIN' }, 400);
+      await request(stockMgr, { activity: null }, 400);
+      const p = await request();
+      for (const activity of ['MARIN', null]) {
+        await http()
+          .patch(`/api/purchases/${p.id}`)
+          .set(stockMgr)
+          .send({ activity })
+          .expect(400);
+      }
+    });
+
+    it('numbers on the DocumentCounter table, per organisation and kind', async () => {
+      const p = await request();
+      await act(director, p.id, 'validate');
+      await act(director, p.id, 'order');
+      await request();
+      const rows = await prisma.$queryRaw<
+        { organizationId: string; kind: string; last: number }[]
+      >`SELECT "organizationId", "kind", "last" FROM "DocumentCounter" ORDER BY "kind"`;
+      expect(rows).toEqual([
+        { organizationId: world.orgId, kind: 'BC', last: 1 },
+        { organizationId: world.orgId, kind: 'DA', last: 2 },
+      ]);
     });
   });
 

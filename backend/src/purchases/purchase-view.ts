@@ -1,8 +1,8 @@
-import { Decimal } from '@prisma/client/runtime/client';
 import { formatDay, formatDayOrNull } from '../common/days';
+import { remainingOf, sumAmounts, toMoney } from '../common/money';
 import type { Prisma } from '../generated/prisma/client';
+import type { Activity } from '../generated/prisma/enums';
 import type { ExportColumn } from '../listing/export';
-import { linesAmount, remainingOf } from './purchase-money';
 import {
   isCancelled,
   isPaid,
@@ -48,6 +48,7 @@ export interface PurchaseRow {
   /** Quantity of the first line (the received one once received). */
   quantity: number;
   status: PurchaseStatusValue;
+  activity: Activity;
   amount: number;
   paid: number;
   remaining: number;
@@ -96,8 +97,8 @@ export interface PurchaseDetail extends PurchaseRow {
 }
 
 export function toRow(p: PurchaseFull): PurchaseRow {
-  const amount = linesAmount(p.items);
-  const paid = p.payments.reduce((s, x) => s.add(x.amount), new Decimal(0));
+  const amount = p.amount;
+  const paid = sumAmounts(p.payments.map((x) => x.amount));
   const first = p.items[0];
   const status = p.status;
   return {
@@ -112,14 +113,17 @@ export function toRow(p: PurchaseFull): PurchaseRow {
       : '',
     quantity: first ? (first.receivedQuantity ?? first.quantity).toNumber() : 0,
     status,
-    amount: amount.toNumber(),
-    paid: paid.toNumber(),
+    activity: p.activity,
+    amount: toMoney(amount),
+    paid: toMoney(paid),
     remaining: isCancelled(status)
       ? 0
-      : remainingOf(
-          amount,
-          p.payments.map((x) => x.amount),
-        ).toNumber(),
+      : toMoney(
+          remainingOf(
+            amount,
+            p.payments.map((x) => x.amount),
+          ),
+        ),
   };
 }
 
@@ -197,7 +201,7 @@ export function toDetail(p: PurchaseFull): PurchaseDetail {
       itemName: i.stockItem.name,
       unit: i.stockItem.unit,
       quantity: i.quantity.toNumber(),
-      unitPrice: i.unitPrice.toNumber(),
+      unitPrice: toMoney(i.unitPrice),
       receivedQuantity: i.receivedQuantity?.toNumber() ?? null,
       lotNumber: i.lotNumber,
       expiryDate: formatDayOrNull(i.expiryDate),
@@ -205,7 +209,7 @@ export function toDetail(p: PurchaseFull): PurchaseDetail {
     payments: p.payments.map((x) => ({
       id: x.id,
       date: formatDay(x.date),
-      amount: x.amount.toNumber(),
+      amount: toMoney(x.amount),
       method: x.method,
       reference: x.reference,
     })),

@@ -6,6 +6,7 @@ import {
 } from '../herd/batch-performance';
 import { BatchesService } from '../herd/batches.service';
 import { daysBetween } from '../common/days';
+import { sumAmounts, toMoney } from '../common/money';
 import { PrismaService } from '../prisma/prisma.service';
 import { dailyGain, feedConversion } from './indicators';
 import { FEED_COST, LotCostRegistry } from './lot-cost';
@@ -48,7 +49,7 @@ export class IndicatorsService implements OnModuleInit {
       (await this.costs.costsFor([batchId])).get(batchId) ?? []
     ).filter((c) => c.category === FEED_COST);
     const feedKg = feed.reduce((sum, c) => sum + (c.quantity ?? 0), 0);
-    const feedCost = feed.reduce((sum, c) => sum + c.amount, 0);
+    const feedCost = toMoney(sumAmounts(feed.map((c) => c.amount)));
     const lotGainKg = hasRange
       ? ((lastWeightG - firstWeightG) / 1000) * batch.alive
       : null;

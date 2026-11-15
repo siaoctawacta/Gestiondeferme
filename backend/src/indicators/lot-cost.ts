@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Decimal } from '@prisma/client/runtime/client';
 import { SourceRegistry } from '../common/source-registry';
 import type { Prisma } from '../generated/prisma/client';
 
@@ -6,8 +7,8 @@ import type { Prisma } from '../generated/prisma/client';
 export interface LotCost {
   /** Open vocabulary shared by sources and readers; the feed module reports `aliment`. */
   category: string;
-  /** Cost in FCFA. */
-  amount: number;
+  /** Cost in FCFA, exact: converted to a number only at the API edge (`toMoney`). */
+  amount: Decimal;
   /** Physical quantity behind the cost when there is one (kg of feed). */
   quantity?: number;
 }
@@ -15,8 +16,11 @@ export interface LotCost {
 /** The cost category of the feed given to a lot (`amount` = cost, `quantity` = kg). */
 export const FEED_COST = 'aliment';
 
+/** The cost category of the medicines and vaccines used on a lot (`amount` = cost, no `quantity`). */
+export const HEALTH_COST = 'sante';
+
 /**
- * Something that knows what a lot cost (the feed module, later health).
+ * Something that knows what a lot cost (the feed and health modules).
  * Sources register themselves so `indicators` never imports them.
  */
 export interface LotCostSource {

@@ -8,7 +8,15 @@ import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import { assertNotFuture, formatDay, requireDay } from '../common/days';
+import { nextDocumentNumber } from '../common/document-numbers';
 import { lockRow } from '../common/lock-row';
+import {
+  lineAmount,
+  linesAmount,
+  remainingOf,
+  sumAmounts,
+} from '../common/money';
+import { expenseCategoryOf } from '../finance/finance-categories';
 import type { Prisma } from '../generated/prisma/client';
 import type { AuditAction } from '../generated/prisma/enums';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
@@ -28,8 +36,6 @@ import type {
   ReceivePurchaseDto,
   UpdatePurchaseDto,
 } from './dto/purchase.dto';
-import { lineAmount, linesAmount, remainingOf } from './purchase-money';
-import { nextPurchaseNumber } from './purchase-numbers';
 import {
   purchaseInclude,
   toDetail,
@@ -301,12 +307,14 @@ export class PurchasesService {
     if (total.gt(MAX_TOTAL)) throw new BadRequestException(TOO_BIG);
   }
 
+  /** The lines as stored: each with its own amount (the only place an ordered line's amount is computed). */
   private lineData(lines: PurchaseLineDto[]) {
     return lines.map((l, position) => ({
       position,
       stockItemId: l.itemId,
       quantity: l.quantity,
       unitPrice: l.unitPrice,
+      amount: lineAmount(l.quantity, l.unitPrice),
     }));
   }
 
@@ -323,7 +331,8 @@ export class PurchasesService {
       this.prisma.$transaction(async (tx) => {
         await this.assertSupplier(tx, ctx, dto.supplierId);
         await this.assertItems(tx, ctx, dto.lines);
-        const reference = await nextPurchaseNumber(tx, organizationId, 'DA');
+        const items = this.lineData(dto.lines);
+        const reference = await nextDocumentNumber(tx, organizationId, 'DA');
         const created = await tx.purchase.create({
           data: {
             organizationId,
@@ -332,8 +341,10 @@ export class PurchasesService {
             reference,
             date,
             note: dto.note ?? null,
+            activity: dto.activity ?? 'GENERAL',
+            amount: sumAmounts(items.map((i) => i.amount)),
             requestedById: ctx.user.id,
-            items: { create: this.lineData(dto.lines) },
+            items: { create: items },
           },
           select: { id: true },
         });
@@ -375,28 +386,39 @@ export class PurchasesService {
           dto.note !== undefined && (dto.note || null) !== before.note;
         const linesChanged =
           dto.lines !== undefined && !this.sameLines(before, dto.lines);
-        if (!supplierChanged && !dateChanged && !noteChanged && !linesChanged) {
+        const activityChanged =
+          dto.activity !== undefined && dto.activity !== before.activity;
+        if (
+          !supplierChanged &&
+          !dateChanged &&
+          !noteChanged &&
+          !linesChanged &&
+          !activityChanged
+        ) {
           return toDetail(before);
         }
         if (supplierChanged) {
           await this.assertSupplier(tx, ctx, dto.supplierId as string);
         }
         if (linesChanged) await this.assertItems(tx, ctx, dto.lines ?? []);
+        const items =
+          linesChanged && dto.lines ? this.lineData(dto.lines) : undefined;
         await tx.purchase.update({
           where: { id },
           data: {
             ...(supplierChanged ? { supplierId: dto.supplierId } : {}),
             ...(dateChanged ? { date } : {}),
             ...(noteChanged ? { note: dto.note || null } : {}),
+            ...(activityChanged ? { activity: dto.activity } : {}),
+            ...(items
+              ? { amount: sumAmounts(items.map((i) => i.amount)) }
+              : {}),
           },
         });
-        if (linesChanged && dto.lines) {
+        if (items) {
           await tx.purchaseItem.deleteMany({ where: { purchaseId: id } });
           await tx.purchaseItem.createMany({
-            data: this.lineData(dto.lines).map((l) => ({
-              ...l,
-              purchaseId: id,
-            })),
+            data: items.map((l) => ({ ...l, purchaseId: id })),
           });
         }
         return this.saved(tx, ctx, before);
@@ -464,7 +486,7 @@ export class PurchasesService {
       this.prisma.$transaction(async (tx) => {
         const before = await this.lock(tx, ctx, id);
         if (!can(before.status, 'order')) this.refuse('order');
-        const orderNumber = await nextPurchaseNumber(tx, organizationId, 'BC');
+        const orderNumber = await nextDocumentNumber(tx, organizationId, 'BC');
         await tx.purchase.update({
           where: { id },
           data: {
@@ -523,23 +545,29 @@ export class PurchasesService {
       if (received.every((r) => r.quantity.isZero())) {
         throw new BadRequestException(NOTHING_RECEIVED);
       }
-      for (const r of received) {
+      const amounts = received.map((r) =>
+        lineAmount(r.quantity, r.line.unitPrice),
+      );
+      for (const [i, r] of received.entries()) {
         await tx.purchaseItem.update({
           where: { id: r.line.id },
           data: {
             receivedQuantity: r.quantity,
+            amount: amounts[i],
+            // The article's category is mutable: what finance counts is the one at reception.
+            expenseCategory: r.quantity.isZero()
+              ? null
+              : expenseCategoryOf(r.line.stockItem.category),
             lotNumber: r.lotNumber,
             expiryDate: r.expiryDate,
           },
         });
       }
-      const worth = received.reduce(
-        (sum, r) => sum.add(lineAmount(r.quantity, r.line.unitPrice)),
-        new Decimal(0),
-      );
+      const worth = sumAmounts(amounts);
       await tx.purchase.update({
         where: { id },
         data: {
+          amount: worth,
           // A purchase worth 0 has nothing to pay: it is settled at reception.
           status: statusAfter('receive', { settled: worth.isZero() }),
           receivedAt: new Date(),
@@ -627,7 +655,7 @@ export class PurchasesService {
       }
       const amount = new Decimal(dto.amount);
       const remaining = remainingOf(
-        linesAmount(before.items),
+        before.amount,
         before.payments.map((p) => p.amount),
       );
       if (amount.gt(remaining)) throw new BadRequestException(OVERPAID);

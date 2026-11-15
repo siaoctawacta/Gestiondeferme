@@ -15,6 +15,7 @@ import {
   ValidateIf,
   ValidateNested,
 } from 'class-validator';
+import { Activity } from '../../generated/prisma/enums';
 import { IsDay } from '../../herd/dto/is-day';
 import { Trim } from '../../listing/list-helpers';
 import { ListQueryDto } from '../../listing/list-query.dto';
@@ -32,6 +33,7 @@ export const PAYMENT_METHODS = [
 ] as const;
 export type PaymentMethodValue = (typeof PAYMENT_METHODS)[number];
 
+const ACTIVITY = "L'activité est invalide";
 const QTY = 'La quantité doit être un nombre positif (2 décimales au plus)';
 const RECEIVED =
   'La quantité reçue doit être un nombre positif ou nul (2 décimales au plus)';
@@ -86,6 +88,11 @@ export class CreatePurchaseDto {
   @Type(() => PurchaseLineDto)
   lines!: PurchaseLineDto[];
 
+  @ApiPropertyOptional({ enum: Activity, default: 'GENERAL' })
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsEnum(Activity, { message: ACTIVITY })
+  activity?: Activity;
+
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()
   @Trim()
@@ -115,6 +122,11 @@ export class UpdatePurchaseDto {
   @ValidateNested({ each: true })
   @Type(() => PurchaseLineDto)
   lines?: PurchaseLineDto[];
+
+  @ApiPropertyOptional({ enum: Activity })
+  @ValidateIf((_o, v) => v !== undefined)
+  @IsEnum(Activity, { message: ACTIVITY })
+  activity?: Activity;
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()

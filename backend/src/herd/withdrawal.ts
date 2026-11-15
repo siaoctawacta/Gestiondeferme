@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { SourceRegistry } from '../common/source-registry';
+import type { Prisma } from '../generated/prisma/client';
 
 /**
  * Where a lot or an animal stands on withdrawal periods (the days after a
@@ -16,6 +17,7 @@ export interface WithdrawalSource {
    */
   withdrawalUntil(
     target: { batchId: string } | { animalId: string },
+    tx?: Prisma.TransactionClient,
   ): Promise<Date | null>;
 }
 
@@ -28,10 +30,11 @@ export class WithdrawalRegistry extends SourceRegistry<WithdrawalSource> {
   /** Latest end over the registered sources, or null (also when none is registered). */
   async until(
     target: { batchId: string } | { animalId: string },
+    tx?: Prisma.TransactionClient,
   ): Promise<Date | null> {
     let latest: Date | null = null;
     for (const source of this.all()) {
-      const date = await source.withdrawalUntil(target);
+      const date = await source.withdrawalUntil(target, tx);
       if (date && (!latest || date > latest)) latest = date;
     }
     return latest;

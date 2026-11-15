@@ -92,7 +92,7 @@ export class SuppliersService {
     return farms.map((f) => f.id);
   }
 
-  /** Balance per supplier: Σ rounded lines of the received purchases − Σ payments. */
+  /** Balance per supplier: Σ stored amounts of the received purchases − Σ payments. */
   private async balances(
     supplierIds: string[],
     farmIds: string[],
@@ -101,8 +101,8 @@ export class SuppliersService {
     if (supplierIds.length === 0 || farmIds.length === 0) return result;
     const [owed, paid] = await Promise.all([
       this.prisma.$queryRaw<{ supplierId: string; total: Decimal | null }[]>`
-        SELECT p."supplierId", SUM(ROUND(COALESCE(i."receivedQuantity", i."quantity") * i."unitPrice", 2)) AS total
-        FROM "PurchaseItem" i JOIN "Purchase" p ON p.id = i."purchaseId"
+        SELECT p."supplierId", SUM(p."amount") AS total
+        FROM "Purchase" p
         WHERE p."supplierId" = ANY(${supplierIds}::text[])
           AND p."farmId" = ANY(${farmIds}::text[])
           AND p."status"::text = ANY(${[...OWED_STATUSES]}::text[])

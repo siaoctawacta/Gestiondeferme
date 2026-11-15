@@ -1,3 +1,4 @@
+import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
 import type { BatchPerformanceRegistry } from '../herd/batch-performance';
 import type { BatchesService } from '../herd/batches.service';
@@ -59,9 +60,13 @@ describe('IndicatorsService.batchPerformance', () => {
             [
               ids[0],
               [
-                { category: 'aliment', amount: 300, quantity: 100 },
-                { category: 'aliment', amount: 50, quantity: 20 },
-                { category: 'sante', amount: 999, quantity: 5 },
+                {
+                  category: 'aliment',
+                  amount: new Decimal(300),
+                  quantity: 100,
+                },
+                { category: 'aliment', amount: new Decimal(50), quantity: 20 },
+                { category: 'sante', amount: new Decimal(999), quantity: 5 },
               ],
             ],
           ]),

@@ -144,7 +144,7 @@ export class FeedService
       result.set(batchId, [
         {
           category: FEED_COST,
-          amount: t.amount.toNumber(),
+          amount: t.amount,
           quantity: t.kg.toNumber(),
         },
       ]);

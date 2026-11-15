@@ -137,7 +137,7 @@ model Organization {
   stockItems       StockItem[]
   suppliers        Supplier[]
   purchases        Purchase[]
-  purchaseCounters PurchaseCounter[]
+  documentCounters DocumentCounter[]
   vaccinationPlans VaccinationPlan[]
 }
 
@@ -930,6 +930,33 @@ model Supplier {
 }
 
 /// A purchase request (DA-NNNN) that becomes an order (BC-NNNN), is received into the stock ledger, then paid.
+/// What an expense or a revenue is about; a purchase line snapshots its category at reception.
+enum FinanceCategory {
+  ANIMAUX
+  ALIMENT
+  SANTE
+  MATERIEL
+  CONSOMMABLES
+  SALAIRES
+  ENERGIE
+  EAU
+  TRANSPORT
+  ENTRETIEN
+  AUTRE_CHARGE
+  VENTE_ANIMAUX
+  VENTE_OEUFS
+  VENTE_ARTICLES
+  PRESTATIONS
+  AUTRE_RECETTE
+}
+
+/// The branch of the farm a document belongs to (GENERAL = shared charges).
+enum Activity {
+  AVICOLE
+  PORCIN
+  GENERAL
+}
+
 model Purchase {
   id             String            @id @default(cuid())
   organizationId String
@@ -961,6 +988,9 @@ model Purchase {
   cancelledAt    DateTime?
   cancelReason   String?
   note           String?
+  activity       Activity          @default(GENERAL)
+  /// Σ of the line amounts (received quantities once received); written only by PurchasesService from common/money.ts.
+  amount         Decimal           @default(0) @db.Decimal(14, 2)
   createdAt      DateTime          @default(now())
   updatedAt      DateTime          @updatedAt
   items          PurchaseItem[]
@@ -980,18 +1010,22 @@ model Purchase {
 }
 
 model PurchaseItem {
-  id               String    @id @default(cuid())
+  id               String           @id @default(cuid())
   purchaseId       String
-  purchase         Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  purchase         Purchase         @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
   stockItemId      String
-  stockItem        StockItem @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
+  stockItem        StockItem        @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
   /// Order of the line on the document.
   position         Int
-  quantity         Decimal   @db.Decimal(12, 2)
-  unitPrice        Decimal   @db.Decimal(12, 2)
-  receivedQuantity Decimal?  @db.Decimal(12, 2)
+  quantity         Decimal          @db.Decimal(12, 2)
+  unitPrice        Decimal          @db.Decimal(12, 2)
+  receivedQuantity Decimal?         @db.Decimal(12, 2)
+  /// round(COALESCE(receivedQuantity, quantity) × unitPrice, 2), CHECKed in SQL.
+  amount           Decimal          @db.Decimal(14, 2)
+  /// Snapshot at reception of the article's category (it is mutable); null until received, and for a line received at 0.
+  expenseCategory  FinanceCategory?
   lotNumber        String?
-  expiryDate       DateTime? @db.Date
+  expiryDate       DateTime?        @db.Date
 
   @@unique([purchaseId, position])
   @@index([stockItemId])
@@ -1203,11 +1237,11 @@ model BiosecurityLog {
   @@index([buildingId])
 }
 
-/// Highest DA/BC number ever handed out in an organisation: only goes up, so a deleted number is never reused.
-model PurchaseCounter {
+/// Highest number ever handed out per organisation and kind: only goes up, so a deleted number is never reused.
+model DocumentCounter {
   organizationId String
   organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
-  /// DA (requests) or BC (orders).
+  /// DA|BC|DV|FA|AV|RC (purchase request, order, quote, invoice, credit note, receipt).
   kind           String
   last           Int
 

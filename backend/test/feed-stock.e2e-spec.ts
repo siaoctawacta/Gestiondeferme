@@ -1,4 +1,6 @@
 import { INestApplication } from '@nestjs/common';
+import { Decimal } from '@prisma/client/runtime/client';
+import { LotCostRegistry } from '../src/indicators/lot-cost';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { daysAgo, Headers, Id, Msg, World } from './fixtures';
 import {
@@ -526,6 +528,20 @@ describe('Feed distributions consume stock (e2e)', () => {
         res.body as { performance: { feedCost: number; feedKg: number } }
       ).performance;
       expect(perf).toMatchObject({ feedKg: 720, feedCost: 198400 + 32000 });
+    });
+
+    it('hands the lot costs to the registry as exact decimals, converted to a number only at the API edge', async () => {
+      const { product: p } = await stocked('Maïs', [
+        [1000, 300],
+        [500, 360],
+      ]);
+      await distribute({ feedProductId: p.id, quantityKg: 620 });
+      await distribute({ feedProductId: p.id, quantityKg: 100 });
+      const [feed] =
+        (await app.get(LotCostRegistry).costsFor([lotId])).get(lotId) ?? [];
+      expect(feed).toMatchObject({ category: 'aliment', quantity: 720 });
+      expect(feed.amount.toString()).toBe('230400');
+      expect(Decimal.isDecimal(feed.amount)).toBe(true);
     });
   });
 
