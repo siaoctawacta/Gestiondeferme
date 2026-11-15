@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
@@ -87,6 +87,10 @@ function mountDetail(id: string, opts?: Parameters<typeof mount>[1]) {
     { ...opts, path: `/m/lots/${id}` },
   );
 }
+
+// The weight chart is a lazily imported chunk: load it once up front (module cache) so the tests that await it do not
+// race the first import of a heavy module under load. They still wait for the real chart to render.
+beforeAll(async () => { await import('../pages/details/WeightCurve'); }, 60000);
 
 beforeEach(() => {
   calls.length = 0;

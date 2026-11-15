@@ -11,7 +11,6 @@ import { todayIso } from '../lib/format';
 import { QuoteDetail } from '../pages/details/QuoteDetail';
 import { clients } from './clients';
 import { ModuleRoute } from '../pages/ModuleRoute';
-import { registerModule } from './registry';
 import './index';
 import { devis } from './salesShared';
 
@@ -104,7 +103,12 @@ function mount(ui: React.ReactNode, { perms = COMMERCIAL, farm, route = '/' }: {
     if (url.startsWith('/api/sales/sellables')) {
       return json(200, { items: SELLABLES[new URL(url, 'http://x').searchParams.get('kind') ?? ''] ?? [] });
     }
-    if (url.startsWith('/api/sales')) return page([{ id: 'i1', number: 'FA-0310' }]);
+    if (url.startsWith('/api/sales')) {
+      return page([{
+        id: 'i2', date: '2026-10-20', number: 'FA-0309', customerId: 'c2', customerName: 'Marché Hédzranawoé — Mme Afi', product: 'Œufs (plateau)', quantity: 400,
+        unit: null, total: 1000000, paid: 600000, credited: 0, refunded: 0, due: 400000, refundDue: 0, status: 'PARTIELLE', dueDate: '2026-11-05', overdue: false,
+      }]);
+    }
     const customer = /^\/api\/customers\/(\w+)(\?|$)/.exec(url);
     if (customer) return customer[1] === 'c2' ? json(200, CUSTOMER_DETAIL) : json(404, { message: 'Introuvable' });
     if (url.startsWith('/api/customers')) return page(url.includes('active=true') ? CUSTOMERS.filter((c) => c.active) : CUSTOMERS);
@@ -192,15 +196,16 @@ describe('clients list', () => {
 
 describe('customer detail', () => {
   it('shows what was invoiced, paid, credited and is still due, and the customer\'s invoices through the ventes list', async () => {
-    registerModule({
-      slug: 'ventes', group: 'Commercial', title: 'Ventes', subtitle: '', endpoint: '/sales', columns: [{ key: 'number', header: 'N° FACTURE' }], fields: [],
-    });
     mount(<CustomerDetail id="c2" />);
     expect(await screen.findByRole('heading', { name: 'Marché Hédzranawoé — Mme Afi' })).toBeInTheDocument();
     for (const [label, value] of [['Facturé', '1 000 000 FCFA'], ['Payé', '600 000 FCFA'], ['Avoirs', '0 FCFA'], ['Reste dû', '400 000 FCFA']]) {
       expect(flat(screen.getByText(label, { selector: 'p' }).nextElementSibling!.textContent)).toBe(value);
     }
-    expect(await screen.findByText('FA-0310')).toBeInTheDocument();
+    // The real ventes list, read-only, scoped to the customer.
+    expect(await screen.findByText('FA-0309')).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'RESTE DÛ' })).toBeInTheDocument();
+    expect(screen.getByText('400 000 FCFA', { selector: 'span' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Ajouter|Encaisser|Avoir|Modifier|Supprimer/ })).not.toBeInTheDocument();
     expect(calls.some((c) => c.url.startsWith('/api/sales') && c.url.includes('customerId=c2'))).toBe(true);
   });
 
@@ -435,7 +440,6 @@ describe('customers: permissions and refusals', () => {
 
 describe('customer detail: invoices area', () => {
   it('says so when the role cannot read the invoices', async () => {
-    registerModule({ slug: 'ventes', group: 'Commercial', title: 'Ventes', subtitle: '', endpoint: '/sales', columns: [{ key: 'number', header: 'N° FACTURE' }], fields: [] });
     mount(<CustomerDetail id="c2" />, { perms: { clients: ['read'] } });
     expect(await screen.findByText('Factures non accessibles avec votre rôle')).toBeInTheDocument();
   });

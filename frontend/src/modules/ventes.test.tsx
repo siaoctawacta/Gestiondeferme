@@ -40,12 +40,17 @@ const INVOICES = [
   inv('i6', 'FA-0311', 'EMISE', { date: '2026-10-25', product: 'Poulets de chair', quantity: 100, total: 500000, paid: 0, due: 500000, dueDate: '2026-11-01', overdue: true }),
   inv('i7', 'FA-0312', 'SOLDEE', { product: 'Poulets de chair', credited: 105000, paid: 1050000, refundDue: 105000 }),
   inv('i8', 'FA-0313', 'ANNULEE', { product: 'Porcs', quantity: 1, total: 135000, paid: 0, due: 0 }),
+  // A second credit completing a line already partly credited (2.5 kg x 333.33 = 833.33, credited 1.25 for 416.66).
+  inv('i10', 'FA-0314', 'EMISE', { product: 'Aliment croissance', quantity: 2.5, unit: 'kg', total: 833.33, paid: 0, credited: 416.66, due: 416.67 }),
+  inv('i11', 'FA-0316', 'EMISE', { product: 'Aliment croissance', quantity: 3, unit: 'kg', total: 300, paid: 0, due: 300 }),
+  // Nothing to pay: settled at issue, no payment, no credit note.
+  inv('i12', 'FA-0315', 'SOLDEE', { product: 'Prestation offerte', quantity: 1, total: 0, paid: 0, due: 0 }),
 ];
 const COUNTS = { BROUILLON: 1, EMISE: 1, PARTIELLE: 1, SOLDEE: 4, ANNULEE: 1 };
 
 const line = (over: object) => ({
   id: 'ln1', position: 1, kind: 'LOT', batchId: 'l1', animalId: null, stockItemId: null, sourceLabel: 'LC-2026-12', designation: 'Poulets de chair',
-  unit: null, eggsPerUnit: null, quantity: 300, unitPrice: 3500, amount: 1050000, weightKg: null, creditedQuantity: 30, creditableQuantity: 270,
+  unit: null, eggsPerUnit: null, quantity: 300, unitPrice: 3500, amount: 1050000, weightKg: null, creditedQuantity: 30, creditableQuantity: 270, creditableAmount: 945000,
   activity: 'AVICOLE', category: 'VENTE_ANIMAUX', ...over,
 });
 const detailOf = (row: object, over: object) => ({
@@ -67,21 +72,37 @@ const DETAILS: Record<string, unknown> = {
     customerAddress: 'Marché central, Lomé',
     lines: [line({
       kind: 'OEUFS', batchId: 'e1', sourceLabel: 'LP-2026-03', designation: 'Œufs (plateau)', unit: 'PLATEAU', eggsPerUnit: 30, quantity: 400,
-      unitPrice: 2500, amount: 1000000, creditedQuantity: 0, creditableQuantity: 400, activity: 'AVICOLE', category: 'VENTE_OEUFS',
+      unitPrice: 2500, amount: 1000000, creditedQuantity: 0, creditableQuantity: 400, creditableAmount: 1000000, activity: 'AVICOLE', category: 'VENTE_OEUFS',
+    }), line({
+      id: 'ln2', position: 2, kind: 'SERVICE', batchId: null, sourceLabel: null, designation: 'Livraison à domicile', quantity: 1, unitPrice: 0, amount: 0,
+      creditedQuantity: 0, creditableQuantity: 1, creditableAmount: 0, activity: 'GENERAL', category: 'PRESTATIONS',
     })],
     payments: [PAYMENT],
   }),
   i5: detailOf(INVOICES[4], {
     lines: [line({
       kind: 'ARTICLE', batchId: null, stockItemId: 's2', sourceLabel: 'Aliment ponte', designation: 'Aliment ponte', unit: 'kg', quantity: 100, unitPrice: 320,
-      amount: 32000, creditedQuantity: 0, creditableQuantity: 100, activity: 'GENERAL', category: 'VENTE_ARTICLES',
+      amount: 32000, creditedQuantity: 0, creditableQuantity: 100, creditableAmount: 32000, activity: 'GENERAL', category: 'VENTE_ARTICLES',
     })],
   }),
   i7: detailOf(INVOICES[6], { lines: [line({})] }),
+  i10: detailOf(INVOICES[8], {
+    lines: [line({
+      kind: 'ARTICLE', batchId: null, stockItemId: 's2', sourceLabel: 'Aliment ponte', designation: 'Aliment ponte', unit: 'kg', quantity: 2.5, unitPrice: 333.33,
+      amount: 833.33, creditedQuantity: 1.25, creditableQuantity: 1.25, creditableAmount: 416.67, category: 'VENTE_ARTICLES',
+    })],
+  }),
+  // A previous credit rounded up: what is left in money (250) is below the proportional amount of a smaller quantity.
+  i11: detailOf(INVOICES[9], {
+    lines: [line({
+      kind: 'ARTICLE', batchId: null, stockItemId: 's2', sourceLabel: 'Aliment ponte', designation: 'Aliment ponte', unit: 'kg', quantity: 3, unitPrice: 100,
+      amount: 300, creditedQuantity: 0.1, creditableQuantity: 2.9, creditableAmount: 250, category: 'VENTE_ARTICLES',
+    })],
+  }),
   i8: detailOf(INVOICES[7], { cancelReason: 'Erreur de client', lines: [line({ creditedQuantity: 0, creditableQuantity: 0 })] }),
   // Amounts the API stored differ from quantity × unit price: they are what is shown.
   i9: detailOf(inv('i9', 'FA-0320', 'EMISE', { total: 250, paid: 0, due: 250 }), {
-    lines: [line({ quantity: 2, unitPrice: 100, amount: 250, creditedQuantity: 0, creditableQuantity: 2 })],
+    lines: [line({ quantity: 2, unitPrice: 100, amount: 250, creditedQuantity: 0, creditableQuantity: 2, creditableAmount: 250 })],
   }),
 };
 
@@ -296,16 +317,26 @@ describe('invoice form', () => {
     expect(screen.getByRole('dialog', { name: 'Ajouter — Ventes' })).toBeInTheDocument();
   });
 
-  it('shows the due date the API will give (date + invoiceDueDays) as the placeholder of Échéance, and sends a typed one', async () => {
+  it('prints the due date the API will give (date + invoiceDueDays) under Échéance, and sends a typed one', async () => {
     const { user, dialog } = await openForm();
     await user.clear(within(dialog).getByLabelText('Date'));
     await user.type(within(dialog).getByLabelText('Date'), '2026-11-15');
-    await waitFor(() => expect(within(dialog).getByLabelText('Échéance')).toHaveAttribute('placeholder', '2026-11-30'));
+    expect(await within(dialog).findByText('Par défaut : 2026-11-30')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Échéance')).toHaveAccessibleDescription('Par défaut : 2026-11-30');
     await user.type(within(dialog).getByLabelText('Échéance'), '2026-12-05');
     await user.click(within(dialog).getByLabelText('Émettre la facture'));
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0].body).toMatchObject({ date: '2026-11-15', dueDate: '2026-12-05' });
+  });
+
+  it('shows no due-date hint, and asks for no settings, to a role that cannot read them', async () => {
+    const { user, dialog } = await openForm({ perms: { clients: ['read'], ventes: ['read', 'create', 'update'] } });
+    await user.clear(within(dialog).getByLabelText('Date'));
+    await user.type(within(dialog).getByLabelText('Date'), '2026-11-15');
+    expect(within(dialog).queryByText(/Par défaut/)).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Échéance')).not.toHaveAccessibleDescription();
+    expect(calls.some((c) => c.url === '/api/settings')).toBe(false);
   });
 
   it('edits a draft after loading it, sending only what changed', async () => {
@@ -381,21 +412,49 @@ describe('row actions by status and permission', () => {
 });
 
 describe('issue', () => {
-  const openIssue = async () => {
-    mountList(ventes);
+  const openIssue = async (opts?: Parameters<typeof mount>[1]) => {
+    mountList(ventes, opts);
     await screen.findByText('Aliment ponte');
     const user = userEvent.setup();
-    await user.click(within(screen.getByText('Aliment ponte').closest('tr')!).getByRole('button', { name: 'Émettre' }));
+    await user.click(within(screen.getByText('Aliment ponte', { selector: 'td' }).closest('tr')!).getByRole('button', { name: 'Émettre' }));
     return { user, dialog: await screen.findByRole('dialog') };
   };
 
-  it('confirms with what it will decrement, then posts the issue', async () => {
+  it('confirms with what it will decrement, then posts the issue with no payment', async () => {
     const { user, dialog } = await openIssue();
     expect(flat(dialog.textContent)).toContain('Émettre Restaurant Le Palmier — 32 000 FCFA ? Les animaux, œufs et articles vendus seront sortis des lots et du stock.');
+    expect(within(dialog).getByLabelText('Paiement comptant')).not.toBeChecked();
+    expect(within(dialog).queryByLabelText('Montant (FCFA)')).not.toBeInTheDocument();
     expect(writes()).toHaveLength(0);
     await user.click(within(dialog).getByRole('button', { name: 'Émettre' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/sales/i5/issue' });
+    expect(writes()[0]).toEqual({ method: 'POST', url: '/api/sales/i5/issue', body: {} });
+  });
+
+  it('lets an accountant issue with an optional cash payment (amount prefilled with the total, method, reference)', async () => {
+    const { user, dialog } = await openIssue({ perms: COMPTABLE });
+    await user.click(within(dialog).getByLabelText('Paiement comptant'));
+    expect(within(dialog).getByLabelText('Montant (FCFA)')).toHaveValue(32000);
+    expect(within(dialog).getByLabelText('Mode de paiement')).toHaveValue('ESPECES');
+    await user.clear(within(dialog).getByLabelText('Montant (FCFA)'));
+    await user.type(within(dialog).getByLabelText('Montant (FCFA)'), '12000');
+    await user.selectOptions(within(dialog).getByLabelText('Mode de paiement'), 'Mobile money');
+    await user.type(within(dialog).getByLabelText('Référence'), 'MM-7');
+    await user.click(within(dialog).getByRole('button', { name: 'Émettre' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toEqual({
+      method: 'POST', url: '/api/sales/i5/issue', body: { payment: { amount: 12000, method: 'MOBILE_MONEY', reference: 'MM-7' } },
+    });
+  });
+
+  it('refuses a cash payment above the total before posting', async () => {
+    const { user, dialog } = await openIssue();
+    await user.click(within(dialog).getByLabelText('Paiement comptant'));
+    await user.clear(within(dialog).getByLabelText('Montant (FCFA)'));
+    await user.type(within(dialog).getByLabelText('Montant (FCFA)'), '32001');
+    await user.click(within(dialog).getByRole('button', { name: 'Émettre' }));
+    expect(await within(dialog).findByText('Le montant dépasse le reste dû')).toBeInTheDocument();
+    expect(writes()).toHaveLength(0);
   });
 
   it.each([
@@ -678,6 +737,8 @@ describe('invoice detail', () => {
     expect(within(sheet).queryByText('PRIX UNITAIRE')).not.toBeInTheDocument();
     expect(within(sheet).queryByText(/FCFA/)).not.toBeInTheDocument();
     expect(within(sheet).queryByText(/^Total/)).not.toBeInTheDocument();
+    // Goods only: the prestation line stays on the invoice.
+    expect(within(sheet).queryByText('Livraison à domicile')).not.toBeInTheDocument();
   });
 
   it('lists the payments, deletes one after a confirmation and prints its receipt', async () => {
@@ -765,5 +826,100 @@ describe('role views', () => {
   it('gives the storekeeper no access', async () => {
     mount(<Routes><Route path="/m/:module" element={<ModuleRoute />} /></Routes>, { perms: { stocks: ['read'] }, route: '/m/ventes' });
     expect(await screen.findByText('Accès non autorisé')).toBeInTheDocument();
+  });
+});
+
+describe('credit preview of a line already partly credited', () => {
+  const openCredit = async (ref: string) => {
+    mountList(ventes, { perms: COMPTABLE });
+    await screen.findByText(ref);
+    const user = userEvent.setup();
+    await user.click(rowOf(ref).getByRole('button', { name: 'Avoir' }));
+    const dialog = await screen.findByRole('dialog', { name: `Avoir ${ref}` });
+    await waitFor(() => expect(within(dialog).getByLabelText('Quantité à créditer ligne 1')).toBeInTheDocument());
+    return { user, dialog };
+  };
+
+  it('previews the remaining amount (416.67, not 416.66 again) when the credit takes everything creditable', async () => {
+    const { user, dialog } = await openCredit('FA-0314');
+    await user.type(within(dialog).getByLabelText('Quantité à créditer ligne 1'), '1.25');
+    expect(flat(within(dialog).getByTestId('amount-1').textContent)).toContain('416.67 FCFA');
+    expect(flat(within(dialog).getByText(/^Total :/).textContent)).toBe('Total : 416.67 FCFA');
+  });
+
+  it('previews the proportional amount of a smaller quantity', async () => {
+    const { user, dialog } = await openCredit('FA-0314');
+    await user.type(within(dialog).getByLabelText('Quantité à créditer ligne 1'), '0.5');
+    expect(flat(within(dialog).getByTestId('amount-1').textContent)).toContain('166.67 FCFA');
+  });
+
+  it('never previews more than what is left of the line', async () => {
+    const { user, dialog } = await openCredit('FA-0316');
+    await user.type(within(dialog).getByLabelText('Quantité à créditer ligne 1'), '2.8');
+    expect(flat(within(dialog).getByTestId('amount-1').textContent)).toContain('250 FCFA');
+    expect(flat(within(dialog).getByText(/^Total :/).textContent)).toBe('Total : 250 FCFA');
+  });
+});
+
+describe('cancelling and the total-0 invoice', () => {
+  it('offers Annuler on an invoice settled at issue with nothing paid and nothing credited (the gate is payment and credit note, not the status)', async () => {
+    mountList(ventes, { perms: COMPTABLE });
+    await screen.findByText('FA-0315');
+    expect(rowOf('FA-0315').getByRole('button', { name: 'Annuler' })).toBeInTheDocument();
+    expect(rowOf('FA-0310').queryByRole('button', { name: 'Annuler' })).not.toBeInTheDocument();
+  });
+});
+
+describe('read-only roles', () => {
+  it.each([['DIRECTEUR_FERME'], ['AUDITEUR']])('gives %s (read only) no action on any status, in the list or on the detail', async () => {
+    const perms = { clients: ['read'], ventes: ['read'] };
+    mountList(ventes, { perms });
+    await screen.findByText('FA-0301');
+    expect(screen.queryByRole('button', { name: /Ajouter|Émettre|Encaisser|Avoir|Rembourser|Annuler|Modifier|Supprimer/ })).not.toBeInTheDocument();
+    cleanup();
+    for (const id of ['i1', 'i2', 'i5', 'i7', 'i8']) {
+      mount(<InvoiceDetail id={id} />, { perms });
+      await waitFor(() => expect(screen.getByRole('tab', { name: 'Lignes' })).toBeInTheDocument());
+      expect(screen.queryByRole('button', { name: /Émettre|Encaisser|Avoir|Rembourser|Annuler/ })).not.toBeInTheDocument();
+      cleanup();
+    }
+  });
+});
+
+describe('refetch after an action', () => {
+  const listGets = () => calls.filter((c) => c.method === 'GET' && /^\/api\/sales\?/.test(c.url)).length;
+  const detailGets = (id: string) => calls.filter((c) => c.method === 'GET' && c.url === `/api/sales/${id}`).length;
+
+  it('reloads the list after a payment', async () => {
+    mountList(ventes);
+    await screen.findByText('FA-0309');
+    const before = listGets();
+    const user = userEvent.setup();
+    await user.click(rowOf('FA-0309').getByRole('button', { name: 'Encaisser' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    await waitFor(() => expect(listGets()).toBeGreaterThan(before));
+  });
+
+  it('reloads the detail after an action on it', async () => {
+    mount(<InvoiceDetail id="i2" />);
+    await screen.findByRole('heading', { name: 'FA-0309' });
+    const before = detailGets('i2');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Encaisser' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    await waitFor(() => expect(detailGets('i2')).toBeGreaterThan(before));
+  });
+
+  it('reloads the detail after a payment deletion', async () => {
+    mount(<InvoiceDetail id="i2" />);
+    await screen.findByRole('heading', { name: 'FA-0309' });
+    const before = detailGets('i2');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Paiements' }));
+    await user.click(rowOf('RC-0001').getByRole('button', { name: 'Supprimer' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Supprimer' }));
+    await waitFor(() => expect(detailGets('i2')).toBeGreaterThan(before));
   });
 });

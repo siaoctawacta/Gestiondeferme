@@ -2,12 +2,10 @@ import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Printer } from 'lucide-react';
-import { api, ApiError } from '../../lib/api';
+import { api } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { formatDate, formatMoney } from '../../lib/format';
 import { farmKey, useFarmQuery } from '../../lib/query';
-import { ErrorRetry } from '../../components/module/ErrorRetry';
-import { errorMessage } from '../../components/module/errorMessage';
 import { canRunAction } from '../../components/module/rowActions';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
@@ -16,7 +14,8 @@ import { Pill } from '../../components/ui/Pill';
 import { Table, TD, TR } from '../../components/ui/Table';
 import { kindLabel, lineQuantityLabel } from '../../modules/saleLines';
 import { QUOTE_ACTIONS, quoteStatusDef, type QuoteActionDef, type QuoteData } from '../../modules/salesShared';
-import NotFound from '../NotFound';
+import { DetailGate } from './DetailGate';
+import { HistoryTab } from './HistoryTab';
 import { QuoteSheet } from '../print/SaleSheets';
 import { SheetHeads, useLegal } from '../print/SheetFrame';
 import { DetailLayout } from './DetailLayout';
@@ -35,26 +34,6 @@ function LinesTab({ data }: { data: QuoteData }) {
               <TD>{lineQuantityLabel(l)}</TD>
               <TD>{formatMoney(l.unitPrice)}</TD>
               <TD>{formatMoney(l.amount)}</TD>
-            </TR>
-          ))}
-        </tbody>
-      </Table>
-    </Card>
-  );
-}
-
-function HistoryTab({ data }: { data: QuoteData }) {
-  return (
-    <Card className="overflow-hidden">
-      <Table>
-        <SheetHeads labels={['ÉTAPE', 'DATE', 'PAR']} />
-        <tbody>
-          {data.history.length === 0 && <TR><TD colSpan={3} className="py-10 text-center text-muted-foreground">Aucun enregistrement</TD></TR>}
-          {data.history.map((h, i) => (
-            <TR key={`${i}-${h.step}`}>
-              <TD className="font-semibold">{quoteStatusDef(h.step)?.label ?? h.step}</TD>
-              <TD>{formatDate(h.at)}</TD>
-              <TD>{h.by ?? '—'}</TD>
             </TR>
           ))}
         </tbody>
@@ -110,7 +89,7 @@ function Loaded({ data }: { data: QuoteData }) {
           ]}
           tabs={[
             { key: 'lines', label: 'Lignes', content: <LinesTab data={data} /> },
-            { key: 'history', label: 'Historique', content: <HistoryTab data={data} /> },
+            { key: 'history', label: 'Historique', content: <HistoryTab steps={data.history} label={(s) => quoteStatusDef(s)?.label ?? s} /> },
           ]}
         />
       </div>
@@ -123,11 +102,5 @@ function Loaded({ data }: { data: QuoteData }) {
 /** `/m/ventes/devis/:id`: one quote with its lines and history, the workflow actions, and the printable devis. */
 export function QuoteDetail({ id }: { id: string }) {
   const query = useFarmQuery<QuoteData>(['/quotes', 'detail', id], () => api.get<QuoteData>(`/quotes/${id}`));
-
-  if (query.isPending) return <div aria-busy className="h-40 animate-pulse rounded-3xl bg-muted" />;
-  if (query.isError) {
-    if (query.error instanceof ApiError && (query.error.status === 404 || query.error.status === 400)) return <NotFound />;
-    return <ErrorRetry message={errorMessage(query.error)} onRetry={() => query.refetch()} />;
-  }
-  return <Loaded data={query.data} />;
+  return <DetailGate query={query}>{(data) => <Loaded data={data} />}</DetailGate>;
 }

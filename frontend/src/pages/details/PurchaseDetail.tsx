@@ -1,14 +1,12 @@
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Printer, Trash2 } from 'lucide-react';
-import { api, ApiError } from '../../lib/api';
+import { api } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { formatDate, formatMoney, formatNumber } from '../../lib/format';
 import { farmKey, useFarmQuery } from '../../lib/query';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ActionButton } from '../../components/module/DataTable';
-import { ErrorRetry } from '../../components/module/ErrorRetry';
-import { errorMessage } from '../../components/module/errorMessage';
 import { canRunAction } from '../../components/module/rowActions';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
@@ -19,7 +17,8 @@ import { PURCHASE_ACTIONS, type PurchaseActionDef } from '../../modules/purchase
 import {
   ORDERED, activityLabel, methodLabel, statusDef, type PurchaseData, type PurchasePayment,
 } from '../../modules/purchasingShared';
-import NotFound from '../NotFound';
+import { DetailGate } from './DetailGate';
+import { HistoryTab } from './HistoryTab';
 import { SheetFrame, SheetHeads, SheetTable, SheetTotal, useLegal, type Legal } from '../print/SheetFrame';
 import { DetailLayout } from './DetailLayout';
 
@@ -71,29 +70,6 @@ function PaymentsTab({ data, canDelete, onDelete }: { data: PurchaseData; canDel
                   )}
                 </div>
               </TD>
-            </TR>
-          ))}
-        </tbody>
-      </Table>
-    </Card>
-  );
-}
-
-function HistoryTab({ data }: { data: PurchaseData }) {
-  return (
-    <Card className="overflow-hidden">
-      <Table>
-        <SheetHeads labels={['ÉTAPE', 'DATE', 'PAR', 'NOTE']} />
-        <tbody>
-          {data.history.length === 0 && (
-            <TR><TD colSpan={4} className="py-10 text-center text-muted-foreground">Aucun enregistrement</TD></TR>
-          )}
-          {data.history.map((h, i) => (
-            <TR key={`${i}-${h.step}`}>
-              <TD className="font-semibold">{statusDef(h.step)?.label ?? h.step}</TD>
-              <TD>{formatDate(h.at)}</TD>
-              <TD>{h.by ?? '—'}</TD>
-              <TD>{h.note ?? ''}</TD>
             </TR>
           ))}
         </tbody>
@@ -195,7 +171,7 @@ function Loaded({ data }: { data: PurchaseData }) {
               label: 'Paiements',
               content: <PaymentsTab data={data} canDelete={canRunAction('validate', 'achats', can, writable)} onDelete={setDeleting} />,
             },
-            { key: 'history', label: 'Historique', content: <HistoryTab data={data} /> },
+            { key: 'history', label: 'Historique', content: <HistoryTab steps={data.history} label={(s) => statusDef(s)?.label ?? s} withNote /> },
           ]}
         />
       </div>
@@ -226,11 +202,5 @@ function Loaded({ data }: { data: PurchaseData }) {
 /** `/m/achats/:id`: one purchase with its lines, payments and history, the workflow actions, and the printable bon de commande. */
 export function PurchaseDetail({ id }: { id: string }) {
   const query = useFarmQuery<PurchaseData>(['/purchases', 'detail', id], () => api.get<PurchaseData>(`/purchases/${id}`));
-
-  if (query.isPending) return <div aria-busy className="h-40 animate-pulse rounded-3xl bg-muted" />;
-  if (query.isError) {
-    if (query.error instanceof ApiError && (query.error.status === 404 || query.error.status === 400)) return <NotFound />;
-    return <ErrorRetry message={errorMessage(query.error)} onRetry={() => query.refetch()} />;
-  }
-  return <Loaded data={query.data} />;
+  return <DetailGate query={query}>{(data) => <Loaded data={data} />}</DetailGate>;
 }

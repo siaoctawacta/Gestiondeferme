@@ -63,7 +63,7 @@ export interface ModuleListProps<T extends { id: string }> {
   scope?: Record<string, string>;
   /** Hides the add, edit and delete controls and the writing row actions (e.g. the embedded lists of a closed lot). */
   readOnly?: boolean;
-  /** Hides `Ajouter` only: the rows keep their icons (disabled by `canEdit` / `canDelete` when the config says so). */
+  /** Hides `Ajouter` only: the rows keep their icons (disabled by `canEdit` / `canDelete` when the config says so). The same flag as `ModuleConfig.noCreate`; either one hides it. */
   noCreate?: boolean;
 }
 
@@ -134,7 +134,8 @@ function ModuleView<T extends { id: string }>({
 
   const scoped = config.farmScoped !== false;
   const writable = !scoped || farmId !== 'all';
-  const canCreate = !readOnly && !noCreate && !config.noCreate && can(config.slug, config.createPermission ?? 'create') && writable;
+  const hideAdd = noCreate || config.noCreate === true;
+  const canCreate = !readOnly && !hideAdd && can(config.slug, config.createPermission ?? 'create') && writable;
   const canEditRows = !readOnly && can(config.slug, config.editPermission ?? 'update') && writable;
   const closedGates = readOnly ? config.whenReadOnly : undefined;
   const canDeleteRows = (!readOnly || Boolean(closedGates?.canDelete)) && can(config.slug, config.deletePermission ?? 'delete') && writable;

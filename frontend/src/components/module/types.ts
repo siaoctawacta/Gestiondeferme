@@ -49,11 +49,11 @@ interface FieldBase {
   /** Only shown (and sent) when creating / when editing (update DTOs reject unknown keys). */
   only?: 'create' | 'update';
   /**
-   * Hint of an empty text, number, password or date input: what the server will use when it is left blank (a due date
-   * computed from a setting). A date input shows no placeholder of its own, so the form also prints it under the input
-   * as `Par défaut : {placeholder}` while the input is empty.
+   * Helper text shown under the control and linked to it (`aria-describedby`), in full as the caller words it
+   * (`Par défaut : 2026-11-30`). A function sees the form's current values and may answer `undefined` for no hint.
+   * Not for the cells of a `lines` grid.
    */
-  placeholder?: string;
+  hint?: string | ((values: Record<string, unknown>) => string | undefined);
   /**
    * Initial value when creating. A function is evaluated each time the dialog opens, so a date default
    * (`todayIso`) is never frozen when the module loads.
@@ -365,8 +365,10 @@ type ModuleConfigBase<T extends { id: string }> = {
    */
   createPermission?: Action;
   /**
-   * No `Ajouter` button at all, for a list whose records are made elsewhere (credit notes are made from an invoice).
-   * `fields: []` goes with it; `canEdit` / `canDelete` answering `false` hide the row icons of a final record.
+   * No `Ajouter` button, for a list whose records are made elsewhere (credit notes are made from an invoice). THE flag
+   * for it: `ModuleList`'s `noCreate` prop (a page that embeds a list and hides the button in some states) sets the same
+   * thing, and either one hides it. The rows keep their icons: `canEdit` / `canDelete` answering `false` hide those of a
+   * final record. `fields: []` goes with it when there is no generated form.
    */
   noCreate?: boolean;
   /**

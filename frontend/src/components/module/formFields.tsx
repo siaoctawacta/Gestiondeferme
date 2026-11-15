@@ -138,6 +138,8 @@ export interface FieldInputProps {
   parentValue?: string;
   /** Messages of a `lines` field, shown under its grid. */
   errors?: string[];
+  /** The field's helper text, already resolved against the form values. */
+  hint?: string;
 }
 
 function MultiSelectInput({ field, value, onChange }: FieldInputProps & { field: Extract<Field, { type: 'multiselect' }> }) {
@@ -166,7 +168,7 @@ function MultiSelectInput({ field, value, onChange }: FieldInputProps & { field:
   );
 }
 
-function LabelledControl({ field, value, onChange, parentValue, waitingFor }: FieldInputProps & { field: Exclude<Field, { type: 'multiselect' | 'checkbox' | 'lines' | 'segmented' }> }) {
+function LabelledControl({ field, value, onChange, parentValue, waitingFor, hint }: FieldInputProps & { field: Exclude<Field, { type: 'multiselect' | 'checkbox' | 'lines' | 'segmented' }> }) {
   const id = useId();
   return (
     <div className="space-y-1.5">
@@ -180,11 +182,9 @@ function LabelledControl({ field, value, onChange, parentValue, waitingFor }: Fi
           onChange={(e) => onChange(e.target.value)}
         />
       ) : (
-        <CellControl id={id} field={field} value={value} onChange={(v) => onChange(v)} parentValue={parentValue} waitingFor={waitingFor} currentLabel={field.type === 'select' ? field.currentLabel : undefined} />
+        <CellControl id={id} aria-describedby={hint ? `${id}-hint` : undefined} field={field} value={value} onChange={(v) => onChange(v)} parentValue={parentValue} waitingFor={waitingFor} currentLabel={field.type === 'select' ? field.currentLabel : undefined} />
       )}
-      {field.type === 'date' && field.placeholder && String(value) === '' && (
-        <p className="text-xs text-muted-foreground">Par défaut : {field.placeholder}</p>
-      )}
+      {hint && <p id={`${id}-hint`} className="text-xs text-muted-foreground">{hint}</p>}
     </div>
   );
 }

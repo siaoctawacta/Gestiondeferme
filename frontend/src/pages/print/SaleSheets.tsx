@@ -95,7 +95,8 @@ export function DeliveryNoteSheet({ data, farmName, legal }: SheetProps & { data
       legal={legal}
     >
       <SheetTable labels={['DÉSIGNATION', 'QUANTITÉ']}>
-        {data.lines.map((l) => (
+        {/* Goods only: a prestation is nothing to hand over. */}
+        {data.lines.filter((l) => l.kind !== 'SERVICE').map((l) => (
           <TR key={l.position}>
             <TD>{l.designation}</TD>
             <TD>{lineQuantityLabel(l)}</TD>

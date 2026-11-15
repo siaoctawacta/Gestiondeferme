@@ -522,6 +522,17 @@ describe('ModulePage kit extensions', () => {
     expect(await screen.findByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
   });
 
+  it('ModuleConfig.noCreate is the same flag as the ModuleList prop: no Ajouter on the page, in a list, with the rows kept', async () => {
+    setup({ config: { ...batiments, noCreate: true } });
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+    expect(within(screen.getByText('Poulailler A').closest('tr')!).getByRole('button', { name: 'Modifier' })).toBeInTheDocument();
+    cleanup();
+    setup({ list: true, config: { ...batiments, noCreate: true } });
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+  });
+
   describe('a read-only list (closed lot, exited animal)', () => {
     const run = vi.fn();
     const withGates = (whenReadOnly?: ModuleConfig<Building>['whenReadOnly']): ModuleConfig<Building> => ({

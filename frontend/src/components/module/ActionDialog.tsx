@@ -141,6 +141,7 @@ export function ActionDialog({
               parentValue={parentValue}
               waitingFor={waitingFor}
               errors={lineErrors?.name === f.name ? lineErrors.messages : undefined}
+              hint={typeof f.hint === 'function' ? f.hint(values) : f.hint}
             />
           );
         })}

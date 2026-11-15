@@ -2,27 +2,27 @@ import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { FileText, Printer, Trash2, Truck } from 'lucide-react';
-import { api, ApiError } from '../../lib/api';
+import { api } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { formatDate, formatMoney, formatNumber } from '../../lib/format';
 import { farmKey, useFarmQuery } from '../../lib/query';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ActionButton } from '../../components/module/DataTable';
-import { ErrorRetry } from '../../components/module/ErrorRetry';
-import { errorMessage } from '../../components/module/errorMessage';
 import { canRunAction } from '../../components/module/rowActions';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { Pill } from '../../components/ui/Pill';
 import { Table, TD, TH, THead, TR } from '../../components/ui/Table';
-import { CreditNotePrintDialog, INVOICE_ACTIONS, type InvoiceActionDef } from '../../modules/saleActions';
+import { INVOICE_ACTIONS, type InvoiceActionDef } from '../../modules/saleActions';
 import { kindLabel, lineQuantityLabel } from '../../modules/saleLines';
 import { methodLabel } from '../../modules/purchasingShared';
 import {
   INVOICE_STEP_LABELS, invoiceStatusDef, type InvoiceCreditNote, type InvoiceData, type InvoicePayment,
 } from '../../modules/salesShared';
-import NotFound from '../NotFound';
+import { DetailGate } from './DetailGate';
+import { HistoryTab } from './HistoryTab';
+import { CreditNotePrintDialog } from '../print/CreditNotePrintDialog';
 import { DeliveryNoteSheet, InvoiceSheet, ReceiptSheet } from '../print/SaleSheets';
 import { SheetHeads, useLegal } from '../print/SheetFrame';
 import { DetailLayout } from './DetailLayout';
@@ -124,27 +124,6 @@ function CreditNotesTab({ data, onPrint }: { data: InvoiceData; onPrint: (c: Inv
   );
 }
 
-function HistoryTab({ data }: { data: InvoiceData }) {
-  return (
-    <Card className="overflow-hidden">
-      <Table>
-        <SheetHeads labels={['ÉTAPE', 'DATE', 'PAR', 'NOTE']} />
-        <tbody>
-          {data.history.length === 0 && <Empty cols={4} text="Aucun enregistrement" />}
-          {data.history.map((h, i) => (
-            <TR key={`${i}-${h.step}`}>
-              <TD className="font-semibold">{INVOICE_STEP_LABELS[h.step] ?? h.step}</TD>
-              <TD>{formatDate(h.at)}</TD>
-              <TD>{h.by ?? '—'}</TD>
-              <TD>{h.note ?? ''}</TD>
-            </TR>
-          ))}
-        </tbody>
-      </Table>
-    </Card>
-  );
-}
-
 function Loaded({ data }: { data: InvoiceData }) {
   const { can, farmId, farms } = useAuth();
   const queryClient = useQueryClient();
@@ -235,7 +214,7 @@ function Loaded({ data }: { data: InvoiceData }) {
               ),
             },
             { key: 'credits', label: 'Avoirs', content: <CreditNotesTab data={data} onPrint={setPrintingNote} /> },
-            { key: 'history', label: 'Historique', content: <HistoryTab data={data} /> },
+            { key: 'history', label: 'Historique', content: <HistoryTab steps={data.history} label={(s) => INVOICE_STEP_LABELS[s as keyof typeof INVOICE_STEP_LABELS] ?? s} withNote /> },
           ]}
         />
       </div>
@@ -266,11 +245,5 @@ function Loaded({ data }: { data: InvoiceData }) {
  */
 export function InvoiceDetail({ id }: { id: string }) {
   const query = useFarmQuery<InvoiceData>(['/sales', 'detail', id], () => api.get<InvoiceData>(`/sales/${id}`));
-
-  if (query.isPending) return <div aria-busy className="h-40 animate-pulse rounded-3xl bg-muted" />;
-  if (query.isError) {
-    if (query.error instanceof ApiError && (query.error.status === 404 || query.error.status === 400)) return <NotFound />;
-    return <ErrorRetry message={errorMessage(query.error)} onRetry={() => query.refetch()} />;
-  }
-  return <Loaded data={query.data} />;
+  return <DetailGate query={query}>{(data) => <Loaded data={data} />}</DetailGate>;
 }

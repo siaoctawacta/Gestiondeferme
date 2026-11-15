@@ -24,3 +24,6 @@ export const lineAmount = (quantity: number, unitPrice: number): number => lineC
 /** Σ of the rounded line amounts of rows as edited (empty cells count as 0), summed in integer cents. */
 export const linesTotal = (rows: { quantity?: string; unitPrice?: string }[]): number =>
   rows.reduce((sum, r) => sum + lineCents(Number(r.quantity || 0), Number(r.unitPrice || 0)), 0) / 100;
+
+/** Σ of amounts already rounded to cents, summed in integer cents (no float drift: `0.1 + 0.2` is `0.3`). */
+export const sumAmounts = (amounts: number[]): number => amounts.reduce((sum, a) => sum + (Number.isFinite(a) ? Math.round(a * 100) : 0), 0) / 100;

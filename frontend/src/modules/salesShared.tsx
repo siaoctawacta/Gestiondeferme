@@ -122,6 +122,8 @@ export interface InvoiceLineData extends SaleLineData {
   id: string;
   creditedQuantity: number;
   creditableQuantity: number;
+  /** What is left of the line in money: the last credit of a line takes exactly this (the lines' roundings never add up past the line). */
+  creditableAmount: number;
   activity: string;
   category: string;
 }

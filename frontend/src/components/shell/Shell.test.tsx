@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Shell } from '../../App';
@@ -49,7 +49,7 @@ describe('Shell without a farm', () => {
     mount('/', false);
     expect(await screen.findByText('Aucune ferme ne vous est attribuée. Contactez un administrateur.')).toBeInTheDocument();
     expect(screen.queryByText('page')).not.toBeInTheDocument();
-    expect(document.title).toBe('Aucune ferme — AgriPilot');
+    await waitFor(() => expect(document.title).toBe('Aucune ferme — AgriPilot'));
   });
 
   it('still renders the account page', async () => {

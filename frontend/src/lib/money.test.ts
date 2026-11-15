@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lineAmount, linesTotal } from './money';
+import { lineAmount, linesTotal, sumAmounts } from './money';
 
 describe('money', () => {
   it('rounds a line on its own', () => {
@@ -38,5 +38,13 @@ describe('money', () => {
     expect(lineAmount(NaN, 5)).toBe(0);
     expect(lineAmount(3, Infinity)).toBe(0);
     expect(linesTotal([{ quantity: 'abc', unitPrice: '5' }])).toBe(0);
+  });
+});
+
+describe('sumAmounts', () => {
+  it('sums amounts in integer cents (no float drift)', () => {
+    expect(sumAmounts([416.66, 416.67])).toBe(833.33);
+    expect(sumAmounts([0.1, 0.2])).toBe(0.3);
+    expect(sumAmounts([])).toBe(0);
   });
 });

@@ -12,7 +12,8 @@ import { linesTotal } from '../lib/money';
 import { farmKey, useFarmQuery } from '../lib/query';
 import { InvoiceDetail } from '../pages/details/InvoiceDetail';
 import { PAYMENT_METHODS } from './purchasingShared';
-import { CreditNotePrintDialog, INVOICE_ACTIONS } from './saleActions';
+import { CreditNotePrintDialog } from '../pages/print/CreditNotePrintDialog';
+import { INVOICE_ACTIONS } from './saleActions';
 import { saleLineLabels, saleLinesField, saleLinesToForm, saleLinesToPayload } from './saleLines';
 import {
   DuePill, addDays, devis, draftGate, type CreditNoteRow, type InvoiceData, type InvoiceRow,
@@ -48,7 +49,11 @@ function InvoiceDialog({ title, record, onClose, onDone }: { title: string; reco
     { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
     {
       name: 'dueDate', label: 'Échéance', type: 'date',
-      placeholder: dueDays !== undefined && values.date ? addDays(String(values.date), dueDays) || undefined : undefined,
+      // What the API will use when the field is left empty.
+      hint: (v) => {
+        const due = dueDays !== undefined && v.date ? addDays(String(v.date), dueDays) : '';
+        return v.dueDate || !due ? undefined : `Par défaut : ${due}`;
+      },
     },
     // The sources offered are those sellable on the invoice's date.
     saleLinesField(String(values.date ?? ''), record ? saleLineLabels(record.lines) : undefined),

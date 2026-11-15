@@ -16,6 +16,7 @@ export interface CellControlProps {
   onChange: (v: unknown, option?: OptionItem) => void;
   id?: string;
   'aria-label'?: string;
+  'aria-describedby'?: string;
   disabled?: boolean;
   /** Select: option values not offered (taken by another row), the current value always stays. */
   excluded?: string[];
@@ -57,6 +58,7 @@ export function CellControl({ field, value, onChange, id, disabled, excluded, pa
       <Select
         id={id}
         aria-label={aria['aria-label']}
+        aria-describedby={aria['aria-describedby']}
         className="w-full"
         value={current}
         disabled={disabled || none || waitingFor !== undefined || !allowed}
@@ -77,12 +79,12 @@ export function CellControl({ field, value, onChange, id, disabled, excluded, pa
     <Input
       id={id}
       aria-label={aria['aria-label']}
+      aria-describedby={aria['aria-describedby']}
       type={field.type}
       disabled={disabled}
       min={field.type === 'number' ? field.min : undefined}
       max={field.type === 'number' ? field.max : undefined}
       step={field.type === 'number' ? (typeof field.step === 'function' ? field.step(row ?? {}) : field.step) : undefined}
-      placeholder={'placeholder' in field ? field.placeholder : undefined}
       autoComplete={field.type === 'password' ? 'new-password' : undefined}
       value={String(value)}
       onChange={(e) => onChange(e.target.value)}

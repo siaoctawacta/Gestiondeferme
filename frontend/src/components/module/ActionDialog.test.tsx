@@ -468,3 +468,25 @@ describe('ActionDialog: fixed lines keep what the stored rows say beyond the col
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ lines: [{ designation: 'Poulets', quantity: 4 }] }));
   });
 });
+
+describe('ActionDialog: field hints', () => {
+  it('prints the hint under the control, linked to it, and follows the form values', async () => {
+    const fields: Field[] = [
+      { name: 'date', label: 'Date', type: 'date' },
+      { name: 'due', label: 'Échéance', type: 'date', hint: (v) => (v.due ? undefined : v.date ? `Par défaut : ${String(v.date)}+15` : undefined) },
+      { name: 'note', label: 'Note', type: 'text', hint: 'Facultatif' },
+    ];
+    mount({ fields });
+    const dialog = await screen.findByRole('dialog');
+    const user = userEvent.setup();
+    expect(within(dialog).getByLabelText('Note')).toHaveAccessibleDescription('Facultatif');
+    expect(within(dialog).getByText('Facultatif')).toBeVisible();
+    expect(within(dialog).queryByText(/Par défaut/)).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Échéance')).not.toHaveAttribute('aria-describedby');
+    await user.type(within(dialog).getByLabelText('Date'), '2026-11-15');
+    expect(await within(dialog).findByText('Par défaut : 2026-11-15+15')).toBeVisible();
+    expect(within(dialog).getByLabelText('Échéance')).toHaveAccessibleDescription('Par défaut : 2026-11-15+15');
+    await user.type(within(dialog).getByLabelText('Échéance'), '2026-12-01');
+    expect(within(dialog).queryByText(/Par défaut/)).not.toBeInTheDocument();
+  });
+});
