@@ -272,7 +272,13 @@ Les scénarios sont écrits avec `node:test` et `playwright` (pas `@playwright/t
 
 Scénarios : connexion et 2FA obligatoire (`auth.spec.ts`), site et bâtiments, droits de l'auditeur et
 journal d'audit (`batiments.spec.ts`), comparaison de rendu avec la référence et responsive mobile
-(`visual.spec.ts`). `npm run e2e -- --serve` laisse seulement les serveurs e2e démarrés.
+(`visual.spec.ts`), parcours de production de bout en bout (`production.spec.ts`).
+`npm run e2e -- --serve` laisse seulement les serveurs e2e démarrés ; `npm run e2e -- production` n'exécute que les
+specs dont le nom contient le mot donné (erreur s'il n'y en a aucune).
+
+Précondition : la date du serveur est postérieure au 2026-10-22, car les lignes de référence des captures sont
+datées d'octobre 2026 (aucune date future n'est acceptée). Les captures de `docs/reference/built/` peuvent différer
+d'un jour à l'autre par un seul nombre (« Dépassée depuis N j » de l'alerte de mise bas).
 
 ## Sauvegarde et restauration
 

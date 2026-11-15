@@ -6,7 +6,8 @@ export function formatNumber(n: number): string {
   return `${n < 0 ? '-' : ''}${grouped}${dec ? `.${dec}` : ''}`;
 }
 
-export const formatMoney = (n: number): string => `${formatNumber(n)} FCFA`;
+/** Money groups thousands with a regular no-break space (U+00A0): the reference's money lines show a wide gap, its tables a narrow one. */
+export const formatMoney = (n: number): string => `${formatNumber(n).replaceAll(NBSP, '\u00a0')}\u00a0FCFA`;
 
 /** `n` shifted by `by` decimal places, on its decimal representation (no binary-float drift). */
 function shift(n: number, by: number): number {

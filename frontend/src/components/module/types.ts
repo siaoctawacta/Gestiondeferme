@@ -120,7 +120,10 @@ export type ModuleConfig<T extends { id: string }> = {
   group: string;
   /** Page title; also the label of the first tab (unless `tabLabel`) and the dialog title suffix. */
   title: string;
-  /** Label of the first tab when it should differ from the page title (e.g. `Distributions`). */
+  /**
+   * Label of the first tab, to use when it differs from the page title (the page is `Alimentation & eau` but its
+   * first tab, next to `Aliments` and `Formules`, is `Distributions`). Default: `title`.
+   */
   tabLabel?: string;
   subtitle: string;
   /** List endpoint (`GET {items,total,page,pageSize}`), also used for create / patch / delete. */

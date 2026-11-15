@@ -1,11 +1,12 @@
 import { formatDate, formatDateFr, formatDateTime, formatDateTimeFr, formatMoney, formatNumber, formatPct } from './format';
 
 describe('format', () => {
-  it('formats numbers with a no-break space as thousands separator', () => {
-    expect(formatNumber(11570)).toBe('11 570');
+  it('formats numbers with a narrow no-break space (U+202F) as thousands separator', () => {
+    expect(formatNumber(11570)).toBe('11\u202f570');
   });
   it('formats money in FCFA', () => {
-    expect(formatMoney(3970000)).toBe('3 970 000 FCFA');
+    expect(formatMoney(3970000)).toBe('3\u00a0970\u00a0000\u00a0FCFA');
+    expect(formatMoney(-1135000)).toBe('-1\u00a0135\u00a0000\u00a0FCFA');
   });
   it('formats percentages with a dot decimal', () => {
     expect(formatPct(3.6)).toBe('3.6%');

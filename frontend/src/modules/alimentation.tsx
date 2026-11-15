@@ -13,7 +13,7 @@ import { Segmented } from '../components/ui/Segmented';
 import { Select } from '../components/ui/Select';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { formatMoney, formatNumber, formatPct } from '../lib/format';
+import { formatMoney, formatNumber } from '../lib/format';
 import { useFarmQuery } from '../lib/query';
 import { orDash, today } from './lotsShared';
 import { allPages } from './productionShared';
@@ -111,7 +111,9 @@ function DistributionForm({ row, scope, onSaved, onClose }: FormProps<FeedDistri
   const [targetKind, setTargetKind] = useState<'LOT' | 'BATIMENT'>(row?.targetKind ?? 'LOT');
   const [targetId, setTargetId] = useState(row?.batchId ?? row?.buildingId ?? '');
   const [feedKind, setFeedKind] = useState<'PRODUIT' | 'FORMULE'>(row?.formulaId ? 'FORMULE' : 'PRODUIT');
-  const [feedId, setFeedId] = useState(row?.feedProductId ?? row?.formulaId ?? '');
+  const storedKind = row?.formulaId ? 'FORMULE' : 'PRODUIT';
+  const storedFeedId = row?.feedProductId ?? row?.formulaId ?? '';
+  const [feedId, setFeedId] = useState(storedFeedId);
   const [quantity, setQuantity] = useState(row ? String(row.quantityKg) : '');
   const [water, setWater] = useState(row?.waterLiters != null ? String(row.waterLiters) : '');
   const [busy, setBusy] = useState(false);
@@ -127,8 +129,10 @@ function DistributionForm({ row, scope, onSaved, onClose }: FormProps<FeedDistri
 
   const storedTarget = row ? { value: row.batchId ?? row.buildingId ?? '', label: row.target } : null;
   const targetOptions = withStored(targetKind === 'LOT' ? [...avianLots, ...pigLots] : buildings, storedTarget);
-  const storedFeed = row ? { value: row.feedProductId ?? row.formulaId ?? '', label: row.feedName } : null;
-  const feedOptions = withStored(feedKind === 'PRODUIT' ? products : formulas, row && feedKind === (row.formulaId ? 'FORMULE' : 'PRODUIT') ? storedFeed : null);
+  const storedFeed = row ? { value: storedFeedId, label: row.feedName } : null;
+  const feedOptions = withStored(feedKind === 'PRODUIT' ? products : formulas, row && feedKind === storedKind ? storedFeed : null);
+  // Only the first distribution of a target and day carries the day's water (the others read `null`).
+  const waterLocked = Boolean(row) && row?.waterLiters === null;
   const targetLabel = targetKind === 'LOT' ? 'Lot' : 'Bâtiment';
   const feedLabel = feedKind === 'PRODUIT' ? 'Aliment' : 'Formule';
 
@@ -138,11 +142,15 @@ function DistributionForm({ row, scope, onSaved, onClose }: FormProps<FeedDistri
     const liters = Number(water);
     if (!date) return setError('Le champ « Date » est requis');
     if (picking && !targetId) return setError(`Le champ « ${targetLabel} » est requis`);
-    if (!feedId) return setError(`Le champ « ${feedLabel} » est requis`);
+    // An edit keeps the stored feed (even one no longer selectable) unless the kind was changed and no new feed picked.
+    const feedNow = feedId || (row && feedKind === storedKind ? storedFeedId : '');
+    if (!feedNow) return setError(`Le champ « ${feedLabel} » est requis`);
     if (quantity.trim() === '' || !(qty > 0)) return setError('La quantité doit être un nombre positif');
-    if (water.trim() !== '' && !(liters > 0)) return setError("Le volume d'eau doit être un nombre positif");
+    if (!waterLocked && water.trim() !== '' && !(liters > 0)) return setError("Le volume d'eau doit être un nombre positif");
+    // The API cannot clear a day's water through a distribution.
+    if (row && !waterLocked && water.trim() === '') return setError("La consommation d'eau ne peut pas être vidée ici");
 
-    const feed = feedKind === 'PRODUIT' ? { feedProductId: feedId } : { formulaId: feedId };
+    const feed = feedKind === 'PRODUIT' ? { feedProductId: feedNow } : { formulaId: feedNow };
     setBusy(true);
     setError(null);
     try {
@@ -155,9 +163,9 @@ function DistributionForm({ row, scope, onSaved, onClose }: FormProps<FeedDistri
         const body: Record<string, unknown> = {};
         if (date !== row.date) body.date = date;
         if (qty !== row.quantityKg) body.quantityKg = qty;
-        if (water.trim() !== '' && liters !== row.waterLiters) body.waterLiters = liters;
+        if (!waterLocked && liters !== row.waterLiters) body.waterLiters = liters;
         // An unchanged feed is not resent: the stored unit cost stays.
-        if (feedId !== (row.feedProductId ?? row.formulaId)) Object.assign(body, feed);
+        if (feedNow !== storedFeedId) Object.assign(body, feed);
         if (Object.keys(body).length > 0) await api.patch(`/feed-distributions/${row.id}`, body);
       }
       onSaved();
@@ -195,7 +203,7 @@ function DistributionForm({ row, scope, onSaved, onClose }: FormProps<FeedDistri
               label="Type d'aliment"
               value={feedKind}
               options={[{ value: 'PRODUIT', label: 'Aliment' }, { value: 'FORMULE', label: 'Formule' }]}
-              onChange={(k) => { setFeedKind(k); setFeedId(''); }}
+              onChange={(k) => { setFeedKind(k); setFeedId(row && k === storedKind ? storedFeedId : ''); }}
             />
             <div className="min-w-48 flex-1">
               <SelectField label={feedLabel} value={feedId} options={feedOptions} onChange={setFeedId} />
@@ -203,7 +211,16 @@ function DistributionForm({ row, scope, onSaved, onClose }: FormProps<FeedDistri
           </div>
         </div>
         <Field label="Quantité (kg)" type="number" min={0} step={0.01} value={quantity} onChange={(e) => setQuantity(e.target.value)} />
-        <Field label="Eau (L)" type="number" min={0} step={0.01} value={water} onChange={(e) => setWater(e.target.value)} hint="Facultatif : enregistre l'eau de la même cible et du même jour." />
+        <Field
+          label="Eau (L)"
+          type="number"
+          min={0}
+          step={0.01}
+          value={water}
+          disabled={waterLocked}
+          onChange={(e) => setWater(e.target.value)}
+          hint={waterLocked ? "La consommation d'eau du jour est portée par la première distribution" : "Eau du jour pour cette cible (une seule valeur par jour)"}
+        />
         {error && <Alert>{error}</Alert>}
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="outline" onClick={onClose}>Annuler</Button>
@@ -218,6 +235,9 @@ interface Line { productId: string; percentage: string }
 
 /** Hundredths of a percent, so sums are exact. */
 const hundredths = (s: string) => Math.round(Number(s || 0) * 100);
+const totalHundredths = (lines: { percentage: string }[]) => lines.reduce((sum, l) => sum + hundredths(l.percentage), 0);
+/** `100%` when exact, else up to two decimals (`99.95%`), so the total never reads 100 % while the line says it falls short. */
+const showTotal = (h: number) => `${+(h / 100).toFixed(2)}%`;
 
 /**
  * Add / edit a formula: name, species, stage and ingredient lines (product + percentage). The running total
@@ -236,9 +256,9 @@ function FormulaForm({ row, onSaved, onClose }: FormProps<FeedFormula>) {
   const [error, setError] = useState<string | null>(null);
 
   const catalogue = products.data ?? [];
+  const total = totalHundredths(lines);
   const byId = new Map(catalogue.map((p) => [p.id, p]));
-  const totalHundredths = lines.reduce((sum, l) => sum + hundredths(l.percentage), 0);
-  const complete = Math.abs(totalHundredths - 10000) <= 1;
+  const complete = Math.abs(total - 10000) <= 1;
   const costPerKg = round2(lines.reduce((sum, l) => sum + (Number(l.percentage || 0) * (byId.get(l.productId)?.unitCost ?? 0)) / 100, 0));
 
   const setLine = (at: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, i) => (i === at ? { ...l, ...patch } : l)));
@@ -291,6 +311,7 @@ function FormulaForm({ row, onSaved, onClose }: FormProps<FeedFormula>) {
           </div>
           <Field label="Stade" placeholder="Démarrage" value={stage} onChange={(e) => setStage(e.target.value)} />
         </div>
+        {products.isError && <Alert>{errorMessage(products.error)}</Alert>}
         <fieldset className="space-y-2">
           <legend className={LABEL}>Composition</legend>
           {lines.map((l, i) => (
@@ -320,7 +341,7 @@ function FormulaForm({ row, onSaved, onClose }: FormProps<FeedFormula>) {
               Ajouter une ligne
             </Button>
             <p data-testid="formula-total" className={`text-sm font-medium ${complete ? 'text-accent-foreground' : 'text-warning-foreground'}`}>
-              Total : {formatPct(totalHundredths / 100)}{complete ? '' : ' (doit atteindre 100%)'}
+              Total : {showTotal(total)}{complete ? '' : ' (doit atteindre 100%)'}
             </p>
           </div>
         </fieldset>

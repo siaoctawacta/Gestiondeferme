@@ -91,6 +91,7 @@ try {
     .filter((f) => f.endsWith('.spec.ts') && (only.length === 0 || only.some((w) => f.includes(w))))
     .sort()
     .map((f) => join('e2e', f));
+  if (specs.length === 0) throw new Error(`Aucune spec ne correspond à « ${only.join(' ')} » (fichiers : ${readdirSync(here).filter((f) => f.endsWith('.spec.ts')).join(', ')})`);
   const r = spawnSync(
     'node',
     ['--disable-warning=ExperimentalWarning', '--test', '--test-concurrency=1', '--test-timeout=120000', ...specs],

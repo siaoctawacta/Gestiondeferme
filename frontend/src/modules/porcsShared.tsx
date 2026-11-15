@@ -100,8 +100,8 @@ export const categoryLabel = (value: string) => ANIMAL_CATEGORIES.find((c) => c.
 
 export const STATUSES: StatusDef[] = [
   { value: 'ACTIF', label: 'Actif', tone: 'success' },
-  { value: 'GESTANTE', label: 'Gestante', tone: 'warning' },
-  { value: 'ALLAITANTE', label: 'Allaitante', tone: 'warning' },
+  { value: 'GESTANTE', label: 'Gestante', tone: 'success' },
+  { value: 'ALLAITANTE', label: 'Allaitante', tone: 'success' },
   { value: 'VENDU', label: 'Vendu', tone: 'neutral' },
   { value: 'MORT', label: 'Mort', tone: 'danger' },
   { value: 'REFORME', label: 'Réformé', tone: 'neutral' },

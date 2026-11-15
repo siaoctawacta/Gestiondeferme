@@ -209,6 +209,69 @@ describe('alimentation', () => {
     expect(writes()[0].body).toEqual({ feedProductId: 'p2' });
   });
 
+  it('edits a distribution whose product is no longer selectable, and restores the stored feed when toggling back', async () => {
+    PRODUCTS[0].active = false;
+    try {
+      mountPage();
+      await screen.findByText('LC-2026-14');
+      const user = userEvent.setup();
+      await user.click(within(screen.getByText('LC-2026-14').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+      const dialog = await screen.findByRole('dialog');
+      expect(within(dialog).getByRole('combobox', { name: 'Aliment' })).toHaveValue('p1');
+      await user.click(within(dialog).getByRole('radio', { name: 'Formule' }));
+      expect(within(dialog).getByRole('combobox', { name: 'Formule' })).toHaveValue('');
+      await user.click(within(dialog).getByRole('radio', { name: 'Aliment' }));
+      await waitFor(() => expect(within(dialog).getByRole('combobox', { name: 'Aliment' })).toHaveValue('p1'));
+      await user.clear(within(dialog).getByLabelText('Quantité (kg)'));
+      await user.type(within(dialog).getByLabelText('Quantité (kg)'), '700');
+      await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect(writes()[0].body).toEqual({ quantityKg: 700 });
+    } finally {
+      PRODUCTS[0].active = true;
+    }
+  });
+
+  it('asks for a new feed when the kind was changed on an edit', async () => {
+    mountPage();
+    await screen.findByText('LC-2026-14');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('LC-2026-14').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('radio', { name: 'Formule' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Le champ « Formule » est requis')).toBeInTheDocument();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it('refuses to empty the water of the row that carries it', async () => {
+    mountPage();
+    await screen.findByText('LC-2026-14');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('LC-2026-14').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Eau du jour pour cette cible (une seule valeur par jour)')).toBeInTheDocument();
+    await user.clear(within(dialog).getByLabelText('Eau (L)'));
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText("La consommation d'eau ne peut pas être vidée ici")).toBeInTheDocument();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it('disables the water of a row that is not the first of its target and day, and never sends it', async () => {
+    mountPage();
+    await screen.findByText('LC-2026-14');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('Porcherie 1').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Eau (L)')).toBeDisabled();
+    expect(within(dialog).getByText("La consommation d'eau du jour est portée par la première distribution")).toBeInTheDocument();
+    await user.clear(within(dialog).getByLabelText('Quantité (kg)'));
+    await user.type(within(dialog).getByLabelText('Quantité (kg)'), '500');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({ quantityKg: 500 });
+  });
+
   it('sends nothing when an edit changes nothing', async () => {
     mountPage();
     await screen.findByText('LC-2026-14');
@@ -314,6 +377,24 @@ describe('formules', () => {
         items: [{ feedProductId: 'p2', percentage: 60 }, { feedProductId: 'p1', percentage: 40 }],
       },
     });
+  });
+
+  it('shows two decimals when the total is not exactly 100, never 100% next to the warning', async () => {
+    const user = await openForm();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByRole('option', { name: 'Maïs' })).toBeInTheDocument());
+    await user.selectOptions(within(dialog).getByLabelText('Aliment ligne 1'), 'Maïs');
+    await user.type(within(dialog).getByLabelText('Pourcentage ligne 1'), '99.95');
+    expect(within(dialog).getByTestId('formula-total')).toHaveTextContent('Total : 99.95% (doit atteindre 100%)');
+  });
+
+  it('shows an error when the products catalogue cannot be loaded', async () => {
+    const user = await openForm();
+    fetchMock.mockImplementation(async (input) => (String(input).startsWith('/api/feed-products') ? json(500, { message: 'Erreur serveur' }) : page([])));
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(await within(dialog).findByText('Erreur serveur')).toBeInTheDocument();
   });
 
   it('refuses a total below 100 % without a request, and removes a line', async () => {

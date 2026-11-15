@@ -228,6 +228,38 @@ describe('production : lots, ponte, porcs, reproduction et alimentation de bout 
     await page.getByRole('row', { name: /Croissance démo/ }).waitFor();
   });
 
+  it('alimentation : une formule de deux lignes (100 %) au coût au kg affiché, utilisée dans une distribution', async () => {
+    await asDirector('/feed-products', 'POST', { name: 'Maïs démo', kind: 'MATIERE_PREMIERE', unitCost: 200 });
+    await page.goto(`${WEB_URL}/m/alimentation`);
+    await page.getByRole('tab', { name: 'Formules' }).click();
+    await page.getByRole('button', { name: 'Ajouter' }).click();
+    let dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Nom').fill('Mélange démo');
+    await dialog.getByLabel('Stade').fill('Croissance');
+    await dialog.getByLabel('Aliment ligne 1').selectOption({ label: 'Croissance démo' });
+    await dialog.getByLabel('Pourcentage ligne 1').fill('50');
+    await dialog.getByRole('button', { name: 'Ajouter une ligne' }).click();
+    await dialog.getByLabel('Aliment ligne 2').selectOption({ label: 'Maïs démo' });
+    await dialog.getByLabel('Pourcentage ligne 2').fill('50');
+    assert.match(flat(await dialog.getByTestId('formula-total').innerText()), /Total : 100%/);
+    // 50 % x 340 + 50 % x 200 = 270 FCFA per kg.
+    assert.match(flat(await dialog.getByTestId('formula-cost').innerText()), /^270 FCFA$/);
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.match(flat(await page.getByRole('row', { name: /Mélange démo/ }).innerText()), /270 FCFA/);
+
+    await page.getByRole('tab', { name: 'Distributions' }).click();
+    await page.getByRole('button', { name: 'Ajouter' }).click();
+    dialog = page.getByRole('dialog');
+    await dialog.getByRole('combobox', { name: 'Lot' }).selectOption({ label: lotCode });
+    await dialog.getByRole('radio', { name: 'Formule' }).click();
+    await dialog.getByRole('combobox', { name: 'Formule' }).selectOption({ label: 'Mélange démo' });
+    await dialog.getByLabel('Quantité (kg)').fill('100');
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.match(flat(await page.getByRole('row', { name: /Mélange démo/ }).innerText()), /27 000 FCFA/);
+  });
+
   it('un agent d’élevage ajoute une mortalité mais ne voit aucune suppression', async () => {
     await api('/users', {
       method: 'POST',

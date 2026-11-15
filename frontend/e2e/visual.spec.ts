@@ -21,6 +21,7 @@ const REF_SCREENS = {
     path: '/m/lots', wait: 'LC-2026-14',
     tiles: ['Total enregistrements', 'En cours', 'Clôturé'],
     headers: ['CODE LOT', 'TYPE', 'SOUCHE', 'BÂTIMENT', "DATE D'ENTRÉE", 'EFFECTIF INITIAL', 'MORTALITÉ CUMULÉE', 'POIDS MOYEN (G)', 'STATUT', 'VIVANTS', 'MORTALITÉ'],
+    pills: [['En cours', 'warning'], ['Clôturé', 'success'], ['3.6%', 'warning'], ['2.5%', 'success'], ['6.4%', 'danger']],
     headerHeight: 72, rowHeight: 84,
     row: ['LC-2026-14', 'Chair', 'Cobb 500', 'Poulailler A', '2026-09-20', '5 000', '180', '1 450', 'En cours', '4 820', '3.6%'],
   },
@@ -28,6 +29,7 @@ const REF_SCREENS = {
     path: '/m/ponte', wait: 'LP-2026-03',
     tiles: ['Total enregistrements'],
     headers: ['DATE', 'LOT', 'ŒUFS COLLECTÉS', 'ŒUFS CASSÉS', 'MIS EN INCUBATION', 'TAUX DE CASSE'],
+    pills: [['1.7%', 'success'], ['3.6%', 'warning']],
     headerHeight: 40, rowHeight: 56,
     row: ['2026-10-20', 'LP-2026-03', '2 455', '88', '0', '3.6%'],
   },
@@ -35,6 +37,7 @@ const REF_SCREENS = {
     path: '/m/porcs', wait: 'TR-014',
     tiles: ['Total enregistrements', 'Actif', 'Gestante', 'Allaitante'],
     headers: ['IDENTIFIANT', 'CATÉGORIE', 'RACE', 'BÂTIMENT', 'DATE DE NAISSANCE', 'POIDS (KG)', 'STATUT'],
+    pills: [['Actif', 'success'], ['Gestante', 'success'], ['Allaitante', 'success']],
     headerHeight: 40, rowHeight: 56,
     row: ['TR-014', 'Truie', 'Large White', 'Maternité', '2024-02-10', '210', 'Gestante'],
   },
@@ -42,6 +45,7 @@ const REF_SCREENS = {
     path: '/m/reproduction', wait: 'TR-014',
     tiles: ['Total enregistrements', 'Gestation', 'Mise bas', 'Sevrage'],
     headers: ['TRUIE', 'VERRAT / IA', 'DATE SAILLIE', 'NÉS TOTAUX', 'NÉS VIVANTS', 'SEVRÉS', 'STATUT', 'MISE BAS PRÉVUE'],
+    pills: [['Gestation', 'warning'], ['Mise bas', 'success'], ['2026-10-27', 'warning'], ['2027-02-01', 'success'], ['2026-09-11', 'success']],
     headerHeight: 40, rowHeight: 56,
     row: ['TR-014', 'VR-002', '2026-07-05', '0', '0', '0', 'Gestation', '2026-10-27'],
   },
@@ -49,6 +53,7 @@ const REF_SCREENS = {
     path: '/m/alimentation', wait: 'Croissance chair',
     tiles: ['Total enregistrements'],
     headers: ['DATE', 'LOT / BÂTIMENT', 'ALIMENT', 'ALIMENT (KG)', 'EAU (L)', 'COÛT'],
+    pills: [],
     headerHeight: 40, rowHeight: 56,
     row: ['2026-10-22', 'LC-2026-14', 'Croissance chair', '620', '1 250', '210 800 FCFA'],
   },
@@ -93,6 +98,21 @@ async function compareWithReference(page: Page, name: string, ref: (typeof REF_S
   // Every pill of the table is 20px tall (Alimentation & eau has none).
   for (const pill of await page.locator('tbody tr span.inline-flex.rounded-full').all()) near((await box(pill)).height, 20, `${name}: pill height`);
 
+  // Pill tones, as on the reference (green / yellow / red): the pill's background is compared with the tone's token.
+  for (const [label, tone] of ref.pills) {
+    const colors = await page.evaluate(([text, tone]) => {
+      const classes = { success: 'bg-primary-soft', warning: 'bg-warning/35', danger: 'bg-destructive/15' } as const;
+      const probe = document.createElement('span');
+      probe.className = classes[tone as keyof typeof classes];
+      document.body.append(probe);
+      const expected = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      const pill = [...document.querySelectorAll('tbody span.inline-flex.rounded-full')].find((e) => e.textContent?.trim() === text);
+      return { expected, actual: pill ? getComputedStyle(pill).backgroundColor : null };
+    }, [label, tone]);
+    assert.equal(colors.actual, colors.expected, `${name}: pill « ${label} » is ${tone}`);
+  }
+
   // The reference row (the API orders rows its own way, so find it by its content).
   const rows = (await page.locator('tbody tr').all());
   const cells = await Promise.all(rows.map(async (r) => (await r.locator('td').allInnerTexts()).map(flat).filter(Boolean)));
@@ -104,6 +124,9 @@ async function settle(page: Page): Promise<void> {
   await page.evaluate(() => document.fonts.ready);
 }
 
+// Precondition: the server's date is after 2026-10-22, because the reference rows are dated October 2026 (no future
+// dates are accepted). The overdue-farrowing alert counts days from today, so it is matched with a regex and
+// home.png differs by that one number from day to day.
 describe('rendu : captures et comparaison avec la référence', () => {
   let browser: Browser;
   let page: Page;
@@ -162,8 +185,8 @@ describe('rendu : captures et comparaison avec la référence', () => {
     await page.screenshot({ path: join(BUILT, 'home.png'), fullPage: true });
 
     const text = flat(await page.locator('main').innerText());
-    for (const expected of ['11 570', '3 lots en cours', '245', '2 480', 'Taux de ponte 87%', '3.6%', 'Mise bas TR-014', 'Dépassée depuis 18 j (2026-10-27)', 'Mortalité élevée LC-2026-14', 'Mortalité élevée LP-2026-03', '5 bâtiments actifs']) {
-      assert.ok(text.includes(expected), `home shows « ${expected} »`);
+    for (const expected of ['11 570', '3 lots en cours', '245', '2 480', 'Taux de ponte 87%', '3.6%', 'Mise bas TR-014', /Dépassée depuis \d+ j \(2026-10-27\)/, 'Mortalité élevée LC-2026-14', 'Mortalité élevée LP-2026-03', '5 bâtiments actifs']) {
+      assert.ok(typeof expected === 'string' ? text.includes(expected) : expected.test(text), `home shows « ${expected} »`);
     }
 
     await page.goto(`${WEB_URL}/m/batiments`);
