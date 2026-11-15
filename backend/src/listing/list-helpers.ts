@@ -15,6 +15,12 @@ export const Trim = () =>
     typeof value === 'string' ? value.trim() : value,
   );
 
+/** Trims an optional text; a blank one is a cleared field (null). */
+export const TrimOrNull = () =>
+  Transform(({ value }: { value: unknown }) =>
+    typeof value === 'string' ? value.trim() || null : value,
+  );
+
 export const containsInsensitive = (search: string) => ({
   contains: search,
   mode: 'insensitive' as const,

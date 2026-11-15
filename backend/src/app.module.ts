@@ -4,6 +4,7 @@ import { AdminModule } from './admin/admin.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { BreedingModule } from './breeding/breeding.module';
+import { CustomersModule } from './customers/customers.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { EggsModule } from './eggs/eggs.module';
 import { FeedModule } from './feed/feed.module';
@@ -14,6 +15,7 @@ import { IndicatorsModule } from './indicators/indicators.module';
 import { PigsModule } from './pigs/pigs.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PurchasesModule } from './purchases/purchases.module';
+import { SalesModule } from './sales/sales.module';
 import { StockModule } from './stock/stock.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
 
@@ -33,6 +35,8 @@ import { SuppliersModule } from './suppliers/suppliers.module';
     StockModule,
     SuppliersModule,
     PurchasesModule,
+    CustomersModule,
+    SalesModule,
     IndicatorsModule,
     DashboardModule,
   ],

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { RequestContext } from '../../access/decorators';
+import type { Prisma } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 
 const LEGAL_FIELDS = ['name', 'address', 'nif', 'rccm'] as const;
@@ -105,11 +106,22 @@ const SETTINGS: Record<string, SettingDefinition> = {
     default: 114,
     parse: positiveInteger('La durée de gestation'),
   },
+  invoiceDueDays: {
+    default: 15,
+    parse: positiveInteger("Le délai d'échéance des factures"),
+  },
+  eggsPerTray: {
+    default: 30,
+    parse: positiveInteger("Le nombre d'œufs par plateau"),
+  },
   legal: {
     default: { name: '', address: '', nif: '', rccm: '' },
     parse: legal,
   },
 };
+
+/** The settings the sales documents snapshot (days to pay an invoice, eggs in a tray). */
+export type SaleSetting = 'invoiceDueDays' | 'eggsPerTray';
 
 @Injectable()
 export class SettingsService {
@@ -126,6 +138,20 @@ export class SettingsService {
         key,
         (byKey.get(key) as SettingValue | undefined) ?? def.default,
       ]),
+    );
+  }
+
+  /** One whole-number setting of the organisation (its stored value or the default); inside `tx` when given. */
+  async number(
+    organizationId: string,
+    key: SaleSetting,
+    tx?: Prisma.TransactionClient,
+  ): Promise<number> {
+    const stored = await (tx ?? this.prisma).setting.findUnique({
+      where: { organizationId_key: { organizationId, key } },
+    });
+    return (
+      (stored?.value as number | undefined) ?? (SETTINGS[key].default as number)
     );
   }
 

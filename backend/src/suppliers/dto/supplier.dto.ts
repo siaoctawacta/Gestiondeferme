@@ -8,16 +8,9 @@ import {
   MaxLength,
   ValidateIf,
 } from 'class-validator';
-import { Transform } from 'class-transformer';
-import { Trim } from '../../listing/list-helpers';
+import { Trim, TrimOrNull } from '../../listing/list-helpers';
 import { ListQueryDto } from '../../listing/list-query.dto';
 import { QueryBool } from '../../listing/query-bool';
-
-/** Trims an optional text; a blank one is a cleared field (null). */
-const TrimOrNull = () =>
-  Transform(({ value }: { value: unknown }) =>
-    typeof value === 'string' ? value.trim() || null : value,
-  );
 
 const NAME = 'Le nom est requis';
 const EMAIL = "L'adresse email n'est pas valide";

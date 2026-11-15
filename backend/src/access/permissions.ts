@@ -67,6 +67,8 @@ const ROLE_GRANTS: Record<Role, Grants> = {
   PROPRIETAIRE: {
     ...everyModule(R),
     achats: ['read', 'validate'],
+    // Credit notes and the cancellation of an issued invoice (`validate`).
+    ventes: ['read', 'validate'],
     rapports: V,
     finance: R,
   },
@@ -117,7 +119,9 @@ const ROLE_GRANTS: Record<Role, Grants> = {
   },
   COMPTABLE: {
     ...grant(W, ['finance']),
-    ...grant(R, ['ventes', 'achats', 'clients', 'fournisseurs', 'rapports']),
+    // Issues invoices and records payments (`update`), credit notes (`validate`); never creates a quote.
+    ventes: ['read', 'update', 'validate'],
+    ...grant(R, ['achats', 'clients', 'fournisseurs', 'rapports']),
   },
   COMMERCIAL: {
     ...grant(W, ['clients', 'ventes']),

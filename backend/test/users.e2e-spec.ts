@@ -747,6 +747,8 @@ describe('Users and settings (e2e)', () => {
         farrowingWarningDays: 7,
         vaccinationWarningDays: 3,
         gestationDays: 114,
+        invoiceDueDays: 15,
+        eggsPerTray: 30,
         legal: { name: '', address: '', nif: '', rccm: '' },
       });
       await http()

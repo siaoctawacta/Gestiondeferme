@@ -69,6 +69,39 @@ describe('permissions', () => {
     expect(can('SUPER_ADMIN', 'lots', 'validate')).toBe(true);
   });
 
+  it('grants clients, ventes and finance as the sales workflow needs them', () => {
+    const p = (r: Parameters<typeof permissionsFor>[0]) => permissionsFor(r);
+    const W = ['read', 'create', 'update', 'delete'];
+    expect(p('COMMERCIAL').clients).toEqual(W);
+    expect(p('COMMERCIAL').ventes).toEqual(W);
+    expect(p('COMMERCIAL').finance).toEqual([]);
+    expect(p('COMPTABLE').clients).toEqual(['read']);
+    expect(p('COMPTABLE').ventes).toEqual(['read', 'update', 'validate']);
+    expect(p('COMPTABLE').finance).toEqual(W);
+    expect(p('PROPRIETAIRE').clients).toEqual(['read']);
+    expect(p('PROPRIETAIRE').ventes).toEqual(['read', 'validate']);
+    expect(p('PROPRIETAIRE').finance).toEqual(['read']);
+    for (const m of ['clients', 'ventes', 'finance'] as const) {
+      expect(p('DIRECTEUR_FERME')[m]).toEqual(['read']);
+      expect(p('AUDITEUR')[m]).toEqual(['read']);
+      expect(p('SUPER_ADMIN')[m]).toEqual([...W, 'validate']);
+      for (const r of [
+        'RESP_AVICOLE',
+        'RESP_PORCIN',
+        'VETERINAIRE',
+        'RESP_STOCK',
+        'AGENT_ELEVAGE',
+        'MAGASINIER',
+      ] as const) {
+        expect(p(r)[m]).toEqual([]);
+      }
+    }
+    expect(can('COMMERCIAL', 'ventes', 'validate')).toBe(false);
+    expect(can('COMPTABLE', 'ventes', 'create')).toBe(false);
+    expect(can('COMPTABLE', 'finance', 'create')).toBe(true);
+    expect(can('MAGASINIER', 'ventes', 'read')).toBe(false);
+  });
+
   it('permissionsFor lists the allowed actions per module', () => {
     const p = permissionsFor('MAGASINIER');
     expect(p.stocks).toEqual(['read', 'create']);

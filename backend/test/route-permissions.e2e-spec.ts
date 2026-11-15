@@ -291,6 +291,8 @@ describe('Route permissions walk (e2e)', () => {
       StockMovementsController: ['stocks'],
       StockOverviewController: ['stocks'],
       InventoriesController: ['stocks'],
+      CustomersController: ['clients'],
+      QuotesController: ['ventes'],
     };
 
     it('states the module of its family on every route, and the guard refuses a role without it', async () => {
@@ -321,6 +323,28 @@ describe('Route permissions walk (e2e)', () => {
           notRefused.push(`${r.method} ${r.path} -> ${res.status}`);
       }
       expect(wrongModule).toEqual([]);
+      expect(notRefused).toEqual([]);
+    });
+
+    it('refuses a read-only role on every write route of the sales families', async () => {
+      const director = await world.actor('DIRECTEUR_FERME');
+      const writes = routes.filter(
+        (r) =>
+          ['CustomersController', 'QuotesController'].includes(r.controller) &&
+          r.method !== 'get',
+      );
+      expect(writes.length).toBe(10);
+      const notRefused: string[] = [];
+      for (const r of writes) {
+        const res = await world
+          .http()
+          [r.method](`/api${r.path.replace(/:\w+/g, 'x')}`)
+          .set(director)
+          .send({});
+        if (res.status !== 403) {
+          notRefused.push(`${r.method} ${r.path} -> ${res.status}`);
+        }
+      }
       expect(notRefused).toEqual([]);
     });
 
