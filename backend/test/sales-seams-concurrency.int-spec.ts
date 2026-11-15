@@ -325,25 +325,28 @@ describe('Sale seams under concurrency (real pool)', () => {
 
   it('a treatment racing a sale of the same lot waits for the lot lock: the guard sees none, the treatment comes after', async () => {
     const lot = await world.lot(h, { initialCount: 100 });
-    let locked!: () => void;
+    let locked!: (pid: number) => void;
     let release!: () => void;
-    const hasLock = new Promise<void>((r) => (locked = r));
+    const hasLock = new Promise<number>((r) => (locked = r));
     const gate = new Promise<void>((r) => (release = r));
     const sale = prisma.$transaction(
       async (tx) => {
         await app
           .get(HerdLedgerService)
           .lockBatches(tx, [lot.id], [world.farmId]);
-        locked();
+        const [{ pid }] = await tx.$queryRaw<
+          { pid: number }[]
+        >`SELECT pg_backend_pid() AS pid`;
+        locked(pid);
         await gate;
         await app
           .get(WithdrawalRegistry)
           .assertClear({ batchId: lot.id, code: lot.code }, today(), tx);
         return 'clear';
       },
-      { timeout: 20000 },
+      { timeout: 30000 },
     );
-    await hasLock;
+    const holder = await hasLock;
     const treatment = world
       .http()
       .post('/api/health-acts')
@@ -357,14 +360,18 @@ describe('Sale seams under concurrency (real pool)', () => {
         batchId: lot.id,
       })
       .then((r) => r);
-    // Not a sleep: wait until the database reports a session blocked on a lock.
-    for (let i = 0; i < 400; i++) {
-      const [{ waiting }] = await prisma.$queryRaw<{ waiting: bigint }[]>`
-        SELECT count(*) AS waiting FROM pg_stat_activity
-        WHERE datname = current_database() AND wait_event_type = 'Lock'`;
-      if (waiting > 0n) break;
-      await new Promise((r) => setImmediate(r));
+    // The request must be seen waiting on a lock held by OUR transaction, within the timeout.
+    let blocked = 0;
+    const deadline = Date.now() + 15000;
+    while (blocked === 0 && Date.now() < deadline) {
+      const rows = await prisma.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*) AS n FROM pg_stat_activity
+        WHERE datname = current_database()
+          AND ${holder}::int = ANY (pg_blocking_pids(pid))`;
+      blocked = Number(rows[0].n);
+      if (blocked === 0) await new Promise((r) => setTimeout(r, 20));
     }
+    expect(blocked).toBeGreaterThan(0);
     release();
     const [guarded, done] = await Promise.all([sale, treatment]);
     expect(guarded).toBe('clear');

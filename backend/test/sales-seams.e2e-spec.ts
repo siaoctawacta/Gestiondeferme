@@ -1422,6 +1422,113 @@ describe('Ledger seams of a sale (e2e)', () => {
       expect(await at(daysAgo(0))).toBe(1500);
     });
 
+    it('counts per lot as the ledger does: a lot received after the date gives nothing, a lot emptied later gives nothing', async () => {
+      // Lot A holds 10 on D; lot B arrives on D+1; D+2 a consumption takes 10 from A (earliest expiry).
+      await move({
+        date: daysAgo(6),
+        quantity: 10,
+        lotNumber: 'A',
+        expiryDate: '2098-01-01',
+      });
+      await move({
+        date: daysAgo(5),
+        quantity: 10,
+        lotNumber: 'B',
+        expiryDate: '2099-01-01',
+      });
+      await world.post(h, '/stock/movements', {
+        itemId,
+        type: 'SORTIE',
+        date: daysAgo(4),
+        quantity: 10,
+        reason: 'CONSOMMATION',
+      });
+      const found = (await list('ARTICLE', daysAgo(6))).find(
+        (i) => i.id === itemId,
+      );
+      expect(found).toMatchObject({ available: 0, sellable: false });
+      expect(
+        (await list('ARTICLE', daysAgo(3))).find((i) => i.id === itemId),
+      ).toMatchObject({ available: 10, sellable: true });
+    });
+
+    it('does not take an expired lot out twice: what a loss removed from it is not subtracted again', async () => {
+      await move({
+        date: daysAgo(40),
+        quantity: 10,
+        lotNumber: 'L1',
+        expiryDate: daysAgo(15),
+      });
+      await move({
+        date: daysAgo(30),
+        quantity: 4,
+        lotNumber: 'L2',
+        expiryDate: '2099-01-01',
+      });
+      await world.post(h, '/stock/movements', {
+        itemId,
+        type: 'SORTIE',
+        date: daysAgo(2),
+        quantity: 10,
+        reason: 'PERTE',
+      });
+      expect(
+        (await list('ARTICLE', daysAgo(5))).find((i) => i.id === itemId),
+      ).toMatchObject({ available: 4, sellable: true });
+    });
+
+    it('the figure of the picker is the largest quantity an invoice at that date accepts (2 lots)', async () => {
+      await move({
+        date: daysAgo(30),
+        quantity: 10,
+        lotNumber: 'L1',
+        expiryDate: '2098-01-01',
+      });
+      await move({
+        date: daysAgo(1),
+        quantity: 5,
+        lotNumber: 'L2',
+        expiryDate: '2099-01-01',
+      });
+      await world.post(h, '/stock/movements', {
+        itemId,
+        type: 'SORTIE',
+        date: daysAgo(2),
+        quantity: 8,
+        reason: 'CONSOMMATION',
+      });
+      const date = daysAgo(3);
+      const figure = (await list('ARTICLE', date)).find(
+        (i) => i.id === itemId,
+      )?.available;
+      expect(figure).toBe(2);
+      const admin = await world.actor('SUPER_ADMIN');
+      const customer = await world.post<Id>(admin, '/customers', {
+        name: 'Client',
+        type: 'PARTICULIER',
+      });
+      const issue = (quantity: number, status: number) =>
+        http()
+          .post('/api/sales/issued')
+          .set(admin)
+          .send({
+            customerId: customer.id,
+            date,
+            lines: [
+              {
+                kind: 'ARTICLE',
+                stockItemId: itemId,
+                quantity,
+                unitPrice: 100,
+              },
+            ],
+          })
+          .expect(status);
+      const refused = await issue((figure ?? 0) + 0.01, 400);
+      expect(message(refused)).toContain('Stock insuffisant');
+      await issue(figure ?? 0, 201);
+    });
+
     it('does not offer what was already expired on the date, counted at that date', async () => {
       await move({
         date: daysAgo(40),

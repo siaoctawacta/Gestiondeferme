@@ -538,7 +538,11 @@ export class HerdLedgerService implements OccupationSource {
    * What a sale dated `date` may take from each batch: the live count on that
    * date, and no more than any later day can spare (a sale on `date` lowers
    * every later count too, in (date, createdAt) order: a lot of 40 with 30 sold
-   * since has 10). Never negative; a fixed number of queries.
+   * since has 10). Never negative; a fixed number of queries. A picker's
+   * figure, not the ledger's rule: it ignores the weaned-litter floor
+   * (`assertWeaned`: a litter weaned later cannot be sold below its weaned
+   * count before the weaning), so it may list a quantity that the issue then
+   * refuses with that message.
    */
   async availableAt(
     batchIds: string[],

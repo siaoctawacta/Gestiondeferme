@@ -7,7 +7,6 @@ import {
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
-import { lowestBalance } from '../common/balance';
 import { addDays, assertNotFuture, formatDay, today } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import { Prisma } from '../generated/prisma/client';
@@ -22,7 +21,12 @@ import type {
   StockReason,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
-import { allocateExit, AllocationError, type Piece } from './allocation';
+import {
+  allocateExit,
+  AllocationError,
+  headrooms,
+  type Piece,
+} from './allocation';
 import {
   assertBucketsNonNegative,
   INSUFFICIENT,
@@ -658,12 +662,13 @@ export class StockLedgerService {
   }
 
   /**
-   * What a sale dated `date` may take of each item in `farmId`: the quantity
-   * held on that date, less what sits in lots already past their expiry on it,
-   * and no more than any later day can spare (the lowest running balance from
-   * `date` to the end of the history, in (date, createdAt) order). Never
-   * negative. Three queries whatever the items. A read for pickers: the ledger
-   * still validates the real exit.
+   * What a sale dated `date` may take of each item in `farmId`: the sum, over
+   * the lots that are not expired on `date` and the stock held in no lot, of
+   * what `allocateExit` would give each of them (`headrooms`: its own lowest
+   * balance from `date` to the end of its history; a lot received after `date`
+   * gives nothing), so the picker and the ledger share one rule. Two queries
+   * whatever the items, no lock. A read for pickers: the ledger still
+   * validates the real exit (a validated inventory, for one, is not looked at).
    */
   async sellableAt(
     farmId: string,
@@ -674,53 +679,36 @@ export class StockLedgerService {
     const result = new Map(itemIds.map((id) => [id, ZERO]));
     if (itemIds.length === 0) return result;
     const where = { farmId, stockItemId: { in: itemIds } };
-    const held = await client.stockMovement.groupBy({
-      by: ['stockItemId', 'stockBatchId'],
-      where: { ...where, date: { lte: date } },
-      _sum: { quantity: true },
-    });
-    const later = await client.stockMovement.findMany({
-      where: { ...where, date: { gt: date } },
+    const moves = await client.stockMovement.findMany({
+      where,
       select: {
         id: true,
         stockItemId: true,
+        stockBatchId: true,
         date: true,
         createdAt: true,
         quantity: true,
       },
-      orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
     });
-    const batchIds = held.flatMap((h) =>
-      h.stockBatchId ? [h.stockBatchId] : [],
-    );
+    const batches = await client.stockBatch.findMany({
+      where,
+      select: { id: true, expiryDate: true },
+    });
     const expired = new Set(
-      batchIds.length
-        ? (
-            await client.stockBatch.findMany({
-              where: { id: { in: batchIds }, expiryDate: { lt: date } },
-              select: { id: true },
-            })
-          ).map((b) => b.id)
-        : [],
+      batches
+        .filter((b) => b.expiryDate && b.expiryDate.getTime() < date.getTime())
+        .map((b) => b.id),
     );
+    const byItem = new Map<string, typeof moves>();
+    for (const m of moves) {
+      byItem.set(m.stockItemId, [...(byItem.get(m.stockItemId) ?? []), m]);
+    }
     for (const id of itemIds) {
-      const mine = held.filter((h) => h.stockItemId === id);
-      const quantity = mine.reduce(
-        (n, h) => n.add(h._sum.quantity ?? ZERO),
-        ZERO,
-      );
-      const stale = mine.reduce(
-        (n, h) =>
-          h.stockBatchId && expired.has(h.stockBatchId)
-            ? n.add(Prisma.Decimal.max(h._sum.quantity ?? ZERO, ZERO))
-            : n,
-        ZERO,
-      );
-      const lowest = lowestBalance(
-        quantity,
-        later.filter((m) => m.stockItemId === id).map((m) => m.quantity),
-      );
-      result.set(id, Prisma.Decimal.max(lowest.sub(stale), ZERO));
+      let total = ZERO;
+      for (const [bucket, room] of headrooms(byItem.get(id) ?? [], date)) {
+        if (bucket === null || !expired.has(bucket)) total = total.add(room);
+      }
+      result.set(id, total);
     }
     return result;
   }
