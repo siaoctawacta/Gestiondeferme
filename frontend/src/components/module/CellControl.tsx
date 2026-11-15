@@ -1,7 +1,8 @@
 import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import type { CellField, Field } from './types';
-import { useEndpointOptions } from './useEndpointOptions';
+import { useAuth } from '../../lib/auth';
+import { resolveEndpointTemplate, useEndpointOptions } from './useEndpointOptions';
 
 /** A field rendered by a bare control (no label): the inputs of the form and the cells of a `lines` row. */
 export type ControlField = Exclude<Field, { type: 'multiselect' | 'checkbox' | 'lines' | 'textarea' }> | CellField;
@@ -26,14 +27,17 @@ export interface CellControlProps {
  * wraps it in a label (`FieldInput`); a `lines` row uses it as a cell.
  */
 export function CellControl({ field, value, onChange, id, disabled, excluded, parentValue, waitingFor, ...aria }: CellControlProps) {
+  const { can } = useAuth();
   const dependsOn = field.type === 'select' && 'dependsOn' in field ? field.dependsOn : undefined;
   const source = field.type === 'select' ? field.options : [];
+  const needs = field.type === 'select' ? field.optionsPermission : undefined;
+  const allowed = !needs || can(needs.module, needs.action);
   // `{parent}` in the endpoint is the parent's value (in the path); otherwise it is sent as a query parameter.
-  const templated = dependsOn && !Array.isArray(source) && source.endpoint.includes(`{${dependsOn}}`);
+  const templated = !Array.isArray(source) && /\{\w+\}/.test(source.endpoint);
   const options = useEndpointOptions(
-    templated && !Array.isArray(source) ? { ...source, endpoint: source.endpoint.replace(`{${dependsOn}}`, encodeURIComponent(parentValue ?? '')) } : source,
+    Array.isArray(source) ? source : resolveEndpointTemplate(source, dependsOn, parentValue ?? ''),
     dependsOn && parentValue && !templated ? { [dependsOn]: parentValue } : undefined,
-    !dependsOn || Boolean(parentValue),
+    allowed && (!dependsOn || Boolean(parentValue)),
   );
   if (field.type === 'select') {
     const current = String(value);
@@ -43,10 +47,11 @@ export function CellControl({ field, value, onChange, id, disabled, excluded, pa
         aria-label={aria['aria-label']}
         className="w-full"
         value={current}
-        disabled={disabled || waitingFor !== undefined}
+        disabled={disabled || waitingFor !== undefined || !allowed}
         onChange={(e) => onChange(e.target.value)}
       >
         <option value="">{waitingFor !== undefined ? `Choisir d'abord ${waitingFor}` : 'Sélectionner…'}</option>
+        {!allowed && current !== '' && <option value={current}>Valeur conservée</option>}
         {options.filter((o) => o.value === current || !excluded?.includes(o.value)).map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}

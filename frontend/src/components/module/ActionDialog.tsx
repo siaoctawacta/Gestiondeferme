@@ -60,26 +60,38 @@ export function ActionDialog({
   /** Messages of the `lines` field that failed validation, shown under its grid. */
   const [lineErrors, setLineErrors] = useState<{ name: string; messages: string[] } | null>(null);
 
+  /**
+   * How often each field was changed, and which parent (and which of its changes) a dependent's value was chosen
+   * under. A dependent value is only live under the very parent change it was chosen after: it never survives a
+   * later change of the parent (even while hidden), nor a move of its `dependsOn` to another field.
+   */
+  const [meta, setMeta] = useState<{ rev: Record<string, number>; bound: Record<string, { parent: string; rev: number }> }>({ rev: {}, bound: {} });
+
   const all = typeof fields === 'function' ? fields({ ...initial, ...edited }) : fields;
   const shown = all.filter((f) => !f.only || f.only === mode);
   const values = valuesOf(edited, initial, shown, mode);
 
-  /** Sets a field; every select depending on it is cleared, and theirs in turn (A -> B -> C). */
+  const live = (f: Field, depth = 0): boolean => {
+    if (f.type !== 'select' || !f.dependsOn || depth > shown.length) return true;
+    const rev = meta.rev[f.dependsOn] ?? 0;
+    const own = f.name in edited ? meta.bound[f.name]?.parent === f.dependsOn && meta.bound[f.name].rev === rev : rev === 0;
+    const parent = shown.find((p) => p.name === f.dependsOn);
+    return own && (!parent || live(parent, depth + 1));
+  };
+  for (const f of shown) if (!live(f)) values[f.name] = '';
+
+  /** Sets a field; selects depending on it (and theirs in turn) lose their value, shown or not. */
   const setField = (name: string, v: unknown) => {
     setLineErrors((e) => (e?.name === name ? null : e));
-    setEdited((s) => {
-      const next = { ...s, [name]: v };
-      const cleared = [name];
-      for (let i = 0; i < cleared.length; i++) {
-        for (const f of shown) {
-          if (f.type === 'select' && f.dependsOn === cleared[i] && !cleared.includes(f.name)) {
-            next[f.name] = '';
-            cleared.push(f.name);
-          }
-        }
-      }
-      return next;
+    const was = name in edited ? edited[name] : initial[name];
+    const changed = JSON.stringify(was ?? '') !== JSON.stringify(v ?? '');
+    const dependsOn = all.find((f) => f.name === name && f.type === 'select');
+    setMeta((m) => {
+      const rev = changed ? { ...m.rev, [name]: (m.rev[name] ?? 0) + 1 } : m.rev;
+      const parent = dependsOn?.type === 'select' ? dependsOn.dependsOn : undefined;
+      return { rev, bound: parent ? { ...m.bound, [name]: { parent, rev: rev[parent] ?? 0 } } : m.bound };
     });
+    setEdited((s) => ({ ...s, [name]: v }));
   };
 
   const build = (v: Values): Values =>

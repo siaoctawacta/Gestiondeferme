@@ -212,3 +212,89 @@ describe('ActionDialog: select with a path template', () => {
     expect(await screen.findByRole('option', { name: 'lot 3' })).toBeInTheDocument();
   });
 });
+
+describe('ActionDialog: dependent values never go stale', () => {
+  const D = [{ value: 'd1', label: 'D1' }, { value: 'd2', label: 'D2' }];
+  const P = [{ value: 'p1', label: 'P1' }, { value: 'p2', label: 'P2' }];
+
+  it('clears a dependent value when its parent changes while the dependent is hidden, and never sends a hidden field', async () => {
+    const fields = (v: Record<string, unknown>): Field[] => [
+      { name: 'mode', label: 'Mode', type: 'segmented', defaultValue: 'A', options: [{ value: 'A', label: 'Avec' }, { value: 'B', label: 'Sans' }] },
+      { name: 'p', label: 'Parent', type: 'select', options: P },
+      ...((v.mode ?? 'A') === 'A' ? [{ name: 'd', label: 'Enfant', type: 'select', dependsOn: 'p', options: D } as Field] : []),
+    ];
+    const { onSubmit } = mount({ fields });
+    const dialog = await screen.findByRole('dialog');
+    const user = userEvent.setup();
+    await user.selectOptions(within(dialog).getByLabelText('Parent'), 'P1');
+    await user.selectOptions(within(dialog).getByLabelText('Enfant'), 'D1');
+    await user.click(within(dialog).getByRole('radio', { name: 'Sans' }));
+    expect(within(dialog).queryByLabelText('Enfant')).toBeNull();
+    // Hidden: not sent.
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ mode: 'B', p: 'p1' }));
+    onSubmit.mockClear();
+    await user.selectOptions(within(dialog).getByLabelText('Parent'), 'P2');
+    await user.click(within(dialog).getByRole('radio', { name: 'Avec' }));
+    expect(within(dialog).getByLabelText('Enfant')).toHaveValue('');
+  });
+
+  it('clears a dependent value when its dependsOn moves to another field', async () => {
+    const fields = (v: Record<string, unknown>): Field[] => [
+      { name: 'mode', label: 'Mode', type: 'segmented', defaultValue: 'A', options: [{ value: 'A', label: 'Avec' }, { value: 'B', label: 'Sans' }] },
+      { name: 'pa', label: 'Parent A', type: 'select', options: P },
+      { name: 'pb', label: 'Parent B', type: 'select', options: P },
+      { name: 'd', label: 'Enfant', type: 'select', dependsOn: (v.mode ?? 'A') === 'A' ? 'pa' : 'pb', options: D },
+    ];
+    const { onSubmit } = mount({ fields });
+    const dialog = await screen.findByRole('dialog');
+    const user = userEvent.setup();
+    await user.selectOptions(within(dialog).getByLabelText('Parent A'), 'P1');
+    await user.selectOptions(within(dialog).getByLabelText('Parent B'), 'P1');
+    await user.selectOptions(within(dialog).getByLabelText('Enfant'), 'D1');
+    await user.click(within(dialog).getByRole('radio', { name: 'Sans' }));
+    // Same parent value, but another parent field: the choice made for the first one does not carry over.
+    expect(within(dialog).getByLabelText('Enfant')).toHaveValue('');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ mode: 'B', pa: 'p1', pb: 'p1' }));
+  });
+
+  it('clears a stored dependent value when its parent is changed', async () => {
+    const fields: Field[] = [
+      { name: 'p', label: 'Parent', type: 'select', options: P },
+      { name: 'd', label: 'Enfant', type: 'select', dependsOn: 'p', options: D },
+    ];
+    mount({ fields, initial: { p: 'p1', d: 'd1' }, mode: 'update' });
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Enfant')).toHaveValue('d1');
+    await userEvent.setup().selectOptions(within(dialog).getByLabelText('Parent'), 'P2');
+    expect(within(dialog).getByLabelText('Enfant')).toHaveValue('');
+  });
+});
+
+describe('ActionDialog: options that need a permission', () => {
+  it('makes no request without the permission and keeps the stored value, disabled', async () => {
+    const fields: Field[] = [{
+      name: 'zoneId', label: 'Zone', type: 'select', options: { endpoint: '/zones' }, optionsPermission: { module: 'stocks', action: 'read' },
+    }];
+    const { onSubmit } = mount({ fields, initial: { zoneId: 'z9' } });
+    const select = await screen.findByLabelText('Zone');
+    expect(select).toBeDisabled();
+    expect(select).toHaveValue('z9');
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ zoneId: 'z9' }));
+    expect(urls.some((u) => u.startsWith('/api/zones'))).toBe(false);
+  });
+
+  it('does the same for a cell of a lines grid', async () => {
+    const fields: Field[] = [{
+      name: 'rows', label: 'Lignes', type: 'lines',
+      columns: [{ name: 'zoneId', label: 'Zone', type: 'select', options: { endpoint: '/zones' }, optionsPermission: { module: 'stocks', action: 'read' } }],
+    }];
+    mount({ fields, initial: { rows: [{ zoneId: 'z9' }] }, mode: 'update' });
+    const select = await screen.findByLabelText('Zone ligne 1');
+    expect(select).toBeDisabled();
+    expect(select).toHaveValue('z9');
+    expect(urls.some((u) => u.startsWith('/api/zones'))).toBe(false);
+  });
+});

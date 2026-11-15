@@ -24,6 +24,13 @@ export type EndpointOptions = {
 /** Static `{value,label}` options, or options loaded from an endpoint. */
 export type OptionsDef = { value: string; label: string }[] | EndpointOptions;
 
+/**
+ * The permission a select's endpoint options need (the options come from another module's route, e.g. stock
+ * articles for a health form). Without it no request is made and the select is shown disabled, keeping the stored
+ * value, which the form resends unchanged.
+ */
+export type OptionsPermission = { module: ModuleKey; action: Action };
+
 interface FieldBase {
   /** Property name in the form values and in the request body. */
   name: string;
@@ -53,6 +60,8 @@ export type CellField =
       options: OptionsDef;
       /** An option already chosen in another row of the grid is not offered again. */
       unique?: boolean;
+      /** See the select field: the endpoint options need this permission. */
+      optionsPermission?: OptionsPermission;
     });
 
 interface CellBase {
@@ -70,7 +79,11 @@ interface CellBase {
   computed?: (row: LineRow) => ReactNode;
 }
 
-/** One input of the add / edit dialog. */
+/**
+ * One input of the add / edit dialog. A field that is not shown (left out by a `fields` function, or `only` for
+ * the other mode) is absent from the values given to `validate` and `toPayload` and is never sent, whatever the
+ * user entered before it was hidden.
+ */
 export type Field =
   | (FieldBase & { type: 'text' | 'date' | 'textarea' })
   /** Time of day; the value sent is `HH:mm`. */
@@ -85,8 +98,13 @@ export type Field =
        * Name of another field of the same form. Its value is sent as the query parameter of the same name
        * when loading this select's endpoint options, and this select is cleared whenever that field changes.
        * Until the parent has a value the select is disabled and reads `Choisir d'abord {parent label}`.
+       * A dependent value never goes stale: it is cleared every time the parent's value changes (even while the
+       * dependent is hidden by a `fields` function), and a value chosen under another `dependsOn` field does not
+       * carry over to this one.
        */
       dependsOn?: string;
+      /** The endpoint options need this permission (see `OptionsPermission`). */
+      optionsPermission?: OptionsPermission;
     })
   /**
    * A choice between a few exclusive options shown as a pill-shaped radio group (a type, a kind of target); the

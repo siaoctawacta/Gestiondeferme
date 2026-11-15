@@ -102,7 +102,10 @@ function mount(ui: React.ReactNode, { perms = FULL, farm }: { perms?: Record<str
     if (url.startsWith('/api/quarantines')) return page(QUARANTINES);
     if (url.startsWith('/api/incidents')) return page(INCIDENTS);
     if (url.startsWith('/api/biosecurity-logs')) return page(LOGS);
-    if (url.startsWith('/api/stock-items')) return page([{ id: 's4', name: 'Vaccin Gumboro' }]);
+    if (url.startsWith('/api/stock-items')) {
+      return url.includes('category=MEDICAMENT') ? page([{ id: 's5', name: 'Amoxicilline' }]) : page([{ id: 's4', name: 'Vaccin Gumboro' }]);
+    }
+    if (/^\/api\/stock\/s5(\?|$)/.test(url)) return json(200, { ...STOCK_DETAIL, id: 's5', name: 'Amoxicilline', batches: [{ id: 'mb1', lotNumber: 'AM-1', expiryDate: null, receivedDate: '2026-10-01', quantity: 5 }] });
     if (/^\/api\/stock\/s4(\?|$)/.test(url)) return json(200, STOCK_DETAIL);
     if (/^\/api\/(batches\/l1|animals\/p1)\/(events|weighings)/.test(url)) return page([]);
     if (/^\/api\/batches\/l1(\?|$)/.test(url)) return json(200, lotData);
@@ -746,5 +749,79 @@ describe('Santé tab is read-only when the target is closed', () => {
     expect(screen.queryByRole('button', { name: 'Ajouter' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Marquer réalisé' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Modifier' })).toBeNull();
+  });
+});
+
+describe('stale product batch', () => {
+  async function openForm() {
+    mountPage();
+    await screen.findByText('Gumboro');
+    const user = userEvent.setup();
+    await user.click(button('Ajouter'));
+    const dialog = await screen.findByRole('dialog');
+    await user.selectOptions(await within(dialog).findByLabelText('Lot'), 'LC-2026-14');
+    return { user, dialog };
+  }
+
+  it('does not send the batch of a treatment product with a vaccine picked after a change of type', async () => {
+    const { user, dialog } = await openForm();
+    await user.click(within(dialog).getByRole('radio', { name: 'Traitement' }));
+    await within(dialog).findByRole('option', { name: 'Amoxicilline' });
+    await user.selectOptions(within(dialog).getByLabelText('Produit en stock'), 'Amoxicilline');
+    fireEvent.change(await within(dialog).findByLabelText('Quantité'), { target: { value: '1' } });
+    await within(dialog).findByRole('option', { name: 'AM-1 (5)' });
+    await user.selectOptions(within(dialog).getByLabelText('Lot de produit'), 'AM-1 (5)');
+    await user.click(within(dialog).getByRole('radio', { name: 'Vaccination' }));
+    await within(dialog).findByRole('option', { name: 'Vaccin Gumboro' });
+    await user.selectOptions(within(dialog).getByLabelText('Produit en stock'), 'Vaccin Gumboro');
+    fireEvent.change(await within(dialog).findByLabelText('Quantité'), { target: { value: '1' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({
+      type: 'VACCINATION', status: 'REALISE', date: todayIso(), batchId: 'l1', stockItemId: 's4', quantity: 1,
+    });
+  });
+
+  it('does not bring back the old batch after a planned detour and another product choice', async () => {
+    const { user, dialog } = await openForm();
+    await within(dialog).findByRole('option', { name: 'Vaccin Gumboro' });
+    await user.selectOptions(within(dialog).getByLabelText('Produit en stock'), 'Vaccin Gumboro');
+    fireEvent.change(await within(dialog).findByLabelText('Quantité'), { target: { value: '1' } });
+    await within(dialog).findByRole('option', { name: 'GB-77 (8)' });
+    await user.selectOptions(within(dialog).getByLabelText('Lot de produit'), 'GB-77 (8)');
+    await user.click(within(dialog).getByRole('radio', { name: 'Planifié' }));
+    await user.selectOptions(within(dialog).getByLabelText('Produit en stock'), '');
+    await user.selectOptions(within(dialog).getByLabelText('Produit en stock'), 'Vaccin Gumboro');
+    await user.click(within(dialog).getByRole('radio', { name: 'Réalisé' }));
+    await within(dialog).findByRole('option', { name: 'GB-77 (8)' });
+    expect(within(dialog).getByLabelText('Lot de produit')).toHaveValue('');
+    fireEvent.change(within(dialog).getByLabelText('Quantité'), { target: { value: '1' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({
+      type: 'VACCINATION', status: 'REALISE', date: todayIso(), batchId: 'l1', stockItemId: 's4', quantity: 1,
+    });
+  });
+});
+
+describe('plan steps without read rights on stocks', () => {
+  it('edits a step name without any stock request and resends every stock product', async () => {
+    mountPage({ perms: { sante: ['read', 'update'] } });
+    await openTab('Plans vaccinaux');
+    await screen.findByText('Programme chair');
+    const user = userEvent.setup();
+    await user.click(within(rowOf('Programme chair')).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Produit en stock ligne 1')).toBeDisabled();
+    await user.type(within(dialog).getByLabelText('Produit ligne 1'), ' B');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({
+      items: [
+        { ageDays: 1, productName: 'Marek B', dose: '1 dose', stockItemId: 's4' },
+        { ageDays: 7, productName: 'Gumboro', stockItemId: 's4' },
+      ],
+    });
+    expect(calls.some((c) => c.url.startsWith('/api/stock'))).toBe(false);
   });
 });

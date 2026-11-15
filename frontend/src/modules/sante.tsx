@@ -55,7 +55,12 @@ const plans: ModuleConfig<VaccinationPlanRow> = {
       columns: [
         { name: 'ageDays', label: 'Âge (jours)', type: 'number', required: true, min: 0, step: 1 },
         { name: 'productName', label: 'Produit', type: 'text', required: true },
-        { name: 'stockItemId', label: 'Produit en stock', type: 'select', options: { endpoint: '/stock-items', params: { category: 'VACCIN', active: 'true' } } },
+        {
+          name: 'stockItemId', label: 'Produit en stock', type: 'select',
+          options: { endpoint: '/stock-items', params: { category: 'VACCIN', active: 'true' } },
+          // Without read rights on stocks the stored product is kept as is.
+          optionsPermission: { module: 'stocks', action: 'read' },
+        },
         { name: 'dose', label: 'Dose', type: 'text' },
       ],
     },
