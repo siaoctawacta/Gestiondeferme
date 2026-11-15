@@ -154,3 +154,30 @@ describe('ActionDialog: editing', () => {
     expect(onSubmit).toHaveBeenCalledWith({ name: 'Beta', day: '2030-01-01' });
   });
 });
+
+describe('ActionDialog: segmented field and value observer', () => {
+  const fields: Field[] = [
+    {
+      name: 'kind', label: 'Genre', type: 'segmented', required: true, defaultValue: 'A',
+      options: [{ value: 'A', label: 'Alpha' }, { value: 'B', label: 'Beta' }],
+    },
+  ];
+
+  it('shows the options as a radio group with the default checked, and sends the chosen value', async () => {
+    const { onSubmit } = mount({ fields });
+    const group = await screen.findByRole('radiogroup', { name: 'Genre' });
+    expect(within(group).getByRole('radio', { name: 'Alpha' })).toBeChecked();
+    const user = userEvent.setup();
+    await user.click(within(group).getByRole('radio', { name: 'Beta' }));
+    await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ kind: 'B' }));
+  });
+
+  it('tells the observer the values as they change', async () => {
+    const seen: string[] = [];
+    mount({ fields, onValues: (v) => { seen.push(String(v.kind)); } });
+    await userEvent.setup().click(await screen.findByRole('radio', { name: 'Beta' }));
+    expect(seen[0]).toBe('A');
+    expect(seen.at(-1)).toBe('B');
+  });
+});

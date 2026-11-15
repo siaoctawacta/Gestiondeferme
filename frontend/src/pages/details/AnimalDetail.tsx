@@ -18,6 +18,8 @@ import { BREEDING_STATUSES } from '../../modules/breedingShared';
 import {
   ageLabel, animalHeats, animalWeighings, categoryLabel, hasLeft, statusDef, type AnimalDetailData, type BreedingHistory,
 } from '../../modules/porcsShared';
+import { MODULES } from '../../modules/registry';
+import { WithdrawalNotice } from '../../modules/santeShared';
 import NotFound from '../NotFound';
 import { DetailLayout } from './DetailLayout';
 
@@ -97,6 +99,7 @@ export function AnimalDetail({ id }: { id: string }) {
   const breeding = animal.sex === 'F' && can('reproduction', 'read');
   const left = animal.exitDate !== null || hasLeft(animal.status);
   const canManage = can('porcs', 'update') && farmId !== 'all';
+  const health = can('sante', 'read') ? MODULES.sante : undefined;
   const weighings = animalWeighings(id, left);
   const heats = animalHeats(id, left);
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
@@ -109,6 +112,7 @@ export function AnimalDetail({ id }: { id: string }) {
         subtitle={[categoryLabel(animal.category), animal.breedName, animal.buildingName].filter(Boolean).join(' · ')}
         status={<Pill tone={status.tone}>{status.label}</Pill>}
         actions={canManage && !left && <Button variant="outline" onClick={() => setExiting(true)}>Sortie</Button>}
+        notice={<WithdrawalNotice until={animal.withdrawalUntil} />}
         stats={[
           { label: 'Poids', value: orDash(animal.weightKg, (n) => `${formatNumber(n)} kg`) },
           { label: 'Âge', value: ageLabel(animal.birthDate) },
@@ -118,6 +122,7 @@ export function AnimalDetail({ id }: { id: string }) {
           { key: 'weighings', label: 'Pesées', content: <ModuleList config={weighings} noCreate={left} /> },
           ...(breeding ? [{ key: 'breeding', label: 'Reproduction', content: <BreedingTab animalId={id} /> }] : []),
           ...(breeding ? [{ key: 'heats', label: 'Chaleurs', content: <ModuleList config={heats} noCreate={left} /> }] : []),
+          ...(health ? [{ key: 'health', label: 'Santé', content: <ModuleList config={health} scope={{ animalId: id }} noCreate={left} /> }] : []),
         ]}
       />
       {exiting && <ExitDialog animal={animal} onClose={() => setExiting(false)} onDone={() => { setExiting(false); refresh(); }} />}

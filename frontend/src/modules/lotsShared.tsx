@@ -53,6 +53,8 @@ export interface BatchDetail extends Batch {
   responsibleName: string | null;
   closedAt: string | null;
   notes: string | null;
+  /** `YYYY-MM-DD`: end of the withdrawal period of the latest done treatment (absent on an API without health). */
+  withdrawalUntil?: string | null;
   performance: BatchPerformance;
 }
 

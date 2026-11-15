@@ -1,4 +1,5 @@
 import { useId } from 'react';
+import { Segmented } from '../ui/Segmented';
 import { CellControl } from './CellControl';
 import { LinesField } from './LinesField';
 import type { CellField, Field, FormMode, LineRow } from './types';
@@ -56,7 +57,7 @@ export function defaultPayload(fields: Field[], values: Values, mode: FormMode):
       out[f.name] = (v as LineRow[]).filter((r) => !isBlankRow(f.columns, r)).map((r) => linePayload(f.columns, r));
     } else if (f.type === 'number') {
       if (v !== '') out[f.name] = Number(v);
-    } else if (f.type === 'select' || f.type === 'date' || f.type === 'time') {
+    } else if (f.type === 'select' || f.type === 'segmented' || f.type === 'date' || f.type === 'time') {
       if (v !== '') out[f.name] = v;
     } else if (f.type === 'text' || f.type === 'textarea') {
       out[f.name] = String(v).trim();
@@ -154,7 +155,7 @@ function MultiSelectInput({ field, value, onChange }: FieldInputProps & { field:
   );
 }
 
-function LabelledControl({ field, value, onChange, parentValue, waitingFor }: FieldInputProps & { field: Exclude<Field, { type: 'multiselect' | 'checkbox' | 'lines' }> }) {
+function LabelledControl({ field, value, onChange, parentValue, waitingFor }: FieldInputProps & { field: Exclude<Field, { type: 'multiselect' | 'checkbox' | 'lines' | 'segmented' }> }) {
   const id = useId();
   return (
     <div className="space-y-1.5">
@@ -178,6 +179,16 @@ export function FieldInput(props: FieldInputProps) {
   const { field, value, onChange } = props;
   if (field.type === 'multiselect') return <MultiSelectInput {...props} field={field} />;
   if (field.type === 'lines') return <LinesField field={field} value={value as LineRow[]} onChange={onChange} errors={props.errors} fixed={field.fixed} />;
+  if (field.type === 'segmented') {
+    return (
+      <div className="space-y-1.5">
+        <span className={`${LABEL} ${field.required ? "after:content-['*']" : ''}`}>{field.label}</span>
+        <div className="max-w-full overflow-x-auto">
+          <Segmented label={field.label} value={String(value)} options={field.options} onChange={onChange} />
+        </div>
+      </div>
+    );
+  }
   if (field.type === 'checkbox') {
     return (
       <label className="flex items-center gap-2 text-sm font-medium">

@@ -22,6 +22,7 @@ import {
   STATUSES, TYPE_LABELS, batchEvents, batchWeighings, type BatchDetail, type Weighing,
 } from '../../modules/lotsShared';
 import { useBuildingOptions, type Species } from '../../modules/productionShared';
+import { WithdrawalNotice } from '../../modules/santeShared';
 import NotFound from '../NotFound';
 import { Skeleton } from '../PageParts';
 import { DetailLayout } from './DetailLayout';
@@ -123,6 +124,7 @@ export function LotDetail({ id }: { id: string }) {
   };
 
   const feeding = can('alimentation', 'read') ? MODULES.alimentation : undefined;
+  const health = can('sante', 'read') ? MODULES.sante : undefined;
   const laying = can('ponte', 'read') && (batch.type === 'PONDEUSE' || batch.type === 'REPRODUCTEUR') ? MODULES.ponte : undefined;
 
   const tabs = [
@@ -133,6 +135,9 @@ export function LotDetail({ id }: { id: string }) {
       : []),
     ...(laying
       ? [{ key: 'laying', label: 'Ponte', content: <ModuleList config={laying} scope={{ batchId: id }} readOnly={closed} /> }]
+      : []),
+    ...(health
+      ? [{ key: 'health', label: 'Santé', content: <ModuleList config={health} scope={{ batchId: id }} readOnly={closed} /> }]
       : []),
   ];
 
@@ -158,7 +163,12 @@ export function LotDetail({ id }: { id: string }) {
             </>
           )
         }
-        notice={notice && <Alert className="mb-4">{notice}</Alert>}
+        notice={
+          <>
+            <WithdrawalNotice until={batch.withdrawalUntil} />
+            {notice && <Alert className="mb-4">{notice}</Alert>}
+          </>
+        }
         stats={[
           { label: 'Vivants', value: formatNumber(batch.alive) },
           { label: 'Mortalité', value: orDash(batch.mortalityRate, formatPct) },

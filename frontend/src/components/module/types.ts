@@ -80,6 +80,11 @@ export type Field =
        */
       dependsOn?: string;
     })
+  /**
+   * A choice between a few exclusive options shown as a pill-shaped radio group (a type, a kind of target); the
+   * value is the chosen option's value, `defaultValue` the one checked first. Options are static.
+   */
+  | (FieldBase & { type: 'segmented'; options: { value: string; label: string }[] })
   /** Checkbox list; the value is the array of selected option values. */
   | (FieldBase & { type: 'multiselect'; options: OptionsDef })
   | (FieldBase & { type: 'checkbox' })

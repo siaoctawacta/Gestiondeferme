@@ -56,6 +56,8 @@ export interface AnimalDetailData {
   exitDate: string | null;
   exitReason: string | null;
   notes: string | null;
+  /** `YYYY-MM-DD`: end of the withdrawal period of the latest done treatment (absent on an API without health). */
+  withdrawalUntil?: string | null;
 }
 
 /** `GET /animals/:id/weighings`. */
