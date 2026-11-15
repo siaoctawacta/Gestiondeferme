@@ -7,6 +7,8 @@ export interface DialogProps {
   onClose: () => void;
   title: string;
   children: ReactNode;
+  /** Wide panel (`max-w-3xl` instead of `max-w-lg`), for a grid that needs more than ~460px. */
+  wide?: boolean;
 }
 
 /**
@@ -14,7 +16,7 @@ export interface DialogProps {
  * the viewport: the header stays put and the body scrolls (put the buttons in `DialogActions` to keep them in
  * view).
  */
-export function Dialog({ open, onClose, title, children }: DialogProps) {
+export function Dialog({ open, onClose, title, children, wide = false }: DialogProps) {
   const titleId = useId();
   const panel = useRef<HTMLDivElement>(null);
   useFocusTrap(panel, open, onClose);
@@ -29,7 +31,7 @@ export function Dialog({ open, onClose, title, children }: DialogProps) {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        className="relative flex max-h-[calc(100dvh-2rem)] w-full max-w-lg flex-col rounded-[calc(var(--radius)+10px)] bg-card shadow-card outline-none"
+        className={`relative flex max-h-[calc(100dvh-2rem)] w-full ${wide ? 'max-w-3xl' : 'max-w-lg'} flex-col rounded-[calc(var(--radius)+10px)] bg-card shadow-card outline-none`}
       >
         <div className="flex shrink-0 items-start justify-between gap-4 px-6 pb-4 pt-6">
           <h2 id={titleId} className="font-display text-xl font-bold">{title}</h2>

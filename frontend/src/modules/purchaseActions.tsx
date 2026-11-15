@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { Ban, Banknote, Check, ClipboardCheck, PackageCheck, type LucideIcon } from 'lucide-react';
-import { ActionDialog } from '../components/module/ActionDialog';
+import { ActionDialog, withoutEmpty } from '../components/module/ActionDialog';
 import { ConfirmDialog } from '../components/module/ConfirmDialog';
 import { LoadedRecord } from '../components/module/LoadedRecord';
 import type { Field } from '../components/module/types';
@@ -30,7 +30,7 @@ const post = (id: string, path: string, body?: unknown) => api.post(`/purchases/
 function ValidateDialog({ row, onClose, onDone }: PurchaseDialogProps) {
   return (
     <ConfirmDialog
-      title={`Valider la demande ${row.reference}`}
+      title={`Valider ${row.reference}`}
       message={`Valider la demande d'achat ${row.reference} ? Elle pourra ensuite être commandée.`}
       confirmLabel="Valider"
       onClose={onClose}
@@ -54,7 +54,7 @@ function OrderDialog({ row, onClose, onDone }: PurchaseDialogProps) {
 function CancelDialog({ row, onClose, onDone }: PurchaseDialogProps) {
   return (
     <ActionDialog
-      title={`Annuler — ${row.reference}`}
+      title={`Annuler ${row.reference}`}
       intro={`Annuler ${row.reference} ? L'achat ne pourra plus être traité.`}
       fields={[{ name: 'reason', label: 'Motif', type: 'text', required: true }]}
       submitLabel="Confirmer l'annulation"
@@ -68,8 +68,6 @@ function CancelDialog({ row, onClose, onDone }: PurchaseDialogProps) {
 /** The API's own refusal, raised before the request: nothing more than ordered can be received (a surplus is a stock entry). */
 const OVER_RECEIVED = 'La quantité reçue dépasse la quantité commandée';
 
-const withoutBlank = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '' && v !== undefined));
-
 /**
  * Reception: the order's lines (loaded, as a list row does not carry them) with the quantity received prefilled
  * with the ordered one, a lot number and an expiry per line. The rows are fixed and in the order's order, so the
@@ -78,7 +76,9 @@ const withoutBlank = (o: Record<string, unknown>) => Object.fromEntries(Object.e
 function ReceiveForm({ order, onClose, onDone }: { order: PurchaseData; onClose: () => void; onDone: () => void }) {
   return (
     <ActionDialog
-      title={`Réceptionner — ${order.reference}`}
+      title={`Réceptionner ${order.reference}`}
+      // Five columns need ~640px.
+      wide
       fields={[
         { name: 'date', label: 'Date de réception', type: 'date', required: true, defaultValue: todayIso },
         {
@@ -100,7 +100,7 @@ function ReceiveForm({ order, onClose, onDone }: { order: PurchaseData; onClose:
       }}
       toPayload={(v) => ({
         date: v.date,
-        lines: (v.lines as Record<string, string>[]).map((r, i) => withoutBlank({
+        lines: (v.lines as Record<string, string>[]).map((r, i) => withoutEmpty({
           itemId: order.lines[i].itemId,
           receivedQuantity: Number(r.receivedQuantity),
           lotNumber: r.lotNumber.trim(),
@@ -117,7 +117,7 @@ function ReceiveForm({ order, onClose, onDone }: { order: PurchaseData; onClose:
 
 function ReceiveDialog({ row, onClose, onDone }: PurchaseDialogProps) {
   return (
-    <LoadedRecord<PurchaseData> title={`Réceptionner — ${row.reference}`} queryKey={['/purchases', 'detail', row.id]} path={`/purchases/${row.id}`} onClose={onClose}>
+    <LoadedRecord<PurchaseData> title={`Réceptionner ${row.reference}`} queryKey={['/purchases', 'detail', row.id]} path={`/purchases/${row.id}`} onClose={onClose}>
       {(order) => <ReceiveForm order={order} onClose={onClose} onDone={onDone} />}
     </LoadedRecord>
   );
@@ -134,7 +134,7 @@ const PAY_FIELDS = (remaining: number): Field[] => [
 export function PayDialog({ row, onClose, onDone }: PurchaseDialogProps) {
   return (
     <ActionDialog
-      title={`Payer — ${row.reference}`}
+      title={`Payer ${row.reference}`}
       fields={PAY_FIELDS(row.remaining)}
       validate={(v) => (Number(v.amount) > row.remaining ? 'Le montant dépasse le reste à payer' : null)}
       onSubmit={(body) => post(row.id, 'payments', body)}
@@ -145,6 +145,7 @@ export function PayDialog({ row, onClose, onDone }: PurchaseDialogProps) {
 }
 
 /**
+ * Every dialog is titled `{Action} {référence}` (`Valider DA-0089`, `Réceptionner BC-0142`).
  * Transitions of the workflow `DEMANDE → VALIDEE → COMMANDEE → RECUE → PAYEE` (`ANNULEE` before `RECUE`). The role
  * split comes from the permissions alone: `validate` for validating, ordering, cancelling and paying (director,
  * owner), `update` for the reception (storekeeper, stock manager).

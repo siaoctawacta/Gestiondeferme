@@ -13,9 +13,10 @@ import { Pill } from '../components/ui/Pill';
 import { Segmented } from '../components/ui/Segmented';
 import { Select } from '../components/ui/Select';
 import { api } from '../lib/api';
-import { useAuth } from '../lib/auth';
 import { formatMoney, formatNumber, orDash, todayIso } from '../lib/format';
 import { useFarmQuery } from '../lib/query';
+import { useBuildingOptions, useOpenLotOptions } from './productionShared';
+import { stockItemOptions } from './stocksShared';
 
 /* ---------------------------------------------------------------------------------------------
  * API shapes (backend contract of `/feed-distributions`, `/feed-products`, `/feed-formulas`).
@@ -111,7 +112,6 @@ type FormProps<T> = { row?: T; scope?: Record<string, string>; onSaved: () => vo
  * target and day.
  */
 function DistributionForm({ row, scope, onSaved, onClose }: FormProps<FeedDistribution>) {
-  const { can } = useAuth();
   const lotFixed = Boolean(scope?.batchId);
   const [date, setDate] = useState(row?.date ?? todayIso());
   const [targetKind, setTargetKind] = useState<'LOT' | 'BATIMENT'>(row?.targetKind ?? 'LOT');
@@ -126,15 +126,13 @@ function DistributionForm({ row, scope, onSaved, onClose }: FormProps<FeedDistri
   const [error, setError] = useState<string | null>(null);
 
   const picking = !row && !lotFixed;
-  // A user may be allowed to read one species' lots only (the API checks the species module).
-  const avianLots = useEndpointOptions({ endpoint: '/batches', labelKey: 'code', params: { species: 'AVICOLE', status: 'EN_COURS' } }, undefined, picking && targetKind === 'LOT' && can('lots', 'read'));
-  const pigLots = useEndpointOptions({ endpoint: '/batches', labelKey: 'code', params: { species: 'PORCIN', status: 'EN_COURS' } }, undefined, picking && targetKind === 'LOT' && can('porcs', 'read'));
-  const buildings = useEndpointOptions({ endpoint: '/buildings' }, undefined, picking && targetKind === 'BATIMENT');
+  const lots = useOpenLotOptions(picking && targetKind === 'LOT');
+  const buildings = useBuildingOptions(undefined, picking && targetKind === 'BATIMENT');
   const products = useEndpointOptions({ endpoint: '/feed-products', params: { active: 'true' } }, undefined, feedKind === 'PRODUIT');
   const formulas = useEndpointOptions({ endpoint: '/feed-formulas', params: { active: 'true' } }, undefined, feedKind === 'FORMULE');
 
   const storedTarget = row ? { value: row.batchId ?? row.buildingId ?? '', label: row.target } : null;
-  const targetOptions = withStored(targetKind === 'LOT' ? [...avianLots, ...pigLots] : buildings, storedTarget);
+  const targetOptions = withStored(targetKind === 'LOT' ? lots : buildings, storedTarget);
   const storedFeed = row ? { value: storedFeedId, label: row.feedName } : null;
   const feedOptions = withStored(feedKind === 'PRODUIT' ? products : formulas, row && feedKind === storedKind ? storedFeed : null);
   // Only the first distribution of a target and day carries the day's water. The API says so (`waterEditable`);
@@ -329,7 +327,7 @@ export const feedProducts: ModuleConfig<FeedProduct> = {
     { name: 'name', label: 'Nom', type: 'text', required: true },
     { name: 'kind', label: 'Type', type: 'select', required: true, options: KINDS },
     { name: 'unitCost', label: 'Coût unitaire (FCFA/kg)', type: 'number', required: true, min: 0, step: 0.01 },
-    { name: 'stockItemId', label: 'Article de stock', type: 'select', options: { endpoint: '/stock-items', params: { category: 'ALIMENT', active: 'true' } } },
+    { name: 'stockItemId', label: 'Article de stock', type: 'select', options: stockItemOptions('ALIMENT') },
     { name: 'active', label: 'Actif', type: 'checkbox', defaultValue: true },
   ],
 };

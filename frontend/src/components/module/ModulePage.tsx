@@ -144,7 +144,7 @@ function ModuleView<T extends { id: string }>({
       key: a.key,
       label: a.label,
       icon: a.icon,
-      visible: readOnly ? (row: T) => (a.visible?.(row) ?? true) && closedGates!.actions![a.key](row) : a.visible,
+      visible: (row: T) => (a.visible?.(row, { can }) ?? true) && (!readOnly || closedGates!.actions![a.key](row)),
       run: (row) => {
         if (a.dialog) {
           setActing({ action: a, row });

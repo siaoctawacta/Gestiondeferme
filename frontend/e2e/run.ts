@@ -4,6 +4,7 @@ import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import { readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { parseArgs } from './args.ts';
 import { ADMINS, API_PORT, API_URL, BACKEND_ENV, PASSWORD, WEB_PORT, WEB_URL } from './config.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -48,6 +49,16 @@ process.on('SIGINT', () => {
   process.exit(130);
 });
 
+// The command line is checked first: a bad `--trace` must fail before the database is dropped or a server started.
+// `npm run e2e -- production` runs only the specs whose file name contains one of the words.
+let cli: ReturnType<typeof parseArgs>;
+try {
+  cli = parseArgs(process.argv.slice(2));
+} catch (e) {
+  console.error(e instanceof Error ? e.message : e);
+  process.exit(1);
+}
+
 let code = 1;
 try {
   // The reset below drops the whole schema: never let it near any other database.
@@ -81,26 +92,15 @@ try {
   await waitFor(`${API_URL}/api/health`, 'API');
   await waitFor(WEB_URL, 'Vite');
 
-  if (process.argv.includes('--serve')) {
+  if (cli.serve) {
     console.log(`E2E servers up: ${WEB_URL} (Ctrl-C to stop)`);
     await new Promise(() => {});
   }
-  // `npm run e2e -- production` runs only the specs whose file name contains one of the words.
-  // `--trace off` is accepted and ignored (the specs drive Playwright's library, which never records a trace);
-  // any other use of `--trace` is an error, not silently dropped.
-  const args = process.argv.slice(2);
-  const only: string[] = [];
-  for (let i = 0; i < args.length; i += 1) {
-    if (args[i] === '--trace') {
-      if (args[i + 1] !== 'off') throw new Error(`--trace n'accepte que « off » (reçu : ${args[i + 1] ?? 'rien'})`);
-      i += 1;
-    } else if (!args[i].startsWith('--')) only.push(args[i]);
-  }
   const specs = readdirSync(here)
-    .filter((f) => f.endsWith('.spec.ts') && (only.length === 0 || only.some((w) => f.includes(w))))
+    .filter((f) => f.endsWith('.spec.ts') && (cli.only.length === 0 || cli.only.some((w) => f.includes(w))))
     .sort()
     .map((f) => join('e2e', f));
-  if (specs.length === 0) throw new Error(`Aucune spec ne correspond à « ${only.join(' ')} » (fichiers : ${readdirSync(here).filter((f) => f.endsWith('.spec.ts')).join(', ')})`);
+  if (specs.length === 0) throw new Error(`Aucune spec ne correspond à « ${cli.only.join(' ')} » (fichiers : ${readdirSync(here).filter((f) => f.endsWith('.spec.ts')).join(', ')})`);
   const r = spawnSync(
     'node',
     ['--disable-warning=ExperimentalWarning', '--test', '--test-concurrency=1', '--test-timeout=120000', ...specs],

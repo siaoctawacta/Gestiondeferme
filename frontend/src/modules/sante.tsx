@@ -2,6 +2,8 @@ import { Ban, CircleCheck, LockOpen, Syringe, XCircle } from 'lucide-react';
 import type { ModuleConfig, RowAction, StatusDef } from '../components/module/types';
 import { Pill } from '../components/ui/Pill';
 import { TYPE_LABELS } from './lotsShared';
+import { SPECIES_MODULE } from './productionShared';
+import { stockItemOptions } from './stocksShared';
 import {
   ActForm, ApplyPlanDialog, BiosecurityForm, CancelActDialog, CloseIncidentDialog, CompleteActDialog, IncidentForm,
   LiftQuarantineDialog, QuarantineForm,
@@ -57,7 +59,7 @@ const plans: ModuleConfig<VaccinationPlanRow> = {
         { name: 'productName', label: 'Produit', type: 'text', required: true },
         {
           name: 'stockItemId', label: 'Produit en stock', type: 'select',
-          options: { endpoint: '/stock-items', params: { category: 'VACCIN', active: 'true' } },
+          options: stockItemOptions('VACCIN'),
           // Without read rights on stocks the stored product is kept as is.
           optionsPermission: { module: 'stocks', action: 'read' },
         },
@@ -65,7 +67,11 @@ const plans: ModuleConfig<VaccinationPlanRow> = {
       ],
     },
   ],
-  actions: [{ key: 'apply', label: 'Appliquer à un lot', icon: Syringe, permission: 'update', needsFarm: true, dialog: ApplyPlanDialog }],
+  // The lots offered belong to the plan's species module: without read on it the lot select would be empty and required.
+  actions: [{
+    key: 'apply', label: 'Appliquer à un lot', icon: Syringe, permission: 'update', needsFarm: true,
+    visible: (p, { can }) => can(SPECIES_MODULE[p.species], 'read'), dialog: ApplyPlanDialog,
+  }],
 };
 
 const biosecurity: ModuleConfig<BiosecurityLogRow> = {

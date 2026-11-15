@@ -1,18 +1,42 @@
 import { allPages } from '../components/module/allPages';
 import type { EndpointOptions } from '../components/module/types';
-import type { Option } from '../components/module/useEndpointOptions';
+import { useEndpointOptions, type Option } from '../components/module/useEndpointOptions';
+import { useAuth } from '../lib/auth';
+import type { ModuleKey } from '../lib/modules';
 import { useFarmQuery } from '../lib/query';
 
 export type Species = 'AVICOLE' | 'PORCIN';
 
-/** Buildings as select options, those of the species the form is about first (the API sorts by name only). */
-export function useBuildingOptions(firstType: Species): Option[] {
+/** The module that owns the records of a species (its lots, its animals): the one whose read right opens them. */
+export const SPECIES_MODULE: Record<Species, ModuleKey> = { AVICOLE: 'lots', PORCIN: 'porcs' };
+
+/**
+ * THE buildings options of every form: those of the species the form is about first (the API sorts by name only), the
+ * order of the API without one. `enabled: false` makes no request (a form that only needs them for one choice).
+ */
+export function useBuildingOptions(firstType?: Species, enabled = true): Option[] {
   const { data } = useFarmQuery<{ id: string; name: string; type: string }[]>(
     ['/buildings', 'typed-options'],
     () => allPages('/buildings'),
+    { enabled },
   );
   const rank = (b: { type: string }) => (b.type === firstType ? 0 : 1);
   return [...(data ?? [])].sort((a, b) => rank(a) - rank(b)).map((b) => ({ value: b.id, label: b.name }));
+}
+
+/** THE option source of the open lots of one species (labelled by code), of one lot type when given. */
+export const openLotOptions = (species: Species, type?: string): EndpointOptions => ({
+  endpoint: '/batches',
+  labelKey: 'code',
+  params: { species, status: 'EN_COURS', ...(type ? { type } : {}) },
+});
+
+/** Open lots of both species, each loaded only when the user may read that species' module (the API checks it too). */
+export function useOpenLotOptions(enabled = true): Option[] {
+  const { can } = useAuth();
+  const avian = useEndpointOptions(openLotOptions('AVICOLE'), undefined, enabled && can(SPECIES_MODULE.AVICOLE, 'read'));
+  const pigs = useEndpointOptions(openLotOptions('PORCIN'), undefined, enabled && can(SPECIES_MODULE.PORCIN, 'read'));
+  return [...avian, ...pigs];
 }
 
 /** Open avian batches that lay eggs (the API filters on one type at a time, so the types are kept here). */

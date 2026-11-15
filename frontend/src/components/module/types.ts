@@ -21,7 +21,11 @@ export type EndpointOptions = {
   select?: (data: unknown) => { value: string; label: string }[];
 };
 
-/** Static `{value,label}` options, or options loaded from an endpoint. */
+/**
+ * Static `{value,label}` options, or options loaded from an endpoint. A select whose current value is not among them
+ * (an incident on a lot since closed, an article since deactivated) keeps it as the disabled option `Valeur actuelle`
+ * (`Valeur conservée` when the options cannot be read) and resends it unchanged, instead of falling back to `Sélectionner…`.
+ */
 export type OptionsDef = { value: string; label: string }[] | EndpointOptions;
 
 /**
@@ -60,7 +64,7 @@ export type CellField =
       options: OptionsDef;
       /** An option already chosen in another row of the grid is not offered again. */
       unique?: boolean;
-      /** See the select field: the endpoint options need this permission. */
+      /** See the select field: the endpoint options need this permission; without it `required` does not apply to the column. */
       optionsPermission?: OptionsPermission;
     });
 
@@ -170,7 +174,11 @@ type RowActionBase<T> = {
   /** Accessible label and tooltip. */
   label: string;
   icon: LucideIcon;
-  visible?: (row: T) => boolean;
+  /**
+   * Whether the button is offered for this row (default: always), on top of `permission`. `can` is the user's
+   * permission check, for a row whose button depends on a module other than `slug` (a plan of one species).
+   */
+  visible?: (row: T, ctx: { can: (module: ModuleKey, action: Action) => boolean }) => boolean;
   /** Permission needed on `slug` (default `update`; anything but `read` is also off under "all farms"). */
   permission?: Action;
   /** For a module whose data is not farm-scoped: the action still needs one farm (a lot, a stock), so it is hidden under "all farms". */

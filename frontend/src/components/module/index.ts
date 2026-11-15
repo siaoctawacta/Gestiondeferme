@@ -1,4 +1,4 @@
-export { ActionDialog } from './ActionDialog';
+export { ActionDialog, withoutEmpty } from './ActionDialog';
 export { allPages } from './allPages';
 export { ModulePage, ModuleList } from './ModulePage';
 export type { ModulePageProps, ModuleListProps } from './ModulePage';

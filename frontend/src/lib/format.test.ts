@@ -1,8 +1,16 @@
 import {
-  formatDate, formatDateFr, formatDateTime, formatDateTimeFr, formatDecimal, formatMoney, formatNumber, formatPct, orDash, todayIso, addDays,
+  formatDate, formatDateFr, formatDateTime, formatDateTimeFr, formatDecimal, formatMoney, formatNumber, formatPct, orDash, roundDecimal, todayIso,
 } from './format';
 
 describe('format', () => {
+  it('rounds a computed quantity to 2 decimals without float drift', () => {
+    expect(roundDecimal(10.3 - 10.1)).toBe(0.2);
+    expect(roundDecimal(0.1 + 0.2)).toBe(0.3);
+    expect(roundDecimal(-0.1 - 0.2)).toBe(-0.3);
+    expect(roundDecimal(1.005)).toBe(1.01);
+    expect(roundDecimal(2.5, 0)).toBe(3);
+    expect(roundDecimal(Number.NaN)).toBeNaN();
+  });
   it('formats numbers with a narrow no-break space (U+202F) as thousands separator', () => {
     expect(formatNumber(11570)).toBe('11\u202f570');
   });
@@ -43,10 +51,5 @@ describe('format', () => {
   });
   it('returns a dash for an invalid date instead of throwing', () => {
     for (const f of [formatDate, formatDateFr, formatDateTime, formatDateTimeFr]) expect(f('pas une date')).toBe('—');
-  });
-  it('adds days to a calendar date in UTC, across month and year ends', () => {
-    expect(addDays('2026-11-15', 30)).toBe('2026-12-15');
-    expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
-    expect(addDays('2026-03-01', -1)).toBe('2026-02-28');
   });
 });

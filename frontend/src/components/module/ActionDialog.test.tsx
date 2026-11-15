@@ -15,13 +15,15 @@ function json(status: number, body?: unknown): Response {
 const USER = { id: 'u1', name: 'Awa', email: 'awa@x.tg', role: 'DIRECTEUR_FERME', twoFactorEnabled: true };
 const fetchMock = vi.fn<typeof fetch>();
 const urls: string[] = [];
+/** Permissions of the signed-in user, by module (nothing unless a test grants some). */
+let permissions: Record<string, string[]> = {};
 
 function mount(props: Partial<ActionDialogProps> & { fields: ActionDialogProps['fields'] }) {
   fetchMock.mockImplementation(async (input) => {
     const url = String(input);
     urls.push(url);
     if (url === '/api/auth/refresh') return json(200, { accessToken: 'acc', user: USER });
-    if (url === '/api/auth/me') return json(200, { user: USER, farms: [{ id: 'f1', name: 'Ferme' }], canSeeAllFarms: true, permissions: {} });
+    if (url === '/api/auth/me') return json(200, { user: USER, farms: [{ id: 'f1', name: 'Ferme' }], canSeeAllFarms: true, permissions });
     const item = /^\/api\/items\/(\w+)$/.exec(url);
     if (item) return json(200, { batches: [{ id: `b-${item[1]}`, n: Number(item[1].slice(1)) }] });
     if (url.startsWith('/api/zones')) {
@@ -46,6 +48,7 @@ function mount(props: Partial<ActionDialogProps> & { fields: ActionDialogProps['
 
 beforeEach(() => {
   urls.length = 0;
+  permissions = {};
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -296,6 +299,112 @@ describe('ActionDialog: options that need a permission', () => {
     expect(select).toBeDisabled();
     expect(select).toHaveValue('z9');
     expect(urls.some((u) => u.startsWith('/api/zones'))).toBe(false);
+  });
+});
+
+describe('ActionDialog: required select columns whose options need a permission', () => {
+  const grid = (): Field[] => [{
+    name: 'rows', label: 'Lignes', type: 'lines',
+    columns: [
+      { name: 'zoneId', label: 'Zone', type: 'select', required: true, options: { endpoint: '/zones' }, optionsPermission: { module: 'stocks', action: 'read' } },
+      { name: 'qty', label: 'Quantité', type: 'number' },
+    ],
+  }];
+
+  it('is still required for a user who holds the permission', async () => {
+    permissions = { stocks: ['read'] };
+    const { onSubmit } = mount({ fields: grid(), initial: { rows: [{ zoneId: '', qty: '1' }] } });
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Enregistrer' }));
+    expect(await screen.findByText('Ligne 1 : le champ « Zone » est requis')).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it('is not required without the permission: the stored value is kept and resent unchanged', async () => {
+    const { onSubmit } = mount({ fields: grid(), mode: 'update', initial: { rows: [{ zoneId: 'z9', qty: '1' }, { zoneId: '', qty: '2' }] } });
+    expect(await screen.findByLabelText('Zone ligne 1')).toBeDisabled();
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Enregistrer' }));
+    // Nothing changed: the stored rows go through validation (no « requis » on the unreadable column) and no request is made.
+    await waitFor(() => expect(screen.queryByText(/est requis/)).not.toBeInTheDocument());
+    expect(onSubmit).not.toHaveBeenCalled();
+    cleanup();
+    const created = mount({ fields: grid(), initial: { rows: [{ zoneId: 'z9', qty: '1' }, { zoneId: '', qty: '2' }] } });
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(created.onSubmit).toHaveBeenCalledWith({ rows: [{ zoneId: 'z9', qty: 1 }, { qty: 2 }] }));
+  });
+});
+
+describe('ActionDialog: fields function and defaults', () => {
+  const dynamic = (seen: Record<string, unknown>[]) => (values: Record<string, unknown>): Field[] => {
+    seen.push(values);
+    return [
+      { name: 'kind', label: 'Genre', type: 'select', defaultValue: 'A', options: [{ value: 'A', label: 'Alpha' }, { value: 'B', label: 'Bravo' }] },
+      ...(values.kind === 'A' ? [{ name: 'alpha', label: 'Détail alpha', type: 'text' } as Field] : []),
+      ...(values.kind === 'B' ? [{ name: 'bravo', label: 'Détail bravo', type: 'text' } as Field] : []),
+    ];
+  };
+
+  it('hands the defaults of the fields to the function when creating (no fallback needed)', async () => {
+    const seen: Record<string, unknown>[] = [];
+    mount({ fields: dynamic(seen) });
+    expect(await screen.findByLabelText('Détail alpha')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Détail bravo')).not.toBeInTheDocument();
+    expect(seen.at(-1)).toMatchObject({ kind: 'A' });
+    await userEvent.setup().selectOptions(screen.getByLabelText('Genre'), 'Bravo');
+    expect(await screen.findByLabelText('Détail bravo')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Détail alpha')).not.toBeInTheDocument();
+  });
+
+  it('does not apply a default when editing: the stored value rules, an empty one stays empty', async () => {
+    const seen: Record<string, unknown>[] = [];
+    mount({ fields: dynamic(seen), mode: 'update', initial: { kind: null } });
+    expect(await screen.findByLabelText('Genre')).toHaveValue('');
+    expect(screen.queryByLabelText('Détail alpha')).not.toBeInTheDocument();
+    expect(seen.at(-1)).toMatchObject({ kind: '' });
+  });
+});
+
+describe('ActionDialog: a stored select value the options no longer offer', () => {
+  const fields: Field[] = [
+    { name: 'zoneId', label: 'Zone', type: 'select', options: { endpoint: '/zones' } },
+    { name: 'siteId', label: 'Site', type: 'select', options: SITES },
+    { name: 'note', label: 'Note', type: 'text' },
+  ];
+
+  it('stays the current choice (not « Sélectionner… ») and is kept when the rest is edited', async () => {
+    const { onSubmit } = mount({ fields, mode: 'update', initial: { zoneId: 'z-gone', siteId: 's9', note: '' } });
+    const zone = await screen.findByLabelText('Zone');
+    await waitFor(() => expect(within(zone).getByRole('option', { name: 'Zone null' })).toBeInTheDocument());
+    expect(zone).toHaveValue('z-gone');
+    expect(within(zone).getByRole('option', { name: 'Valeur actuelle' })).toBeDisabled();
+    expect(screen.getByLabelText('Site')).toHaveValue('s9');
+    expect(within(screen.getByLabelText('Site')).getByRole('option', { name: 'Valeur actuelle' })).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.type(screen.getByLabelText('Note'), 'ok');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ note: 'ok' }));
+  });
+
+  it('does not add the option for a value the options still offer, nor for an empty one', async () => {
+    mount({ fields: [fields[1]], mode: 'update', initial: { siteId: 's1' } });
+    const site = await screen.findByLabelText('Site');
+    expect(site).toHaveValue('s1');
+    expect(within(site).queryByRole('option', { name: 'Valeur actuelle' })).not.toBeInTheDocument();
+    cleanup();
+    mount({ fields: [fields[1]], mode: 'update', initial: { siteId: null } });
+    const empty = await screen.findByLabelText('Site');
+    expect(within(empty).queryByRole('option', { name: 'Valeur actuelle' })).not.toBeInTheDocument();
+  });
+});
+
+describe('ActionDialog: dialog width', () => {
+  it('is the default width unless `wide` is given (a grid of more than three columns)', async () => {
+    mount({ fields: [{ name: 'note', label: 'Note', type: 'text' }] });
+    expect((await screen.findByRole('dialog')).className).toContain('max-w-lg');
+    cleanup();
+    mount({ fields: [{ name: 'note', label: 'Note', type: 'text' }], wide: true });
+    const wide = (await screen.findByRole('dialog')).className;
+    expect(wide).toContain('max-w-3xl');
+    expect(wide).not.toContain('max-w-lg');
   });
 });
 

@@ -2,9 +2,8 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
-import { formatDate, formatNumber } from '../../lib/format';
+import { formatDate, formatNumber, roundDecimal } from '../../lib/format';
 import { farmKey, useFarmQuery } from '../../lib/query';
-import { allPages } from '../../components/module/allPages';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
@@ -14,19 +13,25 @@ import type { LineRow } from '../../components/module/types';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
-import { Pill } from '../../components/ui/Pill';
-import type { InventoryData, StockRow } from '../../modules/stocksShared';
+import { inventoryPill, type InventoryData } from '../../modules/stocksShared';
 import NotFound from '../NotFound';
 import { DetailLayout } from './DetailLayout';
 
-/** Gap between the count and the theoretical quantity, `null` while nothing is counted. */
-const gapOf = (row: LineRow): number | null =>
-  (row.countedQty ?? '') === '' ? null : Number(row.countedQty) - Number(row.theoreticalQty);
+/**
+ * Gap between the count and the theoretical quantity, `null` while nothing is counted: the API's own `difference` for
+ * a count as saved, the rounded local difference once the count was edited.
+ */
+const gapOf = (row: LineRow): number | null => {
+  if ((row.countedQty ?? '') === '') return null;
+  if (row.countedQty === row.savedQty && (row.difference ?? '') !== '') return Number(row.difference);
+  return roundDecimal(Number(row.countedQty) - Number(row.theoreticalQty));
+};
 
 const GRID: LinesFieldDef = {
   name: 'lines',
   label: 'Comptage',
   type: 'lines',
+  fixed: true,
   columns: [
     { name: 'itemName', label: 'Article', type: 'text', readOnly: true },
     { name: 'theoreticalQty', label: 'Théorique', type: 'number', readOnly: true },
@@ -48,32 +53,21 @@ const GRID: LinesFieldDef = {
 
 const cell = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
 
-/** A draft lists every active item: the counts already saved, the others at the current level. */
-function draftRows(data: InventoryData, stock: StockRow[]): LineRow[] {
-  const saved = new Map(data.lines.map((l) => [l.itemId, l]));
-  return stock.map((s) => {
-    const line = saved.get(s.id);
-    return {
-      itemId: s.id,
-      itemName: s.name,
-      theoreticalQty: cell(line ? line.theoreticalQty : s.quantity),
-      countedQty: cell(line?.countedQty),
-    };
-  });
-}
-
-const savedRows = (data: InventoryData): LineRow[] =>
+/** The grid: one row per line of the session, as returned; `savedQty` / `difference` are what the API holds for the count. */
+const rowsOf = (data: InventoryData): LineRow[] =>
   data.lines.map((l) => ({
     itemId: l.itemId,
     itemName: l.itemName,
     theoreticalQty: cell(l.theoreticalQty),
     countedQty: cell(l.countedQty),
+    savedQty: cell(l.countedQty),
+    difference: cell(l.difference),
   }));
 
-function Sheet({ data, initial }: { data: InventoryData; initial: LineRow[] }) {
+function Sheet({ data }: { data: InventoryData }) {
   const { can, farmId } = useAuth();
   const queryClient = useQueryClient();
-  const [rows, setRows] = useState(initial);
+  const [rows, setRows] = useState(() => rowsOf(data));
   const [notice, setNotice] = useState<{ tone: 'success' | 'error'; message: string } | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -117,7 +111,7 @@ function Sheet({ data, initial }: { data: InventoryData; initial: LineRow[] }) {
         back={{ to: '/m/stocks', label: 'Stocks' }}
         title={`Inventaire du ${formatDate(data.date)}`}
         subtitle={data.note ?? undefined}
-        status={<Pill tone={draft ? 'warning' : 'success'}>{draft ? 'Brouillon' : 'Validée'}</Pill>}
+        status={inventoryPill(data.status)}
         actions={
           <>
             {writable && <Button variant="outline" disabled={busy} onClick={saveDraft}>Enregistrer le brouillon</Button>}
@@ -127,7 +121,9 @@ function Sheet({ data, initial }: { data: InventoryData; initial: LineRow[] }) {
         notice={notice && <Alert tone={notice.tone} className="mb-4">{notice.message}</Alert>}
       >
         <Card className="p-4">
-          <LinesField field={GRID} value={rows} onChange={(r) => { setRows(r); setErrors([]); }} errors={errors} fixed disabled={!writable} />
+          {draft && rows.length === 0
+            ? <p className="py-6 text-center text-muted-foreground">Aucun article actif</p>
+            : <LinesField field={GRID} value={rows} onChange={(r) => { setRows(r); setErrors([]); }} errors={errors} disabled={!writable} />}
         </Card>
       </DetailLayout>
       {confirming && (
@@ -150,22 +146,19 @@ function Sheet({ data, initial }: { data: InventoryData; initial: LineRow[] }) {
 }
 
 /**
- * `/m/stocks/inv-:id`: one count session. A draft is a grid over every active item (counts typed in, saved as a
- * draft, then validated: the gaps become adjustments); a validated session is read-only.
+ * `/m/stocks/inv-:id`: one count session. A draft is a grid over the lines the API returns (every active article with
+ * its theoretical quantity; counts typed in, saved as a draft, then validated: the gaps become adjustments); a
+ * validated session is read-only.
  */
 export function InventoryDetail({ id }: { id: string }) {
   const session = useFarmQuery<InventoryData>(['/inventories', 'detail', id], () => api.get<InventoryData>(`/inventories/${id}`));
-  const draft = session.data?.status === 'BROUILLON';
-  const stock = useFarmQuery<StockRow[]>(['/stock', 'all'], () => allPages<StockRow>('/stock'), { enabled: draft });
 
-  if (session.isPending || (draft && stock.isPending && !stock.isError)) return <div aria-busy className="h-40 animate-pulse rounded-3xl bg-muted" />;
+  if (session.isPending) return <div aria-busy className="h-40 animate-pulse rounded-3xl bg-muted" />;
   if (session.isError) {
     if (session.error instanceof ApiError && (session.error.status === 404 || session.error.status === 400)) return <NotFound />;
     return <ErrorRetry message={errorMessage(session.error)} onRetry={() => session.refetch()} />;
   }
-  if (draft && stock.isError) return <ErrorRetry message={errorMessage(stock.error)} onRetry={() => stock.refetch()} />;
 
-  const data = session.data;
   // Remount on a refetch (a validation), so the grid shows what the server now holds.
-  return <Sheet key={data.status} data={data} initial={draft ? draftRows(data, stock.data ?? []) : savedRows(data)} />;
+  return <Sheet key={session.data.status} data={session.data} />;
 }

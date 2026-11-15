@@ -51,7 +51,10 @@ export function CellControl({ field, value, onChange, id, disabled, excluded, pa
         onChange={(e) => onChange(e.target.value)}
       >
         <option value="">{waitingFor !== undefined ? `Choisir d'abord ${waitingFor}` : 'Sélectionner…'}</option>
-        {!allowed && current !== '' && <option value={current}>Valeur conservée</option>}
+        {/* A stored value the options no longer offer (a closed lot, an inactive article, options not readable) stays the current choice and is resent unchanged. */}
+        {current !== '' && !options.some((o) => o.value === current) && (
+          <option value={current} disabled>{allowed ? 'Valeur actuelle' : 'Valeur conservée'}</option>
+        )}
         {options.filter((o) => o.value === current || !excluded?.includes(o.value)).map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
         ))}

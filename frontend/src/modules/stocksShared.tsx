@@ -2,10 +2,11 @@ import { useRef, type ComponentType } from 'react';
 import { ActionDialog } from '../components/module/ActionDialog';
 import { allPages } from '../components/module/allPages';
 import { LoadedRecord } from '../components/module/LoadedRecord';
-import type { Field, ModuleConfig } from '../components/module/types';
+import type { EndpointOptions, Field, ModuleConfig, StatusDef } from '../components/module/types';
 import { Pill, type PillTone } from '../components/ui/Pill';
 import { api } from '../lib/api';
-import { formatMoney, formatNumber, todayIso } from '../lib/format';
+import { formatMoney, formatNumber, roundDecimal, todayIso } from '../lib/format';
+import { text } from './lotsShared';
 
 /* ---------------------------------------------------------------------------------------------
  * API shapes (backend contract of `/stock`, `/stock-items`, `/stock/movements`, `/inventories`).
@@ -37,9 +38,12 @@ export interface StockRow {
   nextExpiry: string | null;
 }
 
+/** Expiry state of a batch as the API (and the alerts) judge it: `soon` is within the expiry warning setting. */
+export type BatchExpiry = 'ok' | 'soon' | 'expired';
+
 /** `GET /stock/:itemId`: the row plus the batches in stock. */
 export interface StockItemDetailData extends StockRow {
-  batches: { id: string; lotNumber: string | null; expiryDate: string | null; receivedDate: string; quantity: number }[];
+  batches: { id: string; lotNumber: string | null; expiryDate: string | null; receivedDate: string; quantity: number; expiry: BatchExpiry }[];
 }
 
 /**
@@ -75,9 +79,23 @@ export interface InventoryRow {
   lineCount: number;
 }
 
+/**
+ * One line of `GET /inventories/:id`: one per active article of the session's farm, with the theoretical quantity at
+ * the session date. `countedQty` and `difference` are `null` until counted. A count saved for an article that is no
+ * longer active is still returned.
+ */
+export interface InventoryLine {
+  itemId: string;
+  itemName: string;
+  unit: string;
+  theoreticalQty: number;
+  countedQty: number | null;
+  difference: number | null;
+}
+
 /** `GET /inventories/:id`. */
 export interface InventoryData extends InventoryRow {
-  lines: { itemId: string; itemName: string; unit: string; theoreticalQty: number; countedQty: number; difference: number }[];
+  lines: InventoryLine[];
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -89,6 +107,12 @@ export const CATEGORIES: { value: StockCategory; label: string }[] = [
   { value: 'MATERIEL', label: 'Matériel' },
   { value: 'CONSOMMABLE', label: 'Consommable' },
 ];
+/** THE option source of the active stock articles, of one category when given (every select over `/stock-items`). */
+export const stockItemOptions = (category?: StockCategory): EndpointOptions => ({
+  endpoint: '/stock-items',
+  params: { active: 'true', ...(category ? { category } : {}) },
+});
+
 export const categoryLabel = (c: string) => CATEGORIES.find((x) => x.value === c)?.label ?? c;
 
 export const LEVELS: { value: StockLevel; label: string; tone: PillTone }[] = [
@@ -97,6 +121,16 @@ export const LEVELS: { value: StockLevel; label: string; tone: PillTone }[] = [
   { value: 'critique', label: 'critique', tone: 'danger' },
 ];
 export const levelPill = (level: StockLevel) => <Pill tone={LEVELS.find((l) => l.value === level)?.tone ?? 'neutral'}>{level}</Pill>;
+
+/** The one definition of the status of a count session: the list pill and the session page's pill. */
+export const INVENTORY_STATUSES: StatusDef[] = [
+  { value: 'BROUILLON', label: 'Brouillon', tone: 'warning' },
+  { value: 'VALIDEE', label: 'Validée', tone: 'success' },
+];
+export const inventoryPill = (status: string) => {
+  const def = INVENTORY_STATUSES.find((s) => s.value === status);
+  return <Pill tone={def?.tone ?? 'neutral'}>{def?.label ?? status}</Pill>;
+};
 
 export const MOVEMENT_TYPES: { value: MovementType; label: string; tone: PillTone }[] = [
   { value: 'ENTREE', label: 'Entrée', tone: 'success' },
@@ -176,7 +210,7 @@ export function MovementDialog({ title, type, itemId, row, pieces = 1, onClose, 
         return [
           ...(itemId || row ? [] : [{
             name: 'stockItemId', label: 'Article', type: 'select', required: true, only: 'create',
-            options: { endpoint: '/stock-items', params: { active: 'true' } },
+            options: stockItemOptions(),
           } as Field]),
           ...(fixed ? [] : [{
             name: 'type', label: 'Type', type: 'select', required: true, only: 'create',
@@ -189,7 +223,7 @@ export function MovementDialog({ title, type, itemId, row, pieces = 1, onClose, 
       toPayload={(v: Values, mode) => {
         const t = fixed ?? (v.type as MovementType);
         if (mode === 'update') {
-          return { date: v.date, quantity: num(v.quantity), unitCost: t === 'ENTREE' ? num(v.unitCost) : undefined, note: v.note };
+          return { date: v.date, quantity: num(v.quantity), unitCost: t === 'ENTREE' ? num(v.unitCost) : undefined, note: text(v.note) };
         }
         return {
           itemId: itemId ?? v.stockItemId,
@@ -198,9 +232,9 @@ export function MovementDialog({ title, type, itemId, row, pieces = 1, onClose, 
           quantity: num(v.quantity),
           unitCost: t === 'ENTREE' ? num(v.unitCost) : undefined,
           reason: t === 'ENTREE' ? 'ACHAT' : t === 'SORTIE' ? v.reason : 'AUTRE',
-          lotNumber: v.lotNumber,
+          lotNumber: text(v.lotNumber),
           expiryDate: v.expiryDate,
-          note: v.note,
+          note: text(v.note),
         };
       }}
       onSubmit={(body) => (row ? api.patch(`/stock/movements/${row.id}`, body) : api.post('/stock/movements', body))}
@@ -217,7 +251,7 @@ export function MovementDialog({ title, type, itemId, row, pieces = 1, onClose, 
 async function operationTotal(row: MovementRow): Promise<{ row: MovementRow; pieces: number }> {
   const day = await allPages<MovementRow>('/stock/movements', { itemId: row.itemId, from: row.date, to: row.date, type: row.type });
   const pieces = day.filter((m) => m.operationId === row.operationId);
-  return { row: { ...row, quantity: pieces.reduce((sum, m) => sum + m.quantity, 0) || row.quantity }, pieces: pieces.length };
+  return { row: { ...row, quantity: roundDecimal(pieces.reduce((sum, m) => sum + m.quantity, 0)) || row.quantity }, pieces: pieces.length };
 }
 
 const MovementForm: ComponentType<{ row?: MovementRow; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }> =

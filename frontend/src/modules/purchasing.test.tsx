@@ -31,8 +31,8 @@ const SUPPLIERS = [
 // The detail carries these beside the list row (`requestNumber` stays after the order, `orderNumber` is the BC).
 const base = { supplierId: 'sup1', orderNumber: null, note: null, requestNumber: 'DA-0001', receivedDate: null, cancelReason: null };
 const LIST = [
-  { id: 'p1', date: '2026-10-20', reference: 'BC-0142', supplierName: 'Agro Provende SA', article: 'Aliment ponte', quantity: 3000, status: 'COMMANDEE', amount: 930000, paid: 0, remaining: 930000 },
-  { id: 'p2', date: '2026-10-15', reference: 'BC-0141', supplierName: 'VetoPlus', article: 'Vaccin Gumboro', quantity: 10, status: 'RECUE', amount: 120000, paid: 0, remaining: 120000 },
+  { id: 'p1', date: '2026-10-20', reference: 'BC-0142', supplierName: 'Agro Provende SA', article: 'Aliment ponte', quantity: 3000, unit: 'kg', status: 'COMMANDEE', amount: 930000, paid: 0, remaining: 930000 },
+  { id: 'p2', date: '2026-10-15', reference: 'BC-0141', supplierName: 'VetoPlus', article: 'Vaccin Gumboro', quantity: 10, unit: 'flacons', status: 'RECUE', amount: 120000, paid: 0, remaining: 120000 },
   { id: 'p3', date: '2026-10-22', reference: 'DA-0089', supplierName: 'Agro Provende SA', article: 'Aliment engraissement porc', quantity: 4000, status: 'DEMANDE', amount: 1120000, paid: 0, remaining: 1120000 },
 ];
 const COUNTS = { DEMANDE: 1, VALIDEE: 0, COMMANDEE: 1, RECUE: 1, PAYEE: 0, ANNULEE: 0 };
@@ -88,6 +88,16 @@ DETAILS.p8 = {
     { step: 'ANNULEE', at: '2026-10-19T09:00:00.000Z', by: 'Awa', note: 'Doublon de commande' },
   ],
 };
+// A history that repeats a step (a payment step twice) and one that is still empty.
+DETAILS.p10 = {
+  ...(DETAILS.p2 as object), id: 'p10', reference: 'BC-0170',
+  history: [
+    { step: 'RECUE', at: '2026-10-15T23:30:00.000Z', by: 'Yao' },
+    { step: 'PAYEE', at: '2026-10-16T09:00:00.000Z', by: 'Awa' },
+    { step: 'PAYEE', at: '2026-10-17T09:00:00.000Z', by: 'Awa' },
+  ],
+};
+DETAILS.p11 = { ...(DETAILS.p3 as object), id: 'p11', reference: 'DA-0171', history: [] };
 const VALIDEE = { id: 'p5', date: '2026-10-23', reference: 'DA-0090', supplierName: 'VetoPlus', article: 'Vaccin Gumboro', quantity: 5, status: 'VALIDEE', amount: 60000, paid: 0, remaining: 60000 };
 
 const STOCK_ITEMS = [{ id: 's1', name: 'Aliment croissance chair' }, { id: 's2', name: 'Aliment ponte' }];
@@ -184,7 +194,8 @@ describe('fournisseurs list', () => {
     await user.type(within(dialog).getByLabelText('Téléphone'), '+228 93 00 00 00');
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/suppliers', body: { name: 'Avipharma', phone: '+228 93 00 00 00' } });
+    // `active` defaults to true in the form and is part of the create body.
+    expect(writes()[0]).toEqual({ method: 'POST', url: '/api/suppliers', body: { name: 'Avipharma', phone: '+228 93 00 00 00', active: true } });
 
     failWith = { url: /\/api\/suppliers\/sup2$/, status: 409, message: 'Fournisseur utilisé par des achats' };
     await user.click(rowOf('VetoPlus').getByRole('button', { name: 'Supprimer' }));
@@ -224,7 +235,7 @@ describe('fournisseurs list', () => {
     await user.click(within(dialog).getByLabelText('Actif'));
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/suppliers/sup2', body: { email: 'vente@vetoplus.tg', active: false } });
+    expect(writes()[0]).toEqual({ method: 'PATCH', url: '/api/suppliers/sup2', body: { email: 'vente@vetoplus.tg', active: false } });
   });
 });
 
@@ -244,8 +255,11 @@ describe('achats list', () => {
     expect(tile('Commandée')).toHaveTextContent('1');
 
     expect(cells(screen.getByText('BC-0142').closest('tr'))).toContain(
-      '2026-10-20 BC-0142 Agro Provende SA Aliment ponte 3 000 Commandée 930 000 FCFA',
+      '2026-10-20 BC-0142 Agro Provende SA Aliment ponte 3 000 kg Commandée 930 000 FCFA',
     );
+    // The unit comes with the quantity when the API sends it, and is simply left out when it does not.
+    expect(cells(screen.getByText('BC-0141').closest('tr'))).toContain('10 flacons');
+    expect(cells(screen.getByText('DA-0089').closest('tr'))).toContain('4 000 Demande');
     expect(cells(screen.getByText('DA-0089').closest('tr'))).toContain('Demande 1 120 000 FCFA');
     expect(rowOf('BC-0141').getByText('Reçue')).toBeInTheDocument();
     const statuses = screen.getByRole('combobox', { name: 'Tous les statuts' });
@@ -290,7 +304,7 @@ describe('achats list', () => {
     await screen.findByText('DA-0089');
     const user = userEvent.setup();
     await user.click(rowOf('DA-0089').getByRole('button', { name: 'Valider' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Valider la demande DA-0089' });
+    const dialog = await screen.findByRole('dialog', { name: 'Valider DA-0089' });
     await user.click(within(dialog).getByRole('button', { name: 'Valider' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/purchases/p3/validate' });
@@ -302,9 +316,12 @@ describe('achats list', () => {
     await screen.findByText('BC-0142');
     const user = userEvent.setup();
     await user.click(rowOf('BC-0142').getByRole('button', { name: 'Réceptionner' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Réceptionner — BC-0142' });
+    const dialog = await screen.findByRole('dialog', { name: 'Réceptionner BC-0142' });
     const received = await within(dialog).findByLabelText('Quantité reçue ligne 1');
     expect(received).toHaveValue(3000);
+    // Five columns need the wide dialog; a plain form keeps the default width.
+    expect(dialog.className).toContain('max-w-3xl');
+    expect(dialog.className).not.toContain('max-w-lg');
     expect(within(dialog).getByText('Aliment ponte')).toBeInTheDocument();
     // The rows are the order's: no add or remove.
     expect(within(dialog).queryByRole('button', { name: 'Ajouter une ligne' })).not.toBeInTheDocument();
@@ -328,7 +345,7 @@ describe('achats list', () => {
     await screen.findByText('BC-0150');
     const user = userEvent.setup();
     await user.click(rowOf('BC-0150').getByRole('button', { name: 'Réceptionner' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Réceptionner — BC-0150' });
+    const dialog = await screen.findByRole('dialog', { name: 'Réceptionner BC-0150' });
     const first = await within(dialog).findByLabelText('Quantité reçue ligne 1');
     expect(within(dialog).getByLabelText('Quantité reçue ligne 3')).toHaveValue(10);
     await user.clear(first);
@@ -352,7 +369,7 @@ describe('achats list', () => {
     await screen.findByText('BC-0142');
     const user = userEvent.setup();
     await user.click(rowOf('BC-0142').getByRole('button', { name: 'Réceptionner' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Réceptionner — BC-0142' });
+    const dialog = await screen.findByRole('dialog', { name: 'Réceptionner BC-0142' });
     const received = await within(dialog).findByLabelText('Quantité reçue ligne 1');
     await user.clear(received);
     await user.type(received, '3001');
@@ -372,7 +389,7 @@ describe('achats list', () => {
     const user = userEvent.setup();
     failWith = { url: /\/receive$/, status: 409, message: 'Achat déjà réceptionné' };
     await user.click(rowOf('BC-0142').getByRole('button', { name: 'Réceptionner' }));
-    let dialog = await screen.findByRole('dialog', { name: 'Réceptionner — BC-0142' });
+    let dialog = await screen.findByRole('dialog', { name: 'Réceptionner BC-0142' });
     await within(dialog).findByLabelText('Quantité reçue ligne 1');
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     expect(await within(dialog).findByText('Achat déjà réceptionné')).toBeInTheDocument();
@@ -380,7 +397,7 @@ describe('achats list', () => {
 
     failWith = { url: /\/cancel$/, status: 409, message: 'Achat déjà reçu' };
     await user.click(rowOf('BC-0142').getByRole('button', { name: 'Annuler' }));
-    dialog = await screen.findByRole('dialog', { name: 'Annuler — BC-0142' });
+    dialog = await screen.findByRole('dialog', { name: 'Annuler BC-0142' });
     await user.type(within(dialog).getByLabelText('Motif'), 'Erreur');
     await user.click(within(dialog).getByRole('button', { name: "Confirmer l'annulation" }));
     expect(await within(dialog).findByText('Achat déjà reçu')).toBeInTheDocument();
@@ -391,7 +408,7 @@ describe('achats list', () => {
     await screen.findByText('BC-0141');
     const user = userEvent.setup();
     await user.click(rowOf('BC-0141').getByRole('button', { name: 'Payer' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Payer — BC-0141' });
+    const dialog = await screen.findByRole('dialog', { name: 'Payer BC-0141' });
     expect(within(dialog).getByLabelText('Montant (FCFA)')).toHaveValue(120000);
     await user.clear(within(dialog).getByLabelText('Montant (FCFA)'));
     await user.type(within(dialog).getByLabelText('Montant (FCFA)'), '999999');
@@ -420,7 +437,7 @@ describe('achats list', () => {
     await screen.findByText('DA-0089');
     const user = userEvent.setup();
     await user.click(rowOf('DA-0089').getByRole('button', { name: 'Annuler' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Annuler — DA-0089' });
+    const dialog = await screen.findByRole('dialog', { name: 'Annuler DA-0089' });
     await user.type(within(dialog).getByLabelText('Motif'), 'Doublon');
     await user.click(within(dialog).getByRole('button', { name: "Confirmer l'annulation" }));
     await waitFor(() => expect(writes()).toHaveLength(1));
@@ -566,12 +583,36 @@ describe('purchase detail', () => {
     expect(within(screen.getByRole('tabpanel')).getAllByRole('row')).toHaveLength(4);
   });
 
+  it('keys the history rows by position (a repeated step is no duplicate key) and dates them like the payments', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      mountDetail('p10');
+      await screen.findByRole('heading', { name: 'BC-0170' });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('tab', { name: 'Historique' }));
+      const rowsOf = within(screen.getByRole('tabpanel')).getAllByRole('row');
+      expect(rowsOf).toHaveLength(4);
+      expect(cells(rowsOf[1])).toBe('Reçue 2026-10-15 Yao');
+      expect(cells(rowsOf[3])).toBe('Payée 2026-10-17 Awa');
+      expect(errors).not.toHaveBeenCalled();
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
+  it('spans the whole table in the empty history message', async () => {
+    mountDetail('p11');
+    await screen.findByRole('heading', { name: 'DA-0171' });
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Historique' }));
+    expect(within(screen.getByRole('tabpanel')).getByText('Aucun enregistrement')).toHaveAttribute('colspan', '4');
+  });
+
   it('pays from the header and deletes a payment from the Paiements tab', async () => {
     mountDetail('p2');
     await screen.findByRole('heading', { name: 'BC-0141' });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Payer' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Payer — BC-0141' });
+    const dialog = await screen.findByRole('dialog', { name: 'Payer BC-0141' });
     expect(within(dialog).getByLabelText('Montant (FCFA)')).toHaveValue(70000);
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));

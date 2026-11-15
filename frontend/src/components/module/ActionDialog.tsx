@@ -1,5 +1,6 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
 import { useAuth } from '../../lib/auth';
+import type { Action, ModuleKey } from '../../lib/modules';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Dialog, DialogActions } from '../ui/Dialog';
@@ -13,8 +14,9 @@ type Values = Record<string, unknown>;
 export interface ActionDialogProps {
   title: string;
   /**
-   * Inputs. A function of the values edited so far (a name is missing until the field was given a value or an
-   * `initial`) lets a field appear depending on another.
+   * Inputs. A function of the values as the form holds them (the record's, the edited ones and, when creating, the
+   * defaults of the fields it returns: no `?? default` needed) lets a field appear depending on another. It must be pure:
+   * it is called more than once per render.
    */
   fields: Field[] | ((values: Values) => Field[]);
   /** Initial values by field name (the record, for an edit); `defaultValue` of the field applies when creating only. */
@@ -24,6 +26,8 @@ export interface ActionDialogProps {
   /** Fields with `only` for the other mode are left out (default `create`). */
   mode?: FormMode;
   submitLabel?: string;
+  /** Wide dialog (`max-w-3xl`): for a form holding a `lines` grid of more than three columns, which needs ~640px. */
+  wide?: boolean;
   /**
    * Check across fields, run after the fields' own checks on submit (a total that must reach 100 %). Return the
    * French message to show in the dialog, or `null`.
@@ -53,7 +57,7 @@ export interface ActionDialogProps {
  *   nothing sends no request and closes.
  */
 export function ActionDialog({
-  title, fields, initial = {}, intro, mode = 'create', submitLabel = 'Enregistrer', validate, toPayload, onSubmit, onClose, onDone,
+  title, fields, initial = {}, intro, mode = 'create', submitLabel = 'Enregistrer', wide, validate, toPayload, onSubmit, onClose, onDone,
 }: ActionDialogProps) {
   const [edited, setEdited] = useState<Values>({});
   const [busy, setBusy] = useState(false);
@@ -68,12 +72,23 @@ export function ActionDialog({
    */
   const [meta, setMeta] = useState<{ rev: Record<string, number>; bound: Record<string, { parent: string; rev: number }> }>({ rev: {}, bound: {} });
 
-  const all = typeof fields === 'function' ? fields({ ...initial, ...edited }) : fields;
+  // A `fields` function sees the values as the form holds them: when creating, a field's default is already in. The
+  // fields it returns for the raw values say which defaults apply (a field only some values show is resolved on the second pass).
+  const raw = { ...initial, ...edited };
+  const inMode = (list: Field[]) => list.filter((f) => !f.only || f.only === mode);
+  const all = typeof fields === 'function' ? fields({ ...raw, ...valuesOf(edited, initial, inMode(fields(raw)), mode) }) : fields;
   const { can } = useAuth();
-  const shown = all
-    .filter((f) => !f.only || f.only === mode)
-    // Options the user may not read cannot be chosen: such a select is never required.
-    .map((f) => (f.type === 'select' && f.required && f.optionsPermission && !can(f.optionsPermission.module, f.optionsPermission.action) ? { ...f, required: false } : f));
+  // Options the user may not read cannot be chosen: such a select (or select column of a `lines` grid) is never required.
+  const unreadable = (f: { optionsPermission?: { module: ModuleKey; action: Action } }) =>
+    f.optionsPermission !== undefined && !can(f.optionsPermission.module, f.optionsPermission.action);
+  const shown = inMode(all)
+    .map((f): Field => {
+      if (f.type === 'select') return f.required && unreadable(f) ? { ...f, required: false } : f;
+      if (f.type === 'lines') {
+        return { ...f, columns: f.columns.map((c) => (c.type === 'select' && c.required && unreadable(c) ? { ...c, required: false } : c)) };
+      }
+      return f;
+    });
   const values = valuesOf(edited, initial, shown, mode);
 
   const live = (f: Field, depth = 0): boolean => {
@@ -132,7 +147,7 @@ export function ActionDialog({
   };
 
   return (
-    <Dialog open onClose={onClose} title={title}>
+    <Dialog open onClose={onClose} title={title} wide={wide}>
       <form onSubmit={submit} noValidate className="space-y-4">
         {intro && <div className="text-sm text-muted-foreground">{intro}</div>}
         {shown.map((f) => {
@@ -176,6 +191,7 @@ function stored(build: (v: Values) => Values, loaded: Values): Values {
   }
 }
 
-function withoutEmpty(body: Values): Values {
+/** `body` without its empty values (`''`, `undefined`): what a create sends. */
+export function withoutEmpty(body: Values): Values {
   return Object.fromEntries(Object.entries(body).filter(([, v]) => !isEmpty(v)));
 }

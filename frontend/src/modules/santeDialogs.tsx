@@ -10,7 +10,8 @@ import {
   ACT_TYPES, LOG_TYPES, SEVERITIES, actTypeLabel, completedLater,
   type BiosecurityLogRow, type HealthActRow, type HealthActType, type IncidentRow, type QuarantineRow, type VaccinationPlanRow,
 } from './santeShared';
-import type { StockItemDetailData } from './stocksShared';
+import { SPECIES_MODULE, openLotOptions, useBuildingOptions, useOpenLotOptions } from './productionShared';
+import { stockItemOptions, type StockCategory, type StockItemDetailData } from './stocksShared';
 
 type Values = Record<string, unknown>;
 type RowDialogProps<T> = { row: T; onClose: () => void; onDone: () => void };
@@ -27,14 +28,13 @@ const NO_TARGET = "Aucune cible accessible : vous n'avez accès à aucun lot ni 
  */
 export function useTargets(need: { lots?: boolean; animals?: boolean; buildings?: boolean }) {
   const { can } = useAuth();
-  const poultry = can('lots', 'read');
-  const pigs = can('porcs', 'read');
-  const avianLots = useEndpointOptions({ endpoint: '/batches', labelKey: 'code', params: { species: 'AVICOLE', status: 'EN_COURS' } }, undefined, Boolean(need.lots) && poultry);
-  const pigLots = useEndpointOptions({ endpoint: '/batches', labelKey: 'code', params: { species: 'PORCIN', status: 'EN_COURS' } }, undefined, Boolean(need.lots) && pigs);
+  const poultry = can(SPECIES_MODULE.AVICOLE, 'read');
+  const pigs = can(SPECIES_MODULE.PORCIN, 'read');
+  const lots = useOpenLotOptions(Boolean(need.lots));
   const animals = useEndpointOptions({ endpoint: '/animals', labelKey: 'tag', params: { status: 'ACTIF' } }, undefined, Boolean(need.animals) && pigs);
-  const buildings = useEndpointOptions({ endpoint: '/buildings' }, undefined, Boolean(need.buildings));
+  const buildings = useBuildingOptions(undefined, Boolean(need.buildings));
   const kinds = KIND_OPTIONS.filter((k) => (k.value === 'LOT' ? poultry || pigs : pigs));
-  return { kinds, lots: [...avianLots, ...pigLots], animals, buildings };
+  return { kinds, lots, animals, buildings };
 }
 
 export type Targets = ReturnType<typeof useTargets>;
@@ -42,7 +42,7 @@ export type Targets = ReturnType<typeof useTargets>;
 /** The `Lot | Animal` choice and the select of that kind (`batchId` / `animalId` of the payload); none when nothing is readable. */
 function lotOrAnimalFields(values: Values, targets: Targets): Field[] {
   if (targets.kinds.length === 0) return [];
-  const kind = String(values.targetKind ?? targets.kinds[0].value);
+  const kind = String(values.targetKind);
   return [
     { name: 'targetKind', label: 'Type de cible', type: 'segmented', only: 'create', defaultValue: targets.kinds[0].value, options: targets.kinds },
     kind === 'ANIMAL'
@@ -52,18 +52,15 @@ function lotOrAnimalFields(values: Values, targets: Targets): Field[] {
 }
 
 /** The chosen lot or animal as payload keys. */
-function lotOrAnimalPayload(values: Values, targets: Targets): Values {
-  const kind = String(values.targetKind ?? targets.kinds[0]?.value ?? 'LOT');
-  return kind === 'ANIMAL' ? { animalId: values.animalId } : { batchId: values.batchId };
+function lotOrAnimalPayload(values: Values): Values {
+  return values.targetKind === 'ANIMAL' ? { animalId: values.animalId } : { batchId: values.batchId };
 }
 
 /* -------------------------------------------- acts -------------------------------------------- */
 
-const STOCK_CATEGORY: Partial<Record<HealthActType, string>> = { VACCINATION: 'VACCIN', TRAITEMENT: 'MEDICAMENT' };
+const STOCK_CATEGORY: Partial<Record<HealthActType, StockCategory>> = { VACCINATION: 'VACCIN', TRAITEMENT: 'MEDICAMENT' };
 /** One form field per type: a product picked for a vaccine does not follow a change of type. */
 const ITEM_FIELD: Partial<Record<HealthActType, string>> = { VACCINATION: 'vaccinItemId', TRAITEMENT: 'medicamentItemId' };
-
-const stockItemOptions = (type: HealthActType) => ({ endpoint: '/stock-items', params: { active: 'true', category: STOCK_CATEGORY[type]! } });
 
 /** The batches in stock of `GET /stock/:itemId`, as `lot (quantity)` options. */
 const batchesOf = (data: unknown) =>
@@ -91,13 +88,13 @@ export function ActForm({ row, scope, onSaved, onClose }: ActFormProps) {
   const noTarget = picking && targets.kinds.length === 0;
   const types = scope ? ACT_TYPES.filter((t) => t.value !== 'DESINFECTION') : ACT_TYPES;
   const itemOf = (v: Values) => {
-    const field = ITEM_FIELD[(v.type ?? 'VACCINATION') as HealthActType];
+    const field = ITEM_FIELD[v.type as HealthActType];
     return stockRead && field ? String(v[field] ?? '') : '';
   };
 
   const fields = (v: Values): Field[] => {
-    const type = row?.type ?? ((v.type ?? 'VACCINATION') as HealthActType);
-    const done = row ? row.status === 'REALISE' : (v.status ?? 'REALISE') === 'REALISE';
+    const type = row?.type ?? (v.type as HealthActType);
+    const done = row ? row.status === 'REALISE' : v.status === 'REALISE';
     const itemField = ITEM_FIELD[type];
     const stockItemId = row ? row.stockItemId : itemOf(v);
     const clinical = type === 'TRAITEMENT' || type === 'DIAGNOSTIC';
@@ -117,7 +114,7 @@ export function ActForm({ row, scope, onSaved, onClose }: ActFormProps) {
       { name: 'date', label: otherDay ? 'Date prévue' : 'Date', type: 'date', required: true, defaultValue: todayIso },
       ...(otherDay ? [{ name: 'doneDate', label: 'Réalisé le', type: 'date', required: true } as Field] : []),
       ...(itemField && stockRead && !row
-        ? [{ name: itemField, label: 'Produit en stock', type: 'select', only: 'create', options: stockItemOptions(type) } as Field]
+        ? [{ name: itemField, label: 'Produit en stock', type: 'select', only: 'create', options: stockItemOptions(STOCK_CATEGORY[type]) } as Field]
         : []),
       ...(stockItemId ? [] : [{ name: 'productName', label: 'Produit (texte libre)', type: 'text' } as Field]),
       { name: 'dose', label: 'Dose', type: 'text' },
@@ -141,8 +138,8 @@ export function ActForm({ row, scope, onSaved, onClose }: ActFormProps) {
   };
 
   const toPayload = (v: Values, mode: FormMode): Values => {
-    const type = row?.type ?? ((v.type ?? 'VACCINATION') as HealthActType);
-    const done = row ? row.status === 'REALISE' : (v.status ?? 'REALISE') === 'REALISE';
+    const type = row?.type ?? (v.type as HealthActType);
+    const done = row ? row.status === 'REALISE' : v.status === 'REALISE';
     const stockItemId = row ? row.stockItemId ?? '' : itemOf(v);
     const clinical = type === 'TRAITEMENT' || type === 'DIAGNOSTIC';
     const body: Values = {
@@ -162,8 +159,8 @@ export function ActForm({ row, scope, onSaved, onClose }: ActFormProps) {
     return {
       ...body,
       type,
-      status: v.status ?? 'REALISE',
-      ...(scope ?? (type === 'DESINFECTION' ? { buildingId: v.buildingId } : lotOrAnimalPayload(v, targets))),
+      status: v.status,
+      ...(scope ?? (type === 'DESINFECTION' ? { buildingId: v.buildingId } : lotOrAnimalPayload(v))),
       stockItemId,
       stockBatchId: stockItemId && done ? v.stockBatchId : '',
     };
@@ -203,7 +200,7 @@ export function CompleteActDialog({ row, onClose, onDone }: RowDialogProps<Healt
         const item = row.stockItemId ?? String(v.stockItemId ?? '');
         return [
           { name: 'doneDate', label: 'Date de réalisation', type: 'date', required: true, defaultValue: todayIso },
-          ...(offerPick ? [{ name: 'stockItemId', label: 'Produit en stock', type: 'select', options: stockItemOptions(row.type) } as Field] : []),
+          ...(offerPick ? [{ name: 'stockItemId', label: 'Produit en stock', type: 'select', options: stockItemOptions(STOCK_CATEGORY[row.type]) } as Field] : []),
           ...(item ? [quantityField()] : []),
           ...(item && stockRead
             ? [{
@@ -252,7 +249,7 @@ export const ApplyPlanDialog = ({ row, onClose, onDone }: RowDialogProps<Vaccina
     submitLabel="Appliquer"
     fields={[{
       name: 'batchId', label: 'Lot', type: 'select', required: true,
-      options: { endpoint: '/batches', labelKey: 'code', params: { species: row.species, status: 'EN_COURS', ...(row.type ? { type: row.type } : {}) } },
+      options: openLotOptions(row.species, row.type ?? undefined),
     }]}
     onSubmit={(body) => api.post(`/vaccination-plans/${row.id}/apply`, body)}
     onClose={onClose}
@@ -279,7 +276,7 @@ export function QuarantineForm({ row, onSaved, onClose }: { row?: QuarantineRow;
       ]}
       validate={() => (noTarget ? NO_TARGET : null)}
       toPayload={(v, mode) => ({
-        ...(mode === 'create' ? lotOrAnimalPayload(v, targets) : {}),
+        ...(mode === 'create' ? lotOrAnimalPayload(v) : {}),
         startDate: v.startDate, endDate: v.endDate, reason: text(v.reason),
       })}
       onSubmit={(body) => (row ? api.patch(`/quarantines/${row.id}`, body) : api.post('/quarantines', body))}
@@ -341,24 +338,25 @@ export const CloseIncidentDialog = ({ row, onClose, onDone }: RowDialogProps<Inc
 /* ------------------------------------------ biosecurity -------------------------------------- */
 
 export function BiosecurityForm({ row, onSaved, onClose }: { row?: BiosecurityLogRow; onSaved: () => void; onClose: () => void }) {
+  const buildings = useBuildingOptions();
   return (
     <ActionDialog
       title={`${row ? 'Modifier' : 'Ajouter'} — Biosécurité`}
       mode={row ? 'update' : 'create'}
       initial={row as unknown as Values | undefined}
       fields={(v) => {
-        const type = String(v.type ?? 'NETTOYAGE');
+        const type = String(v.type);
         return [
           { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
           { name: 'type', label: 'Type', type: 'select', required: true, defaultValue: 'NETTOYAGE', options: LOG_TYPES },
-          { name: 'buildingId', label: 'Bâtiment', type: 'select', options: { endpoint: '/buildings' } },
+          { name: 'buildingId', label: 'Bâtiment', type: 'select', options: buildings },
           ...(type === 'DESINFECTION' || type === 'PEDILUVE' ? [{ name: 'productName', label: 'Produit', type: 'text' } as Field] : []),
           ...(type === 'VISITEUR' ? [{ name: 'visitorName', label: 'Nom du visiteur', type: 'text' } as Field] : []),
           { name: 'note', label: 'Note', type: 'text' },
         ];
       }}
       toPayload={(v) => {
-        const type = String(v.type ?? 'NETTOYAGE');
+        const type = String(v.type);
         return {
           date: v.date, type, buildingId: v.buildingId, note: text(v.note),
           productName: type === 'DESINFECTION' || type === 'PEDILUVE' ? text(v.productName) : '',

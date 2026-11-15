@@ -4,7 +4,6 @@ import { ArrowDownToLine, ArrowUpFromLine, SlidersHorizontal } from 'lucide-reac
 import { ActionDialog } from '../components/module/ActionDialog';
 import type { ModuleConfig, RowAction } from '../components/module/types';
 import { errorMessage } from '../components/module/errorMessage';
-import { Pill } from '../components/ui/Pill';
 import { ApiError, api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { farmKey } from '../lib/query';
@@ -12,7 +11,7 @@ import { formatNumber, orDash, todayIso } from '../lib/format';
 import { InventoryDetail } from '../pages/details/InventoryDetail';
 import { StockItemDetail } from '../pages/details/StockItemDetail';
 import {
-  CATEGORIES, LEVELS, MovementDialog, categoryLabel, levelPill, stockMovements,
+  CATEGORIES, LEVELS, MovementDialog, categoryLabel, inventoryPill, levelPill, stockMovements,
   type InventoryRow, type StockRow,
 } from './stocksShared';
 
@@ -92,9 +91,6 @@ const movementAction = (key: string, label: string, icon: RowAction<StockRow>['i
   key, label, icon, permission: 'create', dialog,
 });
 
-const inventoryStatus = (r: InventoryRow) =>
-  r.status === 'BROUILLON' ? <Pill tone="warning">Brouillon</Pill> : <Pill tone="success">Validée</Pill>;
-
 /** The `Inventaires` tab: count sessions; opening one goes to its page. */
 const inventories: ModuleConfig<InventoryRow> = {
   slug: 'stocks',
@@ -105,7 +101,7 @@ const inventories: ModuleConfig<InventoryRow> = {
   exportable: false,
   columns: [
     { key: 'date', header: 'DATE' },
-    { key: 'status', header: 'STATUT', render: inventoryStatus },
+    { key: 'status', header: 'STATUT', render: (r) => inventoryPill(r.status) },
     { key: 'lineCount', header: 'LIGNES COMPTÉES', render: (r) => formatNumber(r.lineCount) },
     { key: 'note', header: 'NOTE', render: (r) => r.note ?? '' },
   ],
@@ -115,8 +111,9 @@ const inventories: ModuleConfig<InventoryRow> = {
   ],
   rowLabel: (r) => `Inventaire du ${r.date}`,
   detailPath: (r) => `/m/stocks/${INVENTORY_PREFIX}${r.id}`,
-  // A session is counted on its page, never edited here; only a draft can be deleted.
+  // A session is counted on its page, never edited here; only a draft can be deleted, by whoever may count (the API's daily rule).
   canEdit: () => false,
+  deletePermission: 'create',
   canDelete: (r) => (r.status === 'VALIDEE' ? 'Inventaire validé' : true),
 };
 

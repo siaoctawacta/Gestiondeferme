@@ -132,10 +132,10 @@ export function ageLabel(birthDate: string | null | undefined, now: Date = new D
   return months < 24 ? `${months} mois` : `${Math.floor(months / 12)} ans`;
 }
 
-/** Weighings of one animal. */
+/** Why the rows of an animal that left the herd are locked. */
 export const ANIMAL_LEFT = 'Animal sorti du cheptel';
 
-/** `left`: the animal left the herd, so its rows keep disabled icons with the reason. */
+/** Weighings of one animal. `left`: the animal left the herd, so its rows keep disabled icons with the reason. */
 export function animalWeighings(animalId: string, left = false): ModuleConfig<AnimalWeighing> {
   return {
     slug: 'porcs',

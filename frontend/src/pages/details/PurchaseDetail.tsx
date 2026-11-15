@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Printer, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
-import { formatDate, formatDateTime, formatMoney, formatNumber } from '../../lib/format';
+import { formatDate, formatMoney, formatNumber } from '../../lib/format';
 import { farmKey, useFarmQuery } from '../../lib/query';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ActionButton } from '../../components/module/DataTable';
@@ -24,8 +24,6 @@ import { DetailLayout } from './DetailLayout';
 
 /** The `legal` setting: the block printed on the bon de commande. */
 type Legal = Record<'name' | 'address' | 'nif' | 'rccm', string>;
-
-const EMPTY = <TR><TD colSpan={9} className="py-10 text-center text-muted-foreground">Aucun enregistrement</TD></TR>;
 
 /** `plain`: no tinted background (the printed sheet rules a border instead). */
 function Heads({ labels, plain = false }: { labels: string[]; plain?: boolean }) {
@@ -99,11 +97,13 @@ function HistoryTab({ data }: { data: PurchaseData }) {
       <Table>
         <Heads labels={['ÉTAPE', 'DATE', 'PAR', 'NOTE']} />
         <tbody>
-          {data.history.length === 0 && EMPTY}
-          {data.history.map((h) => (
-            <TR key={h.step}>
+          {data.history.length === 0 && (
+            <TR><TD colSpan={4} className="py-10 text-center text-muted-foreground">Aucun enregistrement</TD></TR>
+          )}
+          {data.history.map((h, i) => (
+            <TR key={`${i}-${h.step}`}>
               <TD className="font-semibold">{statusDef(h.step)?.label ?? h.step}</TD>
-              <TD>{formatDateTime(h.at)}</TD>
+              <TD>{formatDate(h.at)}</TD>
               <TD>{h.by ?? '—'}</TD>
               <TD>{h.note ?? ''}</TD>
             </TR>

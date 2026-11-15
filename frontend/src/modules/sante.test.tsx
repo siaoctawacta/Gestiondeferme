@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -380,6 +380,20 @@ describe('intervention form', () => {
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toEqual({ method: 'PATCH', url: '/api/health-acts/a2', body: { dose: '2 ml' } });
   });
+
+  it('moves an act entered as done by `date` alone: no doneDate is sent (the API moves both)', async () => {
+    mountPage();
+    await screen.findByText('Newcastle');
+    const user = userEvent.setup();
+    await user.click(within(rowOf('Newcastle')).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByLabelText('Réalisé le')).toBeNull();
+    fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: '2026-10-17' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({ date: '2026-10-17' });
+    expect(writes()[0].body).not.toHaveProperty('doneDate');
+  });
 });
 
 describe('vaccination plans', () => {
@@ -667,6 +681,26 @@ describe('plans: stock product per step, farm scope, lot filter', () => {
     await userEvent.setup().click(within(rowOf('Programme chair')).getByRole('button', { name: 'Appliquer à un lot' }));
     await within(await screen.findByRole('dialog')).findByRole('option', { name: 'LC-2026-14' });
     expect(calls.some((c) => c.url.startsWith('/api/batches') && c.url.includes('species=AVICOLE') && c.url.includes('type=CHAIR'))).toBe(true);
+  });
+
+  it('offers Appliquer à un lot only for a plan whose species module the user can read (no empty required select)', async () => {
+    const pig = { id: 'pl2', name: 'Programme porcelet', species: 'PORCIN', type: 'PORCELET', items: [{ ageDays: 1, productName: 'Fer', dose: '1 ml', stockItemId: 's4' }] };
+    PLANS.push(pig);
+    try {
+      mountPage({ perms: { sante: ALL, lots: ALL } });
+      await openTab('Plans vaccinaux');
+      await screen.findByText('Programme porcelet');
+      expect(within(rowOf('Programme chair')).getByRole('button', { name: 'Appliquer à un lot' })).toBeInTheDocument();
+      expect(within(rowOf('Programme porcelet')).queryByRole('button', { name: 'Appliquer à un lot' })).toBeNull();
+      cleanup();
+      mountPage({ perms: { sante: ALL, porcs: ALL } });
+      await openTab('Plans vaccinaux');
+      await screen.findByText('Programme porcelet');
+      expect(within(rowOf('Programme porcelet')).getByRole('button', { name: 'Appliquer à un lot' })).toBeInTheDocument();
+      expect(within(rowOf('Programme chair')).queryByRole('button', { name: 'Appliquer à un lot' })).toBeNull();
+    } finally {
+      PLANS.pop();
+    }
   });
 
   it('is organisation data: writable under all farms, but a plan is applied to a lot of one farm only', async () => {

@@ -9,6 +9,7 @@ import { formatMoney, formatNumber, todayIso } from '../lib/format';
 import { farmKey } from '../lib/query';
 import { PurchaseDetail } from '../pages/details/PurchaseDetail';
 import { PURCHASE_ACTIONS } from './purchaseActions';
+import { stockItemOptions } from './stocksShared';
 import { PURCHASE_STATUSES, editableGate, linesTotal, type PurchaseData, type PurchaseRow } from './purchasingShared';
 
 const fields = (suppliers: { value: string; label: string }[]): Field[] => [
@@ -22,7 +23,7 @@ const fields = (suppliers: { value: string; label: string }[]): Field[] => [
     addLabel: 'Ajouter une ligne',
     defaultValue: [{ itemId: '', quantity: '', unitPrice: '' }],
     columns: [
-      { name: 'itemId', label: 'Article', type: 'select', required: true, unique: true, options: { endpoint: '/stock-items', params: { active: 'true' } } },
+      { name: 'itemId', label: 'Article', type: 'select', required: true, unique: true, options: stockItemOptions() },
       { name: 'quantity', label: 'Quantité', type: 'number', required: true, min: 0.01, step: 0.01 },
       { name: 'unitPrice', label: 'Prix unitaire', type: 'number', required: true, min: 0, step: 0.01 },
     ],
@@ -96,7 +97,7 @@ export const achats: ModuleConfig<PurchaseRow> = {
     { key: 'reference', header: 'RÉFÉRENCE' },
     { key: 'supplierName', header: 'FOURNISSEUR' },
     { key: 'article', header: 'ARTICLE' },
-    { key: 'quantity', header: 'QUANTITÉ', render: (p) => formatNumber(p.quantity) },
+    { key: 'quantity', header: 'QUANTITÉ', render: (p) => (p.unit ? `${formatNumber(p.quantity)} ${p.unit}` : formatNumber(p.quantity)) },
     { key: 'status', header: 'STATUT' },
     { key: 'amount', header: 'MONTANT', render: (p) => formatMoney(p.amount) },
   ],

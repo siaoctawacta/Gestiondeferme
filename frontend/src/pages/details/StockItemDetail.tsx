@@ -1,5 +1,5 @@
 import { api, ApiError } from '../../lib/api';
-import { addDays, formatDate, formatMoney, formatNumber, orDash, todayIso } from '../../lib/format';
+import { formatDate, formatMoney, formatNumber, orDash } from '../../lib/format';
 import { useFarmQuery } from '../../lib/query';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
@@ -7,19 +7,14 @@ import { ModuleList } from '../../components/module/ModulePage';
 import { Card } from '../../components/ui/Card';
 import { Pill } from '../../components/ui/Pill';
 import { Table, TD, TH, THead, TR } from '../../components/ui/Table';
-import { categoryLabel, levelPill, stockMovements, type StockItemDetailData } from '../../modules/stocksShared';
+import { categoryLabel, levelPill, stockMovements, type BatchExpiry, type StockItemDetailData } from '../../modules/stocksShared';
 import NotFound from '../NotFound';
 import { DetailLayout } from './DetailLayout';
 
-/** A batch expiring within this many days is flagged `Bientôt périmé`. */
-const SOON_DAYS = 30;
-
-/** Expiry pill of a batch: `Périmé` once the date is past, `Bientôt périmé` within 30 days, nothing otherwise. */
-function expiryPill(expiryDate: string | null) {
-  if (!expiryDate) return null;
-  const today = todayIso();
-  if (expiryDate < today) return <Pill tone="danger">Périmé</Pill>;
-  if (expiryDate <= addDays(today, SOON_DAYS)) return <Pill tone="warning">Bientôt périmé</Pill>;
+/** Expiry pill of a batch from the API's own `expiry` (the same judgement as the alerts): nothing when `ok`. */
+function expiryPill(expiry: BatchExpiry) {
+  if (expiry === 'expired') return <Pill tone="danger">Périmé</Pill>;
+  if (expiry === 'soon') return <Pill tone="warning">Bientôt périmé</Pill>;
   return null;
 }
 
@@ -43,7 +38,7 @@ function BatchesTab({ batches }: { batches: StockItemDetailData['batches'] }) {
               <TD>{formatDate(b.receivedDate)}</TD>
               <TD>{b.expiryDate ? formatDate(b.expiryDate) : '—'}</TD>
               <TD>{formatNumber(b.quantity)}</TD>
-              <TD>{expiryPill(b.expiryDate)}</TD>
+              <TD>{expiryPill(b.expiry)}</TD>
             </TR>
           ))}
         </tbody>

@@ -13,8 +13,6 @@ export interface LinesFieldProps {
   onChange: (rows: LineRow[]) => void;
   /** Validation messages, shown under the grid. */
   errors?: string[];
-  /** The rows are the given ones: no add or remove button (a count sheet over a fixed list of items). */
-  fixed?: boolean;
   /** Nothing can be edited. */
   disabled?: boolean;
 }
@@ -30,13 +28,13 @@ function shown(column: CellField, value: string): string {
  * The `lines` field: a grid of rows whose cells are the kit's own inputs (`CellControl`). Controlled: the form
  * engine owns the rows, validates them on submit (`validateLines`) and passes the messages as `errors`.
  */
-export function LinesField({ field, value: rows, onChange, errors = [], fixed = false, disabled = false }: LinesFieldProps) {
+export function LinesField({ field, value: rows, onChange, errors = [], disabled = false }: LinesFieldProps) {
   const id = useId();
   const setCell = (at: number, name: string, v: string) =>
     onChange(rows.map((r, i) => (i === at ? { ...r, [name]: v } : r)));
   const taken = (column: CellField, at: number) =>
     column.type === 'select' && column.unique ? rows.filter((_, i) => i !== at).map((r) => r[column.name]).filter(Boolean) : undefined;
-  const editable = !fixed && !disabled;
+  const editable = !field.fixed && !disabled;
   // Numeric columns keep their width and the first (text / select) one a minimum, so on a phone the grid scrolls
   // sideways inside its container instead of squeezing the article column to nothing.
   const width = (c: CellField) => (c.type === 'number' || c.computed ? 'w-20 shrink-0 sm:w-28' : 'min-w-32 flex-1');

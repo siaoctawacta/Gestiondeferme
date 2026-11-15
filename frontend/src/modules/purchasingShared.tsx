@@ -17,6 +17,8 @@ export interface PurchaseRow {
   article: string;
   /** Quantity of the first line. */
   quantity: number;
+  /** Unit of the first line's article; absent when the API does not send it. */
+  unit?: string;
   status: PurchaseStatus;
   /** Σ received × price once received, else Σ ordered × price. */
   amount: number;

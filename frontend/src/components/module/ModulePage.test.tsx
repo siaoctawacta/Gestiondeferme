@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -31,7 +31,7 @@ const calls: Call[] = [];
 const fetchMock = vi.fn<typeof fetch>();
 let handler: (c: Call) => Response | undefined;
 
-function setup({ perms = ALL, farm, config = batiments, list = false, scope, readOnly }: { perms?: string[]; farm?: string; config?: ModuleConfig<Building>; list?: boolean; scope?: Record<string, string>; readOnly?: boolean } = {}) {
+function setup({ perms = ALL, farm, config = batiments, list = false, scope, readOnly, noCreate }: { perms?: string[]; farm?: string; config?: ModuleConfig<Building>; list?: boolean; scope?: Record<string, string>; readOnly?: boolean; noCreate?: boolean } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
   handler = () => undefined;
   fetchMock.mockImplementation(async (input, init) => {
@@ -58,7 +58,7 @@ function setup({ perms = ALL, farm, config = batiments, list = false, scope, rea
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter>
         <AuthProvider>
-          {list ? <ModuleList config={config} scope={scope} readOnly={readOnly} /> : <ModulePage config={config} />}
+          {list ? <ModuleList config={config} scope={scope} readOnly={readOnly} noCreate={noCreate} /> : <ModulePage config={config} />}
         </AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -508,6 +508,18 @@ describe('ModulePage kit extensions', () => {
     expect(screen.queryByText('Total enregistrements')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
     expect(listCalls().every((c) => c.url.includes('buildingId=b9'))).toBe(true);
+  });
+
+  it('ModuleList noCreate hides Ajouter only: the rows keep their edit and delete icons', async () => {
+    setup({ list: true, noCreate: true });
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+    const row = within(screen.getByText('Poulailler A').closest('tr')!);
+    expect(row.getByRole('button', { name: 'Modifier' })).toBeInTheDocument();
+    expect(row.getByRole('button', { name: 'Supprimer' })).toBeInTheDocument();
+    cleanup();
+    setup({ list: true });
+    expect(await screen.findByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
   });
 
   describe('a read-only list (closed lot, exited animal)', () => {

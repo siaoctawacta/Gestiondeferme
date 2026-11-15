@@ -17,7 +17,7 @@ function json(status: number, body?: unknown): Response {
 const USER = { id: 'u1', name: 'Awa', email: 'awa@x.tg', role: 'DIRECTEUR_FERME', twoFactorEnabled: true };
 const ALL = ['read', 'create', 'update', 'delete', 'validate'];
 
-const row = (o: object) => ({ maxQty: null, averageCost: 300, value: 0, nextExpiry: null, ...o });
+const row = <O extends object>(o: O) => ({ maxQty: null, averageCost: 300, value: 0, nextExpiry: null, ...o });
 const STOCK = [
   row({ id: 's1', name: 'Aliment croissance chair', category: 'ALIMENT', unit: 'kg', quantity: 4200, minQty: 2000, maxQty: 8000, level: 'ok', daysOfStock: 6, value: 1260000 }),
   row({ id: 's2', name: 'Aliment ponte', category: 'ALIMENT', unit: 'kg', quantity: 900, minQty: 1500, maxQty: 5000, level: 'faible', daysOfStock: 2, value: 270000 }),
@@ -41,13 +41,19 @@ const plusDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString(
 const DETAIL = {
   ...STOCK[1],
   batches: [
-    { id: 'b1', lotNumber: 'L-OLD', expiryDate: plusDays(-5), receivedDate: '2026-01-02', quantity: 100 },
-    { id: 'b2', lotNumber: 'L-SOON', expiryDate: plusDays(10), receivedDate: '2026-10-02', quantity: 200 },
-    { id: 'b3', lotNumber: 'L-FAR', expiryDate: plusDays(200), receivedDate: '2026-11-02', quantity: 600 },
+    { id: 'b1', lotNumber: 'L-OLD', expiryDate: plusDays(-5), receivedDate: '2026-01-02', quantity: 100, expiry: 'expired' },
+    { id: 'b2', lotNumber: 'L-SOON', expiryDate: plusDays(10), receivedDate: '2026-10-02', quantity: 200, expiry: 'soon' },
+    { id: 'b3', lotNumber: 'L-FAR', expiryDate: plusDays(200), receivedDate: '2026-11-02', quantity: 600, expiry: 'ok' },
   ],
 };
 
-const DRAFT = { id: 'i1', date: '2026-11-10', status: 'BROUILLON', note: null, lineCount: 0, lines: [] };
+// A draft as the API returns it: one line per active article (the theoretical quantity at the session date), counts null until saved.
+const draftLine = (id: string, name: string, theoreticalQty: number, countedQty: number | null = null, difference: number | null = null) =>
+  ({ itemId: id, itemName: name, unit: 'kg', theoreticalQty, countedQty, difference });
+const DRAFT = {
+  id: 'i1', date: '2026-11-10', status: 'BROUILLON', note: null, lineCount: 0,
+  lines: STOCK.map((s) => draftLine(s.id, s.name, s.quantity)),
+};
 const DONE = {
   id: 'i2', date: '2026-11-01', status: 'VALIDEE', note: null, lineCount: 1,
   lines: [{ itemId: 's2', itemName: 'Aliment ponte', unit: 'kg', theoreticalQty: 900, countedQty: 880, difference: -20 }],
@@ -62,6 +68,7 @@ const page = (items: unknown[], extra: object = {}) => json(200, { items, total:
 /** Set per test to make a write fail. */
 let failWith: { url: RegExp; status: number; message: string } | null = null;
 let detailData = DETAIL as StockItemDetailData;
+let draftData: unknown = DRAFT;
 
 function mount(ui: React.ReactNode, { perms = ALL, farm }: { perms?: string[]; farm?: string } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
@@ -86,7 +93,7 @@ function mount(ui: React.ReactNode, { perms = ALL, farm }: { perms?: string[]; f
     if (/^\/api\/stock\/s2(\?|$)/.test(url)) return json(200, detailData);
     if (/^\/api\/stock\/s9(\?|$)/.test(url)) return json(404, { message: 'Introuvable' });
     if (url.startsWith('/api/stock')) return page(STOCK, { levelCounts: LEVEL_COUNTS });
-    if (/^\/api\/inventories\/i1(\?|$)/.test(url)) return json(200, DRAFT);
+    if (/^\/api\/inventories\/i1(\?|$)/.test(url)) return json(200, draftData);
     if (/^\/api\/inventories\/i2(\?|$)/.test(url)) return json(200, DONE);
     if (url.startsWith('/api/inventories')) return page([DRAFT, { ...DONE, lineCount: 1 }].map(({ lines: _l, ...r }) => r));
     if (url.startsWith('/api/stock-items')) return page([{ id: 's1', name: 'Aliment croissance chair' }]);
@@ -110,6 +117,7 @@ beforeEach(() => {
   calls.length = 0;
   failWith = null;
   detailData = DETAIL as StockItemDetailData;
+  draftData = DRAFT;
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -200,6 +208,21 @@ describe('stocks list', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(2));
     expect(writes()[1].body).toMatchObject({ type: 'AJUSTEMENT', quantity: -20, reason: 'AUTRE' });
+  });
+
+  it('trims the note and the lot number, and leaves a blank one out', async () => {
+    mountPage();
+    await screen.findByText('Aliment ponte');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('Aliment ponte').closest('tr')!).getByRole('button', { name: 'Entrée' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Entrée — Aliment ponte' });
+    await user.type(within(dialog).getByLabelText('Quantité'), '5');
+    await user.type(within(dialog).getByLabelText('Coût unitaire (FCFA)'), '320');
+    await user.type(within(dialog).getByLabelText('N° de lot'), '  L-9  ');
+    await user.type(within(dialog).getByLabelText('Note'), '   ');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({ itemId: 's2', date: todayIso(), type: 'ENTREE', quantity: 5, unitCost: 320, reason: 'ACHAT', lotNumber: 'L-9' });
   });
 
   it('gives the storekeeper the movement actions but no Ajouter, edit or delete', async () => {
@@ -314,6 +337,22 @@ describe('stock movements: the API contract', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toEqual({ method: 'PATCH', url: '/api/stock/movements/m5', body: { quantity: 320 } });
+  });
+
+  it('sums the pieces of an exit without float drift (0.1 + 0.2 is 0.3)', async () => {
+    const pieces = [
+      mv({ id: 'm6', operationId: 'op6', date: '2026-11-05', itemId: 's2', itemName: 'Aliment ponte', type: 'SORTIE', quantity: -0.1, reason: 'CONSOMMATION', lotNumber: 'L-03' }),
+      mv({ id: 'm7', operationId: 'op6', date: '2026-11-05', itemId: 's2', itemName: 'Aliment ponte', type: 'SORTIE', quantity: -0.2, reason: 'CONSOMMATION', lotNumber: 'L-04' }),
+    ];
+    MOVEMENTS.push(...pieces);
+    try {
+      const user = await openMovements();
+      await user.click(within(screen.getByText('L-04').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+      const dialog = await screen.findByRole('dialog', { name: 'Modifier — Mouvements' });
+      await waitFor(() => expect(within(dialog).getByLabelText('Quantité')).toHaveValue(0.3));
+    } finally {
+      MOVEMENTS.splice(MOVEMENTS.length - pieces.length, pieces.length);
+    }
   });
 
   it('says the quantity is the total of the operation when it has several pieces, and only then', async () => {
@@ -433,6 +472,20 @@ describe('inventories', () => {
     ]));
   });
 
+  it('lets the storekeeper (create, no delete) delete a draft only, as the API\'s daily rule allows', async () => {
+    mountPage({ perms: ['read', 'create'] });
+    await screen.findByText('Aliment ponte');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Inventaires' }));
+    const draft = within((await screen.findByRole('link', { name: '2026-11-10' })).closest('tr')!);
+    expect(draft.getByRole('button', { name: 'Supprimer' })).not.toHaveAttribute('aria-disabled');
+    expect(within(screen.getByRole('link', { name: '2026-11-01' }).closest('tr')!).getByRole('button', { name: 'Supprimer' })).toHaveAttribute('aria-disabled', 'true');
+    await user.click(draft.getByRole('button', { name: 'Supprimer' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Supprimer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'DELETE', url: '/api/inventories/i1' });
+  });
+
   it('hides the validation without the validate permission', async () => {
     mountDetail('inv-i1', { perms: ['read', 'create'] });
     await screen.findByLabelText('Compté ligne 1');
@@ -504,28 +557,23 @@ describe('stocks list: fix round 1', () => {
 });
 
 describe('batch expiry pills', () => {
-  afterEach(() => vi.useRealTimers());
-
-  it('flags expired before today, soon from today to 30 days, nothing beyond', async () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-11-15T10:00:00Z'));
+  it('renders the pill from the API expiry, not from the date (the alerts and the page agree)', async () => {
+    // Dates deliberately contradict the states: only the API value decides.
     detailData = {
       ...(DETAIL as StockItemDetailData),
       batches: [
-        { id: 'x1', lotNumber: 'L-YESTERDAY', expiryDate: '2026-11-14', receivedDate: '2026-10-01', quantity: 1 },
-        { id: 'x2', lotNumber: 'L-TODAY', expiryDate: '2026-11-15', receivedDate: '2026-10-01', quantity: 1 },
-        { id: 'x3', lotNumber: 'L-PLUS30', expiryDate: '2026-12-15', receivedDate: '2026-10-01', quantity: 1 },
-        { id: 'x4', lotNumber: 'L-PLUS31', expiryDate: '2026-12-16', receivedDate: '2026-10-01', quantity: 1 },
-        { id: 'x5', lotNumber: 'L-NONE', expiryDate: null, receivedDate: '2026-10-01', quantity: 1 },
+        { id: 'x1', lotNumber: 'L-EXPIRED', expiryDate: '2099-01-01', receivedDate: '2026-10-01', quantity: 1, expiry: 'expired' },
+        { id: 'x2', lotNumber: 'L-SOON', expiryDate: '2099-01-01', receivedDate: '2026-10-01', quantity: 1, expiry: 'soon' },
+        { id: 'x3', lotNumber: 'L-OK', expiryDate: '2000-01-01', receivedDate: '2026-10-01', quantity: 1, expiry: 'ok' },
+        { id: 'x4', lotNumber: 'L-NONE', expiryDate: null, receivedDate: '2026-10-01', quantity: 1, expiry: 'ok' },
       ],
     };
     mountDetail('s2');
-    await screen.findByText('L-TODAY');
+    await screen.findByText('L-SOON');
     const pill = (lot: string) => within(screen.getByText(lot).closest('tr')!);
-    expect(pill('L-YESTERDAY').getByText('Périmé')).toBeInTheDocument();
-    expect(pill('L-TODAY').getByText('Bientôt périmé')).toBeInTheDocument();
-    expect(pill('L-PLUS30').getByText('Bientôt périmé')).toBeInTheDocument();
-    expect(pill('L-PLUS31').queryByText(/périmé/i)).not.toBeInTheDocument();
+    expect(pill('L-EXPIRED').getByText('Périmé')).toBeInTheDocument();
+    expect(pill('L-SOON').getByText('Bientôt périmé')).toBeInTheDocument();
+    expect(pill('L-OK').queryByText(/périmé/i)).not.toBeInTheDocument();
     expect(pill('L-NONE').queryByText(/périmé/i)).not.toBeInTheDocument();
   });
 });
@@ -574,5 +622,57 @@ describe('inventory: fix round 1', () => {
     expect(await screen.findByLabelText('Compté ligne 1')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Enregistrer le brouillon' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: "Valider l'inventaire" })).not.toBeInTheDocument();
+  });
+});
+
+describe('inventory draft grid: built from the session response only', () => {
+  const draftWith = (lines: unknown[]) => { draftData = { ...DRAFT, lines }; };
+
+  it('does not read /stock: the theoretical quantities come from the session', async () => {
+    mountDetail('inv-i1');
+    await screen.findByLabelText('Compté ligne 2');
+    expect(calls.some((c) => /^\/api\/stock(\?|\/|$)/.test(c.url))).toBe(false);
+    // Theoretical column: the session's own figures (4 200 on line 1).
+    expect(screen.getByText('Théorique ligne 1 :').parentElement?.textContent).toBe('Théorique ligne 1 : 4\u202f200');
+  });
+
+  it('shows the API gap of a saved row, and the local rounded gap once the count is edited', async () => {
+    draftWith([draftLine('s1', 'Aliment croissance chair', 4200, 4180, -20), draftLine('s2', 'Aliment ponte', 900)]);
+    mountDetail('inv-i1');
+    const user = userEvent.setup();
+    await screen.findByLabelText('Compté ligne 1');
+    expect(screen.getByLabelText('Compté ligne 1')).toHaveValue(4180);
+    expect(screen.getByTestId('gap-1')).toHaveTextContent('Écart ligne 1 : −20');
+    expect(screen.getByTestId('gap-2')).toHaveTextContent('—');
+    await user.clear(screen.getByLabelText('Compté ligne 1'));
+    await user.type(screen.getByLabelText('Compté ligne 1'), '4190');
+    expect(screen.getByTestId('gap-1')).toHaveTextContent('Écart ligne 1 : −10');
+  });
+
+  it('rounds the gap to 2 decimals (10.3 counted against 10.1 is +0.2, not +0.20000000000000107)', async () => {
+    draftWith([draftLine('s1', 'Aliment croissance chair', 10.1)]);
+    mountDetail('inv-i1');
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText('Compté ligne 1'), '10.3');
+    expect(screen.getByTestId('gap-1')).toHaveTextContent('Écart ligne 1 : +0.2');
+    expect(screen.getByTestId('gap-1')).not.toHaveTextContent('0000');
+  });
+
+  it('says there is no active article when the session has no line', async () => {
+    draftWith([]);
+    mountDetail('inv-i1');
+    expect(await screen.findByText('Aucun article actif')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Compté ligne 1')).not.toBeInTheDocument();
+  });
+
+  it('keeps the saved count of an article no longer active in the grid and in the saved lines', async () => {
+    draftWith([draftLine('s1', 'Aliment croissance chair', 4200), draftLine('old', 'Ancien article', 7, 5, -2)]);
+    mountDetail('inv-i1');
+    const user = userEvent.setup();
+    expect(await screen.findByText('Ancien article')).toBeInTheDocument();
+    await user.type(screen.getByLabelText('Compté ligne 1'), '4000');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer le brouillon' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({ lines: [{ itemId: 's1', countedQty: 4000 }, { itemId: 'old', countedQty: 5 }] });
   });
 });
