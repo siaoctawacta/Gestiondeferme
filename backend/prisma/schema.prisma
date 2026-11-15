@@ -1,7 +1,7 @@
 generator client {
-  provider        = "prisma-client"
-  output          = "../src/generated/prisma"
-  moduleFormat    = "cjs"
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
   // relationJoins: the feed and water services pass `relationLoadStrategy: 'join'`
   // to load a row with its batch/building/product names in one query. With the
   // flag on, Prisma's default relation load strategy may itself be `join`, so
@@ -137,6 +137,7 @@ model Organization {
   stockItems       StockItem[]
   suppliers        Supplier[]
   purchases        Purchase[]
+  purchaseCounters PurchaseCounter[]
   vaccinationPlans VaccinationPlan[]
 }
 
@@ -966,6 +967,7 @@ model Purchase {
   @@index([receivedById])
   @@index([cancelledById])
   @@index([farmId, status])
+  @@index([farmId, date])
 }
 
 model PurchaseItem {
@@ -1186,4 +1188,15 @@ model BiosecurityLog {
   @@index([farmId])
   @@index([farmId, date])
   @@index([buildingId])
+}
+
+/// Highest DA/BC number ever handed out in an organisation: only goes up, so a deleted number is never reused.
+model PurchaseCounter {
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  /// DA (requests) or BC (orders).
+  kind           String
+  last           Int
+
+  @@id([organizationId, kind])
 }

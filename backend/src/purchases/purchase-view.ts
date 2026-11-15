@@ -3,7 +3,11 @@ import { formatDay, formatDayOrNull } from '../common/days';
 import type { Prisma } from '../generated/prisma/client';
 import type { ExportColumn } from '../listing/export';
 import { linesAmount, remainingOf } from './purchase-money';
-import type { PurchaseStatusValue } from './purchase-workflow';
+import {
+  isCancelled,
+  isPaid,
+  type PurchaseStatusValue,
+} from './purchase-workflow';
 
 /** Everything the views need of a purchase, loaded in one query. */
 export const purchaseInclude = {
@@ -110,13 +114,12 @@ export function toRow(p: PurchaseFull): PurchaseRow {
     status,
     amount: amount.toNumber(),
     paid: paid.toNumber(),
-    remaining:
-      status === 'ANNULEE'
-        ? 0
-        : remainingOf(
-            amount,
-            p.payments.map((x) => x.amount),
-          ).toNumber(),
+    remaining: isCancelled(status)
+      ? 0
+      : remainingOf(
+          amount,
+          p.payments.map((x) => x.amount),
+        ).toNumber(),
   };
 }
 
@@ -146,7 +149,7 @@ function historyOf(p: PurchaseFull): PurchaseStep[] {
       by: p.receivedBy?.name ?? null,
     });
   }
-  if (p.status === 'PAYEE') {
+  if (isPaid(p.status)) {
     // Paid in full by the payment that brought the remaining amount to 0: the last one.
     const last = [...p.payments].sort(
       (a, b) => +a.createdAt - +b.createdAt || a.id.localeCompare(b.id),

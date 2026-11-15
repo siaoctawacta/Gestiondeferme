@@ -1,60 +1,74 @@
 import {
-  canTransition,
+  can,
   isEditable,
-  nextStatuses,
+  OWED_STATUSES,
+  PURCHASE_ACTIONS,
   PURCHASE_STATUS_LIST,
+  statusAfter,
+  type PurchaseAction,
   type PurchaseStatusValue,
 } from './purchase-workflow';
 
-const ALLOWED: [PurchaseStatusValue, PurchaseStatusValue][] = [
-  ['DEMANDE', 'VALIDEE'],
-  ['VALIDEE', 'COMMANDEE'],
-  ['COMMANDEE', 'RECUE'],
-  ['RECUE', 'PAYEE'],
-  // Deleting a payment reopens the balance.
-  ['PAYEE', 'RECUE'],
-  ['DEMANDE', 'ANNULEE'],
-  ['VALIDEE', 'ANNULEE'],
-  ['COMMANDEE', 'ANNULEE'],
-];
+/** Every action and the statuses it may start from: the whole workflow. */
+const MATRIX: Record<PurchaseAction, PurchaseStatusValue[]> = {
+  edit: ['DEMANDE'],
+  delete: ['DEMANDE'],
+  validate: ['DEMANDE'],
+  order: ['VALIDEE'],
+  receive: ['COMMANDEE'],
+  cancel: ['DEMANDE', 'VALIDEE', 'COMMANDEE'],
+  pay: ['RECUE'],
+  unpay: ['RECUE', 'PAYEE'],
+};
 
 describe('purchase workflow', () => {
-  it('allows exactly the listed transitions and no other', () => {
-    for (const from of PURCHASE_STATUS_LIST) {
-      for (const to of PURCHASE_STATUS_LIST) {
-        const expected = ALLOWED.some(([f, t]) => f === from && t === to);
-        expect(`${from}->${to}:${canTransition(from, to)}`).toBe(
-          `${from}->${to}:${expected}`,
+  it('allows each action from exactly its statuses (action x status matrix)', () => {
+    for (const action of PURCHASE_ACTIONS) {
+      for (const status of PURCHASE_STATUS_LIST) {
+        expect(`${action}@${status}:${can(status, action)}`).toBe(
+          `${action}@${status}:${MATRIX[action].includes(status)}`,
         );
       }
     }
   });
 
-  it('refuses to receive from a request or an order not yet placed', () => {
-    expect(canTransition('DEMANDE', 'RECUE')).toBe(false);
-    expect(canTransition('VALIDEE', 'RECUE')).toBe(false);
-    expect(canTransition('DEMANDE', 'COMMANDEE')).toBe(false);
+  it('never receives a purchase that is already received, paid or cancelled', () => {
+    for (const s of [
+      'RECUE',
+      'PAYEE',
+      'ANNULEE',
+      'DEMANDE',
+      'VALIDEE',
+    ] as const) {
+      expect(can(s, 'receive')).toBe(false);
+    }
+    expect(can('COMMANDEE', 'receive')).toBe(true);
   });
 
-  it('refuses to cancel once received or paid, and to leave a cancellation', () => {
-    expect(canTransition('RECUE', 'ANNULEE')).toBe(false);
-    expect(canTransition('PAYEE', 'ANNULEE')).toBe(false);
-    for (const to of PURCHASE_STATUS_LIST) {
-      expect(canTransition('ANNULEE', to)).toBe(false);
+  it('refuses everything from a cancelled purchase', () => {
+    for (const action of PURCHASE_ACTIONS) {
+      expect(can('ANNULEE', action)).toBe(false);
     }
   });
 
-  it('lists the next statuses of each status', () => {
-    expect(nextStatuses('DEMANDE')).toEqual(['VALIDEE', 'ANNULEE']);
-    expect(nextStatuses('COMMANDEE')).toEqual(['RECUE', 'ANNULEE']);
-    expect(nextStatuses('RECUE')).toEqual(['PAYEE']);
-    expect(nextStatuses('PAYEE')).toEqual(['RECUE']);
-    expect(nextStatuses('ANNULEE')).toEqual([]);
+  it('says which status an action leads to', () => {
+    expect(statusAfter('validate')).toBe('VALIDEE');
+    expect(statusAfter('order')).toBe('COMMANDEE');
+    expect(statusAfter('cancel')).toBe('ANNULEE');
+    expect(statusAfter('receive', { settled: false })).toBe('RECUE');
+    // nothing to pay: a received purchase worth 0 is settled at once
+    expect(statusAfter('receive', { settled: true })).toBe('PAYEE');
+    expect(statusAfter('pay', { settled: false })).toBe('RECUE');
+    expect(statusAfter('pay', { settled: true })).toBe('PAYEE');
+    expect(statusAfter('unpay')).toBe('RECUE');
+    expect(statusAfter('edit')).toBeNull();
+    expect(statusAfter('delete')).toBeNull();
   });
 
-  it('lets only a request be edited', () => {
+  it('lets only a request be edited, and owes money only once received', () => {
     expect(PURCHASE_STATUS_LIST.filter((s) => isEditable(s))).toEqual([
       'DEMANDE',
     ]);
+    expect([...OWED_STATUSES]).toEqual(['RECUE', 'PAYEE']);
   });
 });

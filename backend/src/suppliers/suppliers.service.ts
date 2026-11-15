@@ -13,6 +13,7 @@ import type { ExportColumn } from '../listing/export';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { OWED_STATUSES } from '../purchases/purchase-workflow';
 import type {
   CreateSupplierDto,
   SupplierQueryDto,
@@ -104,7 +105,7 @@ export class SuppliersService {
         FROM "PurchaseItem" i JOIN "Purchase" p ON p.id = i."purchaseId"
         WHERE p."supplierId" = ANY(${supplierIds}::text[])
           AND p."farmId" = ANY(${farmIds}::text[])
-          AND p."status" IN ('RECUE', 'PAYEE')
+          AND p."status"::text = ANY(${[...OWED_STATUSES]}::text[])
         GROUP BY p."supplierId"`,
       this.prisma.$queryRaw<{ supplierId: string; total: Decimal | null }[]>`
         SELECT p."supplierId", SUM(s."amount") AS total
@@ -157,11 +158,18 @@ export class SuppliersService {
     id: string,
     header: string | undefined,
   ): Promise<SupplierItem> {
+    return this.read(ctx, id, await this.balanceFarms(ctx, header));
+  }
+
+  private async read(
+    ctx: RequestContext,
+    id: string,
+    farmIds: string[],
+  ): Promise<SupplierItem> {
     const row = await this.prisma.supplier.findFirst({
       where: { id, organizationId: ctx.user.organizationId },
     });
     if (!row) throw new NotFoundException(SUPPLIER_NOT_FOUND);
-    const farmIds = await this.balanceFarms(ctx, header);
     const balances = await this.balances([id], farmIds);
     return toItem(row, balances.get(id) ?? dec(0));
   }
@@ -200,22 +208,28 @@ export class SuppliersService {
     );
   }
 
-  update(
+  async update(
     ctx: RequestContext,
     id: string,
     dto: UpdateSupplierDto,
     header: string | undefined,
   ): Promise<SupplierItem> {
+    // A farm header the user cannot see is refused before anything is written.
+    const farmIds = await this.balanceFarms(ctx, header);
     return orConflict(async () => {
       await this.prisma.$transaction(async (tx) => {
         const before = await tx.supplier.findFirst({
           where: { id, organizationId: ctx.user.organizationId },
         });
         if (!before) throw new NotFoundException(SUPPLIER_NOT_FOUND);
+        const changed = (Object.keys(dto) as (keyof UpdateSupplierDto)[]).some(
+          (k) => dto[k] !== undefined && dto[k] !== before[k],
+        );
+        if (!changed) return;
         const updated = await tx.supplier.update({ where: { id }, data: dto });
         await this.log(tx, ctx, 'UPDATE', updated, before, updated);
       });
-      return this.get(ctx, id, header);
+      return this.read(ctx, id, farmIds);
     });
   }
 

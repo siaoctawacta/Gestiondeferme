@@ -6,6 +6,7 @@ import {
   IsOptional,
   IsString,
   MaxLength,
+  ValidateIf,
 } from 'class-validator';
 import { Transform } from 'class-transformer';
 import { Trim } from '../../listing/list-helpers';
@@ -72,14 +73,14 @@ export class CreateSupplierDto {
     description:
       'An inactive supplier is refused by new purchase requests; its existing purchases keep working.',
   })
-  @IsOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @IsBoolean({ message: 'Le statut est invalide' })
   active?: boolean;
 }
 
 export class UpdateSupplierDto {
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @Trim()
   @IsString({ message: NAME })
   @IsNotEmpty({ message: NAME })
@@ -115,7 +116,7 @@ export class UpdateSupplierDto {
   address?: string | null;
 
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @IsBoolean({ message: 'Le statut est invalide' })
   active?: boolean;
 }

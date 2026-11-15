@@ -12,6 +12,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { IsDay } from '../../herd/dto/is-day';
@@ -96,18 +97,18 @@ export class CreatePurchaseDto {
 /** Only a request (`DEMANDE`) can be edited; `lines` replaces the whole list. */
 export class UpdatePurchaseDto {
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @IsString({ message: 'Le fournisseur est invalide' })
   @IsNotEmpty({ message: 'Le fournisseur est invalide' })
   supplierId?: string;
 
   @ApiPropertyOptional()
-  @IsOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @IsDay()
   date?: string;
 
   @ApiPropertyOptional({ type: [PurchaseLineDto] })
-  @IsOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @IsArray({ message: LINES })
   @ArrayMinSize(1, { message: LINES })
   @ArrayMaxSize(MAX_LINES, { message: 'Trop de lignes' })
@@ -162,7 +163,8 @@ export class ReceiveLineDto {
 export class ReceivePurchaseDto {
   @ApiProperty({
     example: '2026-11-02',
-    description: 'Not in the future, not before the date of the purchase',
+    description:
+      "Not in the future, and not before the purchase's own `date` (the date of the document, not the day its BC number was assigned)",
   })
   @IsDay()
   date!: string;

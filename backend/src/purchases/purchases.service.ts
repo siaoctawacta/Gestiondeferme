@@ -9,7 +9,6 @@ import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import { assertNotFuture, formatDay, requireDay } from '../common/days';
 import { lockRow } from '../common/lock-row';
-import { nextNumberedCode } from '../common/next-code';
 import type { Prisma } from '../generated/prisma/client';
 import type { AuditAction } from '../generated/prisma/enums';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
@@ -19,6 +18,7 @@ import {
   StockLedgerService,
   type RecordInput,
 } from '../stock/stock-ledger.service';
+import { MAX_PAYMENT } from './dto/purchase.dto';
 import type {
   CancelPurchaseDto,
   CreatePaymentDto,
@@ -28,7 +28,8 @@ import type {
   ReceivePurchaseDto,
   UpdatePurchaseDto,
 } from './dto/purchase.dto';
-import { linesAmount, remainingOf } from './purchase-money';
+import { lineAmount, linesAmount, remainingOf } from './purchase-money';
+import { nextPurchaseNumber } from './purchase-numbers';
 import {
   purchaseInclude,
   toDetail,
@@ -38,9 +39,10 @@ import {
   type PurchaseRow,
 } from './purchase-view';
 import {
-  canTransition,
-  isEditable,
+  can,
   PURCHASE_STATUS_LIST,
+  statusAfter,
+  type PurchaseAction,
   type PurchaseStatusValue,
 } from './purchase-workflow';
 
@@ -52,17 +54,25 @@ const SUPPLIER_INVALID = 'Fournisseur invalide';
 const SUPPLIER_INACTIVE = 'Ce fournisseur est inactif';
 const ITEM_INVALID = 'Article invalide';
 const ITEM_INACTIVE = 'Article inactif';
-const SORTABLE = ['date', 'reference', 'status'];
+const SORTABLE = ['date', 'status'];
 
 /** Why a step is refused (409) from each status. */
-const REFUSED: Record<string, string> = {
+const REFUSED: Record<PurchaseAction, string> = {
   validate: 'Seule une demande peut être validée',
   order: 'Seule une demande validée peut être commandée',
   receive: 'Seule une commande peut être réceptionnée',
   cancel: 'Un achat reçu ou payé ne peut plus être annulé',
-  edit: 'Seule une demande peut être modifiée ou supprimée',
+  edit: 'Seule une demande peut être modifiée',
+  delete: 'Seule une demande peut être supprimée',
   pay: 'Seul un achat reçu peut être payé',
+  unpay: 'Ce paiement ne peut plus être supprimé',
 };
+const TOO_BIG = 'Le montant total est trop élevé';
+/** Under the payment cap, so a purchase can always be paid in one payment and its amount is safe as a JS number. */
+const MAX_TOTAL = new Decimal(MAX_PAYMENT);
+const OVER_RECEIVED = 'La quantité reçue dépasse la quantité commandée';
+const PAYMENT_BEFORE_RECEPTION =
+  'La date du paiement ne peut pas précéder la réception';
 const RECEIVED_LINES = 'Les lignes reçues ne correspondent pas à la commande';
 const NOTHING_RECEIVED = 'Aucune quantité reçue : annulez la commande';
 const BEFORE_PURCHASE =
@@ -120,9 +130,31 @@ export class PurchasesService {
     return value as PurchaseStatusValue;
   }
 
+  /**
+   * The list order. `reference` sorts by the DISPLAYED reference (the BC
+   * number once ordered, else the DA): every `BC-` sorts before every `DA-`,
+   * so it is the order numbers first (then the unordered ones by DA number).
+   */
+  private listOrder(
+    q: PurchaseQueryDto,
+  ): Prisma.PurchaseOrderByWithRelationInput[] {
+    const [field, dir] = (q.sort ?? '').split(':');
+    if (
+      field === 'reference' &&
+      (dir === undefined || dir === 'asc' || dir === 'desc')
+    ) {
+      const d = dir ?? 'asc';
+      return [
+        { orderNumber: { sort: d, nulls: d === 'asc' ? 'last' : 'first' } },
+        { reference: d },
+      ];
+    }
+    return [orderBy(q, SORTABLE, { date: 'desc' })];
+  }
+
   listArgs(ctx: RequestContext, q: PurchaseQueryDto) {
     const where = this.where(ctx, q, true);
-    const order = orderBy(q, SORTABLE, { date: 'desc' });
+    const order = this.listOrder(q);
     return {
       find: async (range: {
         skip?: number;
@@ -132,7 +164,7 @@ export class PurchasesService {
           await this.prisma.purchase.findMany({
             where,
             include: purchaseInclude,
-            orderBy: [order, { createdAt: 'desc' }, { id: 'asc' }],
+            orderBy: [...order, { createdAt: 'desc' }, { id: 'asc' }],
             ...range,
           })
         ).map(toRow),
@@ -228,7 +260,7 @@ export class PurchasesService {
     return detail;
   }
 
-  private refuse(step: keyof typeof REFUSED): never {
+  private refuse(step: PurchaseAction): never {
     throw new ConflictException(REFUSED[step]);
   }
 
@@ -260,6 +292,13 @@ export class PurchasesService {
     }
   }
 
+  private assertTotal(lines: PurchaseLineDto[]): void {
+    const total = linesAmount(
+      lines.map((l) => ({ ...l, receivedQuantity: null })),
+    );
+    if (total.gt(MAX_TOTAL)) throw new BadRequestException(TOO_BIG);
+  }
+
   private lineData(lines: PurchaseLineDto[]) {
     return lines.map((l, position) => ({
       position,
@@ -276,23 +315,13 @@ export class PurchasesService {
     if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
     const date = requireDay(dto.date);
     assertNotFuture(date);
+    this.assertTotal(dto.lines);
     const organizationId = ctx.user.organizationId;
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
         await this.assertSupplier(tx, ctx, dto.supplierId);
         await this.assertItems(tx, ctx, dto.lines);
-        const reference = await nextNumberedCode(tx, {
-          lockKey: `purchase-da:${organizationId}`,
-          prefix: 'DA-',
-          width: 4,
-          existing: async () =>
-            (
-              await tx.purchase.findMany({
-                where: { organizationId, reference: { startsWith: 'DA-' } },
-                select: { reference: true },
-              })
-            ).map((p) => p.reference),
-        });
+        const reference = await nextPurchaseNumber(tx, organizationId, 'DA');
         const created = await tx.purchase.create({
           data: {
             organizationId,
@@ -329,23 +358,37 @@ export class PurchasesService {
   ): Promise<PurchaseDetail> {
     const date = dto.date ? requireDay(dto.date) : undefined;
     if (date) assertNotFuture(date);
+    if (dto.lines) this.assertTotal(dto.lines);
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
         const before = await this.lock(tx, ctx, id);
-        if (!isEditable(before.status)) this.refuse('edit');
-        if (dto.supplierId && dto.supplierId !== before.supplierId) {
-          await this.assertSupplier(tx, ctx, dto.supplierId);
+        if (!can(before.status, 'edit')) this.refuse('edit');
+        // Only what really changes is validated and written: an empty or
+        // no-op PATCH leaves the purchase and the audit log alone.
+        const supplierChanged =
+          dto.supplierId !== undefined && dto.supplierId !== before.supplierId;
+        const dateChanged =
+          date !== undefined && date.getTime() !== before.date.getTime();
+        const noteChanged =
+          dto.note !== undefined && (dto.note || null) !== before.note;
+        const linesChanged =
+          dto.lines !== undefined && !this.sameLines(before, dto.lines);
+        if (!supplierChanged && !dateChanged && !noteChanged && !linesChanged) {
+          return toDetail(before);
         }
-        if (dto.lines) await this.assertItems(tx, ctx, dto.lines);
+        if (supplierChanged) {
+          await this.assertSupplier(tx, ctx, dto.supplierId as string);
+        }
+        if (linesChanged) await this.assertItems(tx, ctx, dto.lines ?? []);
         await tx.purchase.update({
           where: { id },
           data: {
-            ...(dto.supplierId ? { supplierId: dto.supplierId } : {}),
-            ...(date ? { date } : {}),
-            ...(dto.note !== undefined ? { note: dto.note } : {}),
+            ...(supplierChanged ? { supplierId: dto.supplierId } : {}),
+            ...(dateChanged ? { date } : {}),
+            ...(noteChanged ? { note: dto.note || null } : {}),
           },
         });
-        if (dto.lines) {
+        if (linesChanged && dto.lines) {
           await tx.purchaseItem.deleteMany({ where: { purchaseId: id } });
           await tx.purchaseItem.createMany({
             data: this.lineData(dto.lines).map((l) => ({
@@ -359,11 +402,25 @@ export class PurchasesService {
     );
   }
 
+  private sameLines(before: PurchaseFull, lines: PurchaseLineDto[]): boolean {
+    return (
+      before.items.length === lines.length &&
+      before.items.every((item, i) => {
+        const l = lines[i];
+        return (
+          item.stockItemId === l.itemId &&
+          item.quantity.eq(l.quantity) &&
+          item.unitPrice.eq(l.unitPrice)
+        );
+      })
+    );
+  }
+
   remove(ctx: RequestContext, id: string): Promise<void> {
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
         const before = await this.lock(tx, ctx, id);
-        if (!isEditable(before.status)) this.refuse('edit');
+        if (!can(before.status, 'delete')) this.refuse('delete');
         await tx.purchaseItem.deleteMany({ where: { purchaseId: id } });
         await tx.purchase.delete({ where: { id } });
         const detail = toDetail(before);
@@ -385,11 +442,11 @@ export class PurchasesService {
   validate(ctx: RequestContext, id: string): Promise<PurchaseDetail> {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.lock(tx, ctx, id);
-      if (!canTransition(before.status, 'VALIDEE')) this.refuse('validate');
+      if (!can(before.status, 'validate')) this.refuse('validate');
       await tx.purchase.update({
         where: { id },
         data: {
-          status: 'VALIDEE',
+          status: statusAfter('validate') ?? before.status,
           validatedAt: new Date(),
           validatedById: ctx.user.id,
         },
@@ -404,23 +461,12 @@ export class PurchasesService {
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
         const before = await this.lock(tx, ctx, id);
-        if (!canTransition(before.status, 'COMMANDEE')) this.refuse('order');
-        const orderNumber = await nextNumberedCode(tx, {
-          lockKey: `purchase-bc:${organizationId}`,
-          prefix: 'BC-',
-          width: 4,
-          existing: async () =>
-            (
-              await tx.purchase.findMany({
-                where: { organizationId, orderNumber: { startsWith: 'BC-' } },
-                select: { orderNumber: true },
-              })
-            ).flatMap((p) => (p.orderNumber ? [p.orderNumber] : [])),
-        });
+        if (!can(before.status, 'order')) this.refuse('order');
+        const orderNumber = await nextPurchaseNumber(tx, organizationId, 'BC');
         await tx.purchase.update({
           where: { id },
           data: {
-            status: 'COMMANDEE',
+            status: statusAfter('order') ?? before.status,
             orderNumber,
             orderedAt: new Date(),
             orderedById: ctx.user.id,
@@ -438,11 +484,11 @@ export class PurchasesService {
   ): Promise<PurchaseDetail> {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.lock(tx, ctx, id);
-      if (!canTransition(before.status, 'ANNULEE')) this.refuse('cancel');
+      if (!can(before.status, 'cancel')) this.refuse('cancel');
       await tx.purchase.update({
         where: { id },
         data: {
-          status: 'ANNULEE',
+          status: statusAfter('cancel') ?? before.status,
           cancelledAt: new Date(),
           cancelledById: ctx.user.id,
           cancelReason: dto.reason,
@@ -467,7 +513,7 @@ export class PurchasesService {
     assertNotFuture(date);
     return this.prisma.$transaction(async (tx) => {
       const before = await this.lock(tx, ctx, id);
-      if (!canTransition(before.status, 'RECUE')) this.refuse('receive');
+      if (!can(before.status, 'receive')) this.refuse('receive');
       if (date.getTime() < before.date.getTime()) {
         throw new BadRequestException(BEFORE_PURCHASE);
       }
@@ -485,10 +531,17 @@ export class PurchasesService {
           },
         });
       }
+      const worth = received.reduce(
+        (sum, r) => sum.add(lineAmount(r.quantity, r.line.unitPrice)),
+        new Decimal(0),
+      );
       await tx.purchase.update({
         where: { id },
         data: {
-          status: 'RECUE',
+          // A purchase worth 0 has nothing to pay: it is settled at reception.
+          status:
+            statusAfter('receive', { settled: worth.isZero() }) ??
+            before.status,
           receivedAt: new Date(),
           receivedById: ctx.user.id,
           receivedDate: date,
@@ -542,6 +595,8 @@ export class PurchasesService {
       const line = queues.get(l.itemId)?.shift();
       if (!line) throw new BadRequestException(RECEIVED_LINES);
       const quantity = new Decimal(l.receivedQuantity);
+      if (quantity.gt(line.quantity))
+        throw new BadRequestException(OVER_RECEIVED);
       const makesLot = !quantity.isZero();
       return {
         line,
@@ -563,7 +618,13 @@ export class PurchasesService {
     assertNotFuture(date);
     return this.prisma.$transaction(async (tx) => {
       const before = await this.lock(tx, ctx, id);
-      if (before.status !== 'RECUE') this.refuse('pay');
+      if (!can(before.status, 'pay')) this.refuse('pay');
+      if (
+        before.receivedDate &&
+        date.getTime() < before.receivedDate.getTime()
+      ) {
+        throw new BadRequestException(PAYMENT_BEFORE_RECEPTION);
+      }
       const amount = new Decimal(dto.amount);
       const remaining = remainingOf(
         linesAmount(before.items),
@@ -581,8 +642,9 @@ export class PurchasesService {
           createdById: ctx.user.id,
         },
       });
-      if (amount.eq(remaining)) {
-        await tx.purchase.update({ where: { id }, data: { status: 'PAYEE' } });
+      const next = statusAfter('pay', { settled: amount.eq(remaining) });
+      if (next && next !== before.status) {
+        await tx.purchase.update({ where: { id }, data: { status: next } });
       }
       const after = toDetail(await this.load(tx, ctx, id));
       await this.log(
@@ -616,9 +678,11 @@ export class PurchasesService {
       const before = await this.lock(tx, ctx, id);
       const payment = before.payments.find((p) => p.id === paymentId);
       if (!payment) throw new NotFoundException(PAYMENT_NOT_FOUND);
+      if (!can(before.status, 'unpay')) this.refuse('unpay');
       await tx.supplierPayment.delete({ where: { id: paymentId } });
-      if (before.status === 'PAYEE') {
-        await tx.purchase.update({ where: { id }, data: { status: 'RECUE' } });
+      const next = statusAfter('unpay');
+      if (next && next !== before.status) {
+        await tx.purchase.update({ where: { id }, data: { status: next } });
       }
       const after = toDetail(await this.load(tx, ctx, id));
       await this.log(

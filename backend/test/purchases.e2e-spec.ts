@@ -48,6 +48,8 @@ interface Detail extends Row {
   supplierId: string;
   supplierPhone: string | null;
   supplierAddress: string | null;
+  requestNumber: string;
+  orderNumber: string | null;
   orderedAt: string | null;
   lines: Line[];
   payments: Payment[];
@@ -259,7 +261,10 @@ describe('Suppliers and purchases (e2e)', () => {
         'RECUE',
         'PAYEE',
       ]);
-      expect(detail.history[0].by).toBeTruthy();
+      expect(detail.history[0].by).toBe(
+        (await prisma.user.findFirstOrThrow({ where: { role: 'RESP_STOCK' } }))
+          .name,
+      );
       expect(detail.history.every((h) => !Number.isNaN(Date.parse(h.at)))).toBe(
         true,
       );
@@ -438,10 +443,12 @@ describe('Suppliers and purchases (e2e)', () => {
           lines: [{ itemId, receivedQuantity: 10, expiryDate: daysAgo(5) }],
         }),
       ).toBe('La péremption ne peut pas précéder la réception du lot');
-      expect(await m({ lines: [] })).toBeDefined();
-      expect(
-        await m({ lines: [{ itemId, receivedQuantity: -1 }] }),
-      ).toBeDefined();
+      expect(await m({ lines: [] })).toEqual([
+        'Une demande comporte au moins une ligne',
+      ]);
+      expect(await m({ lines: [{ itemId, receivedQuantity: -1 }] })).toEqual([
+        'lines.0.La quantité reçue doit être un nombre positif ou nul (2 décimales au plus)',
+      ]);
       expect(
         await m({ lines: [{ itemId: 'inconnu', receivedQuantity: 1 }] }),
       ).toBe('Les lignes reçues ne correspondent pas à la commande');
@@ -1053,7 +1060,6 @@ describe('Suppliers and purchases (e2e)', () => {
   });
 
   describe('database constraints', () => {
-    const CHECK = /check constraint/i;
     const userOf = async () => (await prisma.user.findFirstOrThrow()).id;
     const base = async () => ({
       organizationId: world.orgId,
@@ -1064,46 +1070,60 @@ describe('Suppliers and purchases (e2e)', () => {
     });
 
     it('refuses a status that disagrees with its timestamps, a bad reference, and orphan authors', async () => {
-      const cases: Record<string, object> = {
-        'validated without status': {
-          reference: 'DA-0001',
-          validatedAt: new Date(),
-          validatedById: await userOf(),
-        },
-        'received without being ordered': {
-          reference: 'DA-0002',
-          status: 'RECUE',
-          receivedAt: new Date(),
-          receivedById: await userOf(),
-          receivedDate: new Date('2026-10-02'),
-        },
-        'ordered without number': {
-          reference: 'DA-0003',
-          status: 'COMMANDEE',
-          validatedAt: new Date(),
-          validatedById: await userOf(),
-          orderedAt: new Date(),
-          orderedById: await userOf(),
-        },
-        'author without timestamp': {
-          reference: 'DA-0004',
-          validatedById: await userOf(),
-        },
-        'cancelled without reason': {
-          reference: 'DA-0005',
-          status: 'ANNULEE',
-          cancelledAt: new Date(),
-          cancelledById: await userOf(),
-        },
-        'bad reference': { reference: 'XX-1' },
+      const cases: Record<string, [string, object]> = {
+        'validated without status': [
+          'Purchase_status_check',
+          {
+            reference: 'DA-0001',
+            validatedAt: new Date(),
+            validatedById: await userOf(),
+          },
+        ],
+        'received without being ordered': [
+          'Purchase_status_check',
+          {
+            reference: 'DA-0002',
+            status: 'RECUE',
+            receivedAt: new Date(),
+            receivedById: await userOf(),
+            receivedDate: new Date('2026-10-02'),
+          },
+        ],
+        'ordered without number': [
+          'Purchase_ordered_check',
+          {
+            reference: 'DA-0003',
+            status: 'COMMANDEE',
+            validatedAt: new Date(),
+            validatedById: await userOf(),
+            orderedAt: new Date(),
+            orderedById: await userOf(),
+          },
+        ],
+        'author without timestamp': [
+          'Purchase_validated_check',
+          {
+            reference: 'DA-0004',
+            validatedById: await userOf(),
+          },
+        ],
+        'cancelled without reason': [
+          'Purchase_cancelled_check',
+          {
+            reference: 'DA-0005',
+            status: 'ANNULEE',
+            cancelledAt: new Date(),
+            cancelledById: await userOf(),
+          },
+        ],
+        'bad reference': ['Purchase_reference_check', { reference: 'XX-1' }],
       };
-      for (const [name, data] of Object.entries(cases)) {
+      for (const [, [constraint, data]] of Object.entries(cases)) {
         await expect(
           prisma.purchase.create({
             data: { ...(await base()), ...data } as never,
           }),
-        ).rejects.toThrow(CHECK);
-        expect(name).toBeTruthy();
+        ).rejects.toThrow(constraint);
       }
       expect(await prisma.purchase.count()).toBe(0);
     });
@@ -1123,14 +1143,25 @@ describe('Suppliers and purchases (e2e)', () => {
             ...over,
           },
         });
-      await expect(line({ quantity: 0 })).rejects.toThrow(CHECK);
-      await expect(line({ unitPrice: -1 })).rejects.toThrow(CHECK);
-      await expect(line({ receivedQuantity: -1 })).rejects.toThrow(CHECK);
-      await expect(line({ lotNumber: 'L1' })).rejects.toThrow(CHECK);
+      await expect(line({ quantity: 0 })).rejects.toThrow(
+        'PurchaseItem_quantity_check',
+      );
+      await expect(line({ unitPrice: -1 })).rejects.toThrow(
+        'PurchaseItem_unitPrice_check',
+      );
+      await expect(line({ receivedQuantity: -1 })).rejects.toThrow(
+        'PurchaseItem_receivedQuantity_check',
+      );
+      await expect(
+        line({ quantity: 5, receivedQuantity: 5.01 }),
+      ).rejects.toThrow('PurchaseItem_received_le_quantity_check');
+      await expect(line({ lotNumber: 'L1' })).rejects.toThrow(
+        'PurchaseItem_lot_check',
+      );
       await expect(
         line({ receivedQuantity: 0, expiryDate: new Date('2027-01-01') }),
-      ).rejects.toThrow(CHECK);
-      await line({ receivedQuantity: 5, lotNumber: 'L1' });
+      ).rejects.toThrow('PurchaseItem_lot_check');
+      await line({ quantity: 5, receivedQuantity: 5, lotNumber: 'L1' });
       await expect(
         prisma.supplierPayment.create({
           data: {
@@ -1142,7 +1173,7 @@ describe('Suppliers and purchases (e2e)', () => {
             createdById: await userOf(),
           },
         }),
-      ).rejects.toThrow(CHECK);
+      ).rejects.toThrow('SupplierPayment_amount_check');
     });
 
     it('keeps references and order numbers unique per organisation and refuses deleting what is referenced', async () => {
@@ -1179,6 +1210,346 @@ describe('Suppliers and purchases (e2e)', () => {
       await expect(
         prisma.user.delete({ where: { id: first.requestedById } }),
       ).rejects.toThrow(/Foreign key constraint/);
+    });
+  });
+
+  describe('fix round 1', () => {
+    const stockState = async () => ({
+      level: (await level()).quantity,
+      movements: await prisma.stockMovement.count(),
+      batches: await prisma.stockBatch.count(),
+    });
+    const items = (id: string) =>
+      prisma.purchaseItem.findMany({
+        where: { purchaseId: id },
+        orderBy: { position: 'asc' },
+      });
+
+    it('refuses to receive a paid, received or cancelled purchase (409), changing nothing', async () => {
+      const paid = await received();
+      await pay(director, paid.id, 930000);
+      const recv = await received();
+      const cancelled = await ordered();
+      await act(director, cancelled.id, 'cancel', { reason: 'x' });
+      const before = await stockState();
+      const amounts = async () =>
+        (await http().get('/api/purchases').set(director).expect(200))
+          .body as Page<Row>;
+      const snapshot = (await amounts()).items.map((r) => [
+        r.id,
+        r.amount,
+        r.status,
+      ]);
+      for (const p of [paid, recv, cancelled]) {
+        await act(
+          keeper,
+          p.id,
+          'receive',
+          receiveBody({
+            lines: [{ itemId, receivedQuantity: 1000, lotNumber: 'Z' }],
+          }),
+          409,
+        );
+      }
+      expect(await stockState()).toEqual(before);
+      expect(
+        (await amounts()).items.map((r) => [r.id, r.amount, r.status]),
+      ).toEqual(snapshot);
+      expect((await get(paid.id)).status).toBe('PAYEE');
+      expect((await items(paid.id))[0].receivedQuantity?.toNumber()).toBe(3000);
+    });
+
+    it('refuses to receive more than ordered (400) and accepts exactly the ordered quantity', async () => {
+      const o = await ordered();
+      const over = await act(
+        keeper,
+        o.id,
+        'receive',
+        receiveBody({ lines: [{ itemId, receivedQuantity: 3000.01 }] }),
+        400,
+      );
+      expect(msg(over)).toBe('La quantité reçue dépasse la quantité commandée');
+      expect(await prisma.stockMovement.count()).toBe(0);
+      const ok = await act(
+        keeper,
+        o.id,
+        'receive',
+        receiveBody({ lines: [{ itemId, receivedQuantity: 3000 }] }),
+      );
+      expect(ok.lines[0].receivedQuantity).toBe(3000);
+    });
+
+    it('settles at reception a purchase worth 0', async () => {
+      const free = await ordered({
+        lines: [{ itemId, quantity: 10, unitPrice: 0 }],
+      });
+      const r = await act(
+        keeper,
+        free.id,
+        'receive',
+        receiveBody({
+          lines: [{ itemId, receivedQuantity: 10 }],
+        }),
+      );
+      expect(r).toMatchObject({ status: 'PAYEE', amount: 0, remaining: 0 });
+      const mixed = await ordered({
+        lines: [
+          { itemId, quantity: 10, unitPrice: 5 },
+          { itemId, quantity: 4, unitPrice: 0 },
+        ],
+      });
+      const m = await act(
+        keeper,
+        mixed.id,
+        'receive',
+        receiveBody({
+          lines: [
+            { itemId, receivedQuantity: 0 },
+            { itemId, receivedQuantity: 4 },
+          ],
+        }),
+      );
+      expect(m).toMatchObject({ status: 'PAYEE', amount: 0 });
+      const priced = await received();
+      expect(priced.status).toBe('RECUE');
+    });
+
+    it('refuses a payment dated before the reception and a payment on a cancelled purchase', async () => {
+      const r = await received();
+      expect(
+        msg(await pay(director, r.id, 10, 400, { date: daysAgo(3) })),
+      ).toBe('La date du paiement ne peut pas précéder la réception');
+      await pay(director, r.id, 10, 201, { date: daysAgo(2) });
+      const c = await ordered();
+      await act(director, c.id, 'cancel', { reason: 'x' });
+      await pay(director, c.id, 10, 409);
+    });
+
+    it('refuses null for required supplier and purchase fields (400, not 500)', async () => {
+      await world.post(director, '/suppliers', { name: null }, 400);
+      await world.post(
+        director,
+        '/suppliers',
+        { name: 'Z', active: null },
+        400,
+      );
+      for (const bodyOf of [{ name: null }, { active: null }]) {
+        await http()
+          .patch(`/api/suppliers/${supplierId}`)
+          .set(director)
+          .send(bodyOf)
+          .expect(400);
+      }
+      const p = await request();
+      for (const bodyOf of [
+        { supplierId: null },
+        { date: null },
+        { lines: null },
+      ]) {
+        await http()
+          .patch(`/api/purchases/${p.id}`)
+          .set(stockMgr)
+          .send(bodyOf)
+          .expect(400);
+      }
+    });
+
+    it('answers 403 before writing when a supplier PATCH names a farm the user cannot see', async () => {
+      const farmB = (await createFarm(world.orgId, 'Ferme B')).id;
+      const res = await http()
+        .patch(`/api/suppliers/${supplierId}`)
+        .set({ ...director, 'X-Farm-Id': farmB })
+        .send({ phone: '777' });
+      expect(res.status).toBe(403);
+      expect(
+        (await prisma.supplier.findUniqueOrThrow({ where: { id: supplierId } }))
+          .phone,
+      ).toBeNull();
+    });
+
+    it('never reuses a DA or BC number after a delete, and numbers parallel creates and orders distinctly', async () => {
+      const a = await request();
+      const b = await request();
+      expect([a.reference, b.reference]).toEqual(['DA-0001', 'DA-0002']);
+      await http().delete(`/api/purchases/${b.id}`).set(stockMgr).expect(200);
+      expect((await request()).reference).toBe('DA-0003');
+      const made = await Promise.all(
+        [0, 1, 2, 3, 4].map(() =>
+          http().post('/api/purchases').set(stockMgr).send(body()),
+        ),
+      );
+      expect(made.map((r) => r.status)).toEqual([201, 201, 201, 201, 201]);
+      const refs = made.map((r) => (r.body as Detail).requestNumber);
+      expect(new Set(refs).size).toBe(5);
+      const ids = made.map((r) => (r.body as Detail).id);
+      for (const id of ids) await act(director, id, 'validate');
+      const orders = await Promise.all(
+        ids.map((id) =>
+          http().post(`/api/purchases/${id}/order`).set(director).send({}),
+        ),
+      );
+      expect(orders.map((r) => r.status)).toEqual([201, 201, 201, 201, 201]);
+      const bcs = orders.map((r) => (r.body as Detail).orderNumber);
+      expect(new Set(bcs).size).toBe(5);
+      // a deleted ordered number cannot come back either: orders are never deleted,
+      // but the counter is the highest number ever handed out
+      const next = await ordered();
+      expect(next.orderNumber).toBe('BC-0006');
+    });
+
+    it('sorts by the displayed reference and defaults to the newest date', async () => {
+      const a = await request(stockMgr, { date: daysAgo(5) });
+      const b = await request(stockMgr, { date: daysAgo(4) });
+      const c = await request(stockMgr, { date: daysAgo(3) });
+      await act(director, b.id, 'validate');
+      await act(director, b.id, 'order');
+      const list = async (sort?: string) =>
+        (
+          (
+            await http()
+              .get('/api/purchases')
+              .query(sort ? { sort } : {})
+              .set(director)
+              .expect(200)
+          ).body as Page<Row>
+        ).items.map((r) => r.reference);
+      expect(await list()).toEqual([c.reference, 'BC-0001', a.reference]);
+      expect(await list('reference:asc')).toEqual([
+        'BC-0001',
+        a.reference,
+        c.reference,
+      ]);
+      expect(await list('reference:desc')).toEqual([
+        c.reference,
+        a.reference,
+        'BC-0001',
+      ]);
+    });
+
+    it('caps the total of a purchase (400)', async () => {
+      const big = { itemId, quantity: 999999, unitPrice: 1000000 };
+      const res = await request(director, { lines: [big, big] }, 400);
+      expect(msg(res)).toBe('Le montant total est trop élevé');
+      const p = await request(director, { lines: [big] });
+      expect(p.amount).toBe(999999000000);
+      await http()
+        .patch(`/api/purchases/${p.id}`)
+        .set(director)
+        .send({ lines: [big, big] })
+        .expect(400);
+    });
+
+    it('writes no audit row for an empty or no-op PATCH', async () => {
+      const p = await request();
+      const count = () => prisma.auditLog.count();
+      const before = await count();
+      for (const payload of [
+        {},
+        { note: null },
+        {
+          supplierId,
+          date: p.date,
+          lines: [{ itemId, quantity: 3000, unitPrice: 310 }],
+        },
+      ]) {
+        await http()
+          .patch(`/api/purchases/${p.id}`)
+          .set(stockMgr)
+          .send(payload)
+          .expect(200);
+      }
+      expect(await count()).toBe(before);
+      await http()
+        .patch(`/api/suppliers/${supplierId}`)
+        .set(director)
+        .send({})
+        .expect(200);
+      await http()
+        .patch(`/api/suppliers/${supplierId}`)
+        .set(director)
+        .send({ name: 'Agro Provende SA' })
+        .expect(200);
+      expect(await count()).toBe(before);
+      await http()
+        .patch(`/api/purchases/${p.id}`)
+        .set(stockMgr)
+        .send({ note: 'vraiment' })
+        .expect(200);
+      expect(await count()).toBe(before + 1);
+    });
+
+    it('serialises a cancellation against a reception: one wins, the stock agrees', async () => {
+      for (let round = 0; round < 3; round++) {
+        const o = await ordered();
+        const [r, c] = await Promise.all([
+          http()
+            .post(`/api/purchases/${o.id}/receive`)
+            .set(keeper)
+            .send(receiveBody()),
+          http()
+            .post(`/api/purchases/${o.id}/cancel`)
+            .set(director)
+            .send({ reason: 'course' }),
+        ]);
+        expect([r.status, c.status].sort()).toEqual([201, 409]);
+        const d = await get(o.id);
+        const moves = await prisma.stockMovement.count({
+          where: { sourceId: o.id },
+        });
+        expect(d.status).toBe(r.status === 201 ? 'RECUE' : 'ANNULEE');
+        expect(moves).toBe(r.status === 201 ? 1 : 0);
+      }
+    });
+
+    it('serialises an edit against a validation', async () => {
+      for (let round = 0; round < 3; round++) {
+        const p = await request();
+        const [edit, validate] = await Promise.all([
+          http()
+            .patch(`/api/purchases/${p.id}`)
+            .set(stockMgr)
+            .send({ lines: [{ itemId, quantity: 1, unitPrice: 1 }] }),
+          http().post(`/api/purchases/${p.id}/validate`).set(director).send({}),
+        ]);
+        expect(validate.status).toBe(201);
+        expect([200, 409]).toContain(edit.status);
+        const d = await get(p.id);
+        expect(d.status).toBe('VALIDEE');
+        expect(d.lines[0].quantity).toBe(edit.status === 200 ? 1 : 3000);
+      }
+    });
+
+    it('keeps purchase stock entries out of reach of the manual movement routes (409)', async () => {
+      await received();
+      const mv = await prisma.stockMovement.findFirstOrThrow();
+      await http()
+        .patch(`/api/stock/movements/${mv.id}`)
+        .set(director)
+        .send({ quantity: 1 })
+        .expect(409);
+      await http()
+        .delete(`/api/stock/movements/${mv.id}`)
+        .set(director)
+        .expect(409);
+      expect((await level()).quantity).toBe(3000);
+    });
+
+    it('refuses validate, order and payment deletion under all farms', async () => {
+      const all = {
+        ...(await world.actor('SUPER_ADMIN')),
+        'X-Farm-Id': 'all',
+      };
+      const p = await request();
+      await act(all, p.id, 'validate', {}, 403);
+      await act(director, p.id, 'validate');
+      await act(all, p.id, 'order', {}, 403);
+      const r = await received();
+      const paid = await pay(director, r.id, 5);
+      await http()
+        .delete(`/api/purchases/${r.id}/payments/${paid.payments[0].id}`)
+        .set(all)
+        .expect(403);
+      expect((await get(r.id)).payments).toHaveLength(1);
     });
   });
 
