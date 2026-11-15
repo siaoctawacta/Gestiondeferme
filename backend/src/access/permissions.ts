@@ -109,7 +109,9 @@ const ROLE_GRANTS: Record<Role, Grants> = {
     ]),
   },
   RESP_STOCK: {
-    ...grant(W, ['stocks', 'fournisseurs']),
+    // The stock manager validates his own inventories (the design's role table).
+    ...grant(V, ['stocks']),
+    ...grant(W, ['fournisseurs']),
     achats: ['read', 'create', 'update'],
     ...grant(R, ['alimentation', 'rapports']),
   },

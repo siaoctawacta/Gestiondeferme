@@ -36,6 +36,7 @@ interface Row {
 }
 interface Mv {
   id: string;
+  operationId: string;
   date: string;
   itemId: string;
   type: string;
@@ -813,7 +814,7 @@ describe('Stock (e2e)', () => {
       const audits = await prisma.auditLog.findMany({
         where: { module: 'stocks', recordId: { not: null } },
       });
-      // 2 articles + 3 movements + 1 update + 2 thresholds-free
+      // 2 articles and 3 movements created, 1 movement updated
       expect(audits.filter((a) => a.action === 'CREATE').length).toBe(5);
       expect(audits.filter((a) => a.action === 'UPDATE')).toHaveLength(1);
     });
@@ -850,6 +851,97 @@ describe('Stock (e2e)', () => {
       ]);
       expect(d.movements).toHaveLength(1);
     });
+
+    it("answers 404 when another farm's movement is edited or deleted", async () => {
+      const a = await actor('DIRECTEUR_FERME');
+      const b = await actor('DIRECTEUR_FERME', [farmB], farmB);
+      const it = await item(a.headers, 'Aliment ponte');
+      const e = await entry(a.headers, it.id, 100, 100, daysAgo(10));
+      await http()
+        .patch(`/api/stock/movements/${e.id}`)
+        .set(b.headers)
+        .send({ note: 'x' })
+        .expect(404);
+      await http()
+        .delete(`/api/stock/movements/${e.id}`)
+        .set(b.headers)
+        .expect(404);
+      expect((await list(a.headers)).items[0].quantity).toBe(100);
+    });
+
+    it('rejects a null quantity or cost in a PATCH with a 400', async () => {
+      const { headers: h } = await actor('RESP_STOCK');
+      const it = await item(h, 'Aliment ponte');
+      const e = await entry(h, it.id, 100, 100, daysAgo(10));
+      for (const body of [{ quantity: null }, { unitCost: null }]) {
+        await http()
+          .patch(`/api/stock/movements/${e.id}`)
+          .set(h)
+          .send(body)
+          .expect(400);
+      }
+    });
+
+    it('treats an exit split across lots as one operation: PATCH re-plans it, DELETE removes it whole', async () => {
+      const { headers: h } = await actor('RESP_STOCK');
+      const it = await item(h, 'Vaccin', {
+        category: 'VACCIN',
+        unit: 'flacon',
+      });
+      await entry(h, it.id, 100, 10, daysAgo(40), {
+        lotNumber: 'A',
+        expiryDate: '2027-06-01',
+      });
+      await entry(h, it.id, 100, 10, daysAgo(40), {
+        lotNumber: 'B',
+        expiryDate: '2027-12-01',
+      });
+      const out = (await exit(h, it.id, 150, daysAgo(2)).expect(201))
+        .body as Mv[];
+      expect(out).toHaveLength(2);
+      expect(out[0].operationId).toBe(out[1].operationId);
+      const entries = (
+        await http()
+          .get(`/api/stock/movements?itemId=${it.id}&type=ENTREE`)
+          .set(h)
+      ).body as Page<Mv>;
+      expect(new Set(entries.items.map((m) => m.operationId)).size).toBe(2);
+
+      const patched = (
+        await http()
+          .patch(`/api/stock/movements/${out[1].id}`)
+          .set(h)
+          .send({ quantity: 120 })
+          .expect(200)
+      ).body as Mv[];
+      expect(patched.map((m) => [m.lotNumber, m.quantity])).toEqual([
+        ['A', -100],
+        ['B', -20],
+      ]);
+      expect(patched[0].operationId).toBe(out[0].operationId);
+      expect((await list(h)).items[0].quantity).toBe(80);
+
+      await http()
+        .delete(`/api/stock/movements/${patched[0].id}`)
+        .set(h)
+        .expect(200);
+      const left = (
+        await http()
+          .get(`/api/stock/movements?itemId=${it.id}&type=SORTIE`)
+          .set(h)
+      ).body as Page<Mv>;
+      expect(left.total).toBe(0);
+      expect((await list(h)).items[0].quantity).toBe(200);
+      const audits = await prisma.auditLog.findMany({
+        where: { recordId: out[0].operationId },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(audits.map((a) => a.action)).toEqual([
+        'CREATE',
+        'UPDATE',
+        'DELETE',
+      ]);
+    });
   });
 
   describe('inventories', () => {
@@ -871,6 +963,7 @@ describe('Stock (e2e)', () => {
 
     it('counts 880 against 900, validates into a −20 adjustment and freezes the session', async () => {
       const resp = (await actor('RESP_STOCK')).headers;
+      const mag = (await actor('MAGASINIER')).headers;
       const director = (await actor('DIRECTEUR_FERME')).headers;
       const it = await item(resp, 'Aliment ponte');
       await entry(resp, it.id, 1000, 300, daysAgo(10));
@@ -889,14 +982,15 @@ describe('Stock (e2e)', () => {
       });
       expect((await list(resp)).items[0].quantity).toBe(900);
 
+      // The stock manager validates; the storekeeper who counts cannot.
       await http()
         .post(`/api/inventories/${s.id}/validate`)
-        .set(resp)
+        .set(mag)
         .expect(403);
       const done = (
         await http()
           .post(`/api/inventories/${s.id}/validate`)
-          .set(director)
+          .set(resp)
           .expect(201)
       ).body as Inventory;
       expect(done.status).toBe('VALIDEE');
@@ -1006,6 +1100,20 @@ describe('Stock (e2e)', () => {
         .set(resp)
         .send({ lines: [{ itemId: 'nope', countedQty: 1 }] })
         .expect(400);
+      const org2 = await createOrganization('Autre');
+      const foreign = await prisma.stockItem.create({
+        data: {
+          organizationId: org2.id,
+          name: 'Étranger',
+          category: 'MATERIEL',
+          unit: 'u',
+        },
+      });
+      await http()
+        .put(`/api/inventories/${s.id}/lines`)
+        .set(resp)
+        .send({ lines: [{ itemId: foreign.id, countedQty: 1 }] })
+        .expect(400);
       await http()
         .put(`/api/inventories/${s.id}/lines`)
         .set(resp)
@@ -1076,6 +1184,58 @@ describe('Stock (e2e)', () => {
         .get('/api/inventories?status=NOPE')
         .set(a.headers)
         .expect(400);
+    });
+    it('validates once when two validations run in parallel (one 201, one 409)', async () => {
+      const resp = (await actor('RESP_STOCK')).headers;
+      const it = await item(resp, 'Aliment ponte');
+      await entry(resp, it.id, 100, 10, daysAgo(10));
+      const s = await counted(resp, daysAgo(1), [
+        { itemId: it.id, countedQty: 90 },
+      ]);
+      const results = await Promise.all([
+        http().post(`/api/inventories/${s.id}/validate`).set(resp),
+        http().post(`/api/inventories/${s.id}/validate`).set(resp),
+      ]);
+      expect(results.map((r) => r.status).sort()).toEqual([201, 409]);
+      expect((await list(resp)).items[0].quantity).toBe(90);
+      expect(
+        await prisma.stockMovement.count({ where: { type: 'AJUSTEMENT' } }),
+      ).toBe(1);
+    });
+
+    it('validates a count dated before a FEFO consumption emptied the earliest lot', async () => {
+      const resp = (await actor('RESP_STOCK')).headers;
+      const it = await item(resp, 'Vaccin', {
+        category: 'VACCIN',
+        unit: 'flacon',
+      });
+      await entry(resp, it.id, 100, 10, daysAgo(40), {
+        lotNumber: 'A',
+        expiryDate: '2027-06-01',
+      });
+      await entry(resp, it.id, 100, 10, daysAgo(40), {
+        lotNumber: 'B',
+        expiryDate: '2027-12-01',
+      });
+      await exit(resp, it.id, 100, daysAgo(1)).expect(201); // empties lot A
+      const s = await counted(resp, daysAgo(2), [
+        { itemId: it.id, countedQty: 180 },
+      ]);
+      await http()
+        .post(`/api/inventories/${s.id}/validate`)
+        .set(resp)
+        .expect(201);
+      const detail = (await http().get(`/api/stock/${it.id}`).set(resp))
+        .body as {
+        quantity: number;
+        batches: { lotNumber: string; quantity: number }[];
+      };
+      expect(detail.quantity).toBe(80);
+      expect(
+        Object.fromEntries(
+          detail.batches.map((b) => [b.lotNumber, b.quantity]),
+        ),
+      ).toEqual({ A: 0, B: 80 });
     });
   });
 

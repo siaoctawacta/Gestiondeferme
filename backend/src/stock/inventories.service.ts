@@ -18,9 +18,9 @@ import type {
   CreateInventoryDto,
   SaveInventoryLinesDto,
 } from './dto/inventory.dto';
-import { StockLedgerService } from './stock-ledger.service';
+import { StockLedgerService, type RecordInput } from './stock-ledger.service';
 
-export const INVENTORY_SOURCE = 'INVENTORY';
+export const INVENTORY_SOURCE = 'INVENTORY' as const;
 const NOT_FOUND = 'Inventaire introuvable';
 const VALIDATED = 'Cet inventaire est validé : il ne peut plus changer';
 const ALREADY = 'Cet inventaire est déjà validé';
@@ -237,7 +237,7 @@ export class InventoriesService {
         session.date,
         tx,
       );
-      const inputs = [];
+      const inputs: RecordInput[] = [];
       for (const line of session.lines) {
         const expected =
           theoretical.get(line.stockItemId) ?? new Prisma.Decimal(0);

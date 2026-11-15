@@ -1,7 +1,7 @@
 generator client {
-  provider        = "prisma-client"
-  output          = "../src/generated/prisma"
-  moduleFormat    = "cjs"
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
   // relationJoins: the feed and water services pass `relationLoadStrategy: 'join'`
   // to load a row with its batch/building/product names in one query. With the
   // flag on, Prisma's default relation load strategy may itself be `join`, so
@@ -800,6 +800,8 @@ model StockMovement {
   /// The operation that wrote it (FEED_DISTRIBUTION, HEALTH_ACT, PURCHASE, INVENTORY...); null for a hand-entered movement.
   sourceType   String?
   sourceId     String?
+  /// Shared by the pieces of one operation (FEFO may split an exit across lots); a movement written alone carries its own id.
+  operationId  String
   note         String?
   createdById  String
   createdBy    User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
@@ -812,6 +814,7 @@ model StockMovement {
   @@index([createdById])
   @@index([farmId, stockItemId, date])
   @@index([sourceType, sourceId])
+  @@index([operationId])
 }
 
 model InventorySession {

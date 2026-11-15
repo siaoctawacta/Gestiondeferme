@@ -49,6 +49,12 @@ export class InventoryLineDto {
   countedQty!: number;
 }
 
+/**
+ * The lines replace the draft's lines wholesale. The theoretical quantity shown
+ * with each line is the one at the session date when the lines are saved;
+ * validation recomputes it (under the stock locks) and overwrites it before
+ * writing the adjustments.
+ */
 export class SaveInventoryLinesDto {
   @ApiProperty({ type: [InventoryLineDto] })
   @IsArray({ message: 'Les lignes sont invalides' })

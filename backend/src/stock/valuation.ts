@@ -42,7 +42,10 @@ export interface Replay<T extends ReplayMovement> {
 }
 
 /** Replay order: date, then creation time, then id. */
-export function byReplayOrder(a: ReplayMovement, b: ReplayMovement): number {
+export function byReplayOrder(
+  a: { date: Date; createdAt: Date; id?: string },
+  b: { date: Date; createdAt: Date; id?: string },
+): number {
   return (
     a.date.getTime() - b.date.getTime() ||
     a.createdAt.getTime() - b.createdAt.getTime() ||

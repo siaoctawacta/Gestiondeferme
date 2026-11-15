@@ -8,6 +8,7 @@ import {
   Max,
   MaxLength,
   Min,
+  ValidateIf,
 } from 'class-validator';
 import { IsDay } from '../../herd/dto/is-day';
 import { Trim } from '../../listing/list-helpers';
@@ -137,16 +138,17 @@ export class UpdateMovementDto {
   date?: string;
 
   @ApiPropertyOptional({
-    description: 'Même convention que la création ; le sens ne change pas',
+    description:
+      'Même convention que la création ; le sens ne change pas. Pour une sortie répartie sur plusieurs lots : la quantité de toute l’opération (elle est répartie de nouveau)',
   })
-  @IsOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: QTY })
   @Min(-MAX_QTY, { message: 'La quantité est trop élevée' })
   @Max(MAX_QTY, { message: 'La quantité est trop élevée' })
   quantity?: number;
 
   @ApiPropertyOptional({ description: 'Entrées seulement' })
-  @IsOptional()
+  @ValidateIf((_o, v) => v !== undefined)
   @IsNumber({ maxDecimalPlaces: 2 }, { message: COST })
   @Min(0, { message: COST })
   @Max(MAX_UNIT_COST, { message: 'Le coût est trop élevé' })

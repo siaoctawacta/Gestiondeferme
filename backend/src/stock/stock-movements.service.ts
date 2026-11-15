@@ -29,6 +29,8 @@ type Row = Prisma.StockMovementGetPayload<{ include: typeof include }>;
 
 export interface MovementItem {
   id: string;
+  /** Shared by the pieces of one operation (an exit split across lots): editing or deleting one acts on all. */
+  operationId: string;
   date: string;
   itemId: string;
   itemName: string;
@@ -59,6 +61,7 @@ const BAD_REASON = 'Motif invalide pour ce type de mouvement';
 export const movementItems = (rows: Row[]): MovementItem[] =>
   rows.map((r) => ({
     id: r.id,
+    operationId: r.operationId,
     date: formatDay(r.date),
     itemId: r.stockItemId,
     itemName: r.stockItem.name,
@@ -224,7 +227,7 @@ export class StockMovementsService {
     ctx: RequestContext,
     id: string,
     dto: UpdateMovementDto,
-  ): Promise<MovementItem> {
+  ): Promise<MovementItem[]> {
     return this.prisma.$transaction(async (tx) => {
       const movement = await this.manual(tx, ctx, id);
       const patch: MovementPatch = {
@@ -249,8 +252,13 @@ export class StockMovementsService {
                 ? -dto.quantity
                 : dto.quantity;
       }
-      await this.ledger.update(tx, id, patch, ctx.farmIds, { ctx });
-      return (await this.items(tx, [id]))[0];
+      const { after } = await this.ledger.update(tx, id, patch, ctx.farmIds, {
+        ctx,
+      });
+      return this.items(
+        tx,
+        after.map((m) => m.id),
+      );
     });
   }
 

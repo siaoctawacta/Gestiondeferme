@@ -287,42 +287,6 @@ describe('StockLedgerService (test database)', () => {
       expect(await prisma.farmStockItem.count()).toBe(1);
       expect((await level()).quantity).toBe(15);
     });
-
-    it('does not deadlock when operations touching the same two articles list them in opposite orders', async () => {
-      await entry('2026-01-02', 100, 10);
-      await record({
-        type: 'ENTREE',
-        stockItemId: item2,
-        date: day('2026-01-02'),
-        quantity: 100,
-        unitCost: 10,
-      });
-      const both = (first: string, second: string, n: number) =>
-        prisma.$transaction((tx) =>
-          ledger.recordMany(tx, [
-            input({
-              type: 'SORTIE',
-              stockItemId: first,
-              quantity: -n,
-              date: day('2026-01-03'),
-            }),
-            input({
-              type: 'SORTIE',
-              stockItemId: second,
-              quantity: -n,
-              date: day('2026-01-03'),
-            }),
-          ]),
-        );
-      const results = await Promise.allSettled(
-        Array.from({ length: 6 }, (_, i) =>
-          i % 2 === 0 ? both(item, item2, 5) : both(item2, item, 5),
-        ),
-      );
-      expect(results.map((r) => r.status)).toEqual(Array(6).fill('fulfilled'));
-      expect((await level(item)).quantity).toBe(70);
-      expect((await level(item2)).quantity).toBe(70);
-    });
   });
 
   describe('batches and FEFO', () => {
@@ -380,7 +344,7 @@ describe('StockLedgerService (test database)', () => {
       await batch('A', '2026-06-01', 100);
       await batch('B', '2026-07-01', 100);
       const out = await takeable('2026-01-10', 150, {
-        sourceType: 'FEED_DISTRIBUTION',
+        sourceType: 'FEED_DISTRIBUTION' as const,
         sourceId: 'd1',
       });
       expect(out.movements.map((m) => m.sourceId)).toEqual(['d1', 'd1']);
@@ -478,10 +442,298 @@ describe('StockLedgerService (test database)', () => {
       ).rejects.toThrow(new BadRequestException('Stock insuffisant'));
       expect(await batchQty()).toEqual({ A: 20 });
     });
+
+    it('allocates a back-dated exit on the lots with room: a lot emptied by a later exit is not picked', async () => {
+      await batch('A', '2027-06-01', 100);
+      await batch('B', '2027-12-01', 100);
+      await takeable('2026-01-11', 100); // FEFO empties A
+      await takeable('2026-01-10', 20);
+      expect(await batchQty()).toEqual({ A: 0, B: 80 });
+    });
+
+    it('writes expired lots off first when an exit is not a consumption, then follows FEFO', async () => {
+      await batch('OK', '2027-01-01', 10, '2026-01-01');
+      await batch('OLD', '2026-01-05', 10, '2026-01-01');
+      const out = await exit('2026-01-10', 15, { reason: 'PERTE' });
+      expect(out.movements.map((m) => m.quantity.toNumber())).toEqual([
+        -10, -5,
+      ]);
+      expect(await batchQty()).toEqual({ OLD: 0, OK: 5 });
+    });
+
+    it('refuses an expiry before the reception, when creating or editing a lot', async () => {
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.createBatch(tx, {
+            farmId,
+            stockItemId: item,
+            expiryDate: day('2025-12-31'),
+            receivedDate: day('2026-01-02'),
+          }),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+      const a = await batch('A', '2027-06-01', 10);
+      const received = await prisma.stockMovement.findFirstOrThrow({
+        where: { stockBatchId: a.id },
+      });
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.update(tx, received.id, { expiryDate: day('2026-01-01') }),
+        ),
+      ).rejects.toBeInstanceOf(BadRequestException);
+    });
+
+    it('re-checks a consumption already drawn from a lot when its expiry moves earlier, and writes nothing', async () => {
+      const a = await batch('A', '2027-06-01', 10);
+      await takeable('2026-01-10', 5, { stockBatchId: a.id });
+      const received = await prisma.stockMovement.findFirstOrThrow({
+        where: { stockBatchId: a.id, quantity: { gt: 0 } },
+      });
+      // The caller keeps its transaction after the refusal: nothing may have been written.
+      const expiry = await prisma.$transaction(async (tx) => {
+        await expect(
+          ledger.update(tx, received.id, {
+            expiryDate: day('2026-01-05'),
+            note: 'x',
+          }),
+        ).rejects.toThrow(new BadRequestException('Lot périmé'));
+        return tx.stockBatch.findUniqueOrThrow({ where: { id: a.id } });
+      });
+      expect(expiry.expiryDate).toEqual(day('2027-06-01'));
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, received.id, { expiryDate: day('2026-01-10') }),
+      );
+    });
+  });
+
+  describe('operations', () => {
+    async function twoLots() {
+      const mk = (lot: string, expiry: string) =>
+        prisma.$transaction(async (tx) => {
+          const b = await ledger.createBatch(tx, {
+            farmId,
+            stockItemId: item,
+            lotNumber: lot,
+            expiryDate: day(expiry),
+            receivedDate: day('2026-01-02'),
+          });
+          await ledger.record(
+            tx,
+            input({
+              type: 'ENTREE',
+              date: day('2026-01-02'),
+              quantity: 100,
+              stockBatchId: b.id,
+            }),
+          );
+          return b;
+        });
+      return { a: await mk('A', '2027-06-01'), b: await mk('B', '2027-12-01') };
+    }
+    const pieces = () =>
+      prisma.stockMovement.findMany({
+        where: { quantity: { lt: 0 } },
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      });
+
+    it('shares one operation id between the pieces of a split exit, and gives a lone movement its own', async () => {
+      await twoLots();
+      const out = await exit('2026-01-10', 150, { reason: 'CONSOMMATION' });
+      expect(out.movements).toHaveLength(2);
+      expect(new Set(out.movements.map((m) => m.operationId)).size).toBe(1);
+      const all = await prisma.stockMovement.findMany();
+      expect(new Set(all.map((m) => m.operationId)).size).toBe(3);
+    });
+
+    it('removes the whole operation when one piece is removed', async () => {
+      await twoLots();
+      const out = await exit('2026-01-10', 150);
+      const removed = await prisma.$transaction((tx) =>
+        ledger.remove(tx, out.movements[1].id),
+      );
+      expect(removed).toHaveLength(2);
+      expect(await pieces()).toHaveLength(0);
+      expect((await level()).quantity).toBe(200);
+    });
+
+    it('re-plans the whole operation on update, so a bigger quantity draws on other lots, keeping its operation id', async () => {
+      const { a } = await twoLots();
+      const out = await exit('2026-01-10', 60);
+      expect(out.movements).toHaveLength(1);
+      const { after } = await prisma.$transaction((tx) =>
+        ledger.update(tx, out.movements[0].id, { quantity: -130 }),
+      );
+      expect(after.map((m) => m.quantity.toNumber())).toEqual([-100, -30]);
+      expect(new Set(after.map((m) => m.operationId))).toEqual(
+        new Set([out.movements[0].operationId]),
+      );
+      expect(
+        (await ledger.batchLevels([farmId], [item])).map((l) =>
+          l.quantity.toNumber(),
+        ),
+      ).toEqual([0, 70]);
+      // A smaller one gives stock back, and a date change is allocated as of the new date.
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, after[0].id, {
+          quantity: -20,
+          date: day('2026-01-05'),
+        }),
+      );
+      expect(
+        (await pieces()).map((m) => [m.stockBatchId, m.quantity.toNumber()]),
+      ).toEqual([[a.id, -20]]);
+    });
+
+    it('audits an operation once, keyed by its operation id, with the pieces in the payload', async () => {
+      await twoLots();
+      const ctx: RequestContext = {
+        user: {
+          id: userId,
+          name: 'Dir',
+          role: 'DIRECTEUR_FERME',
+          organizationId: orgId,
+        },
+        farmId,
+        allFarms: false,
+        farmIds: [farmId],
+      };
+      const out = await prisma.$transaction((tx) =>
+        ledger.record(tx, {
+          ...input({ type: 'SORTIE', quantity: -150, date: day('2026-01-10') }),
+          audit: { ctx },
+        }),
+      );
+      const op = out.movements[0].operationId;
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, out.movements[0].id, { note: 'n' }, [farmId], {
+          ctx,
+        }),
+      );
+      await prisma.$transaction((tx) =>
+        ledger.remove(tx, out.movements[0].id, [farmId], { ctx }),
+      );
+      const rows = await prisma.auditLog.findMany({
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(rows.map((r) => [r.action, r.recordId])).toEqual([
+        ['CREATE', op],
+        ['UPDATE', op],
+        ['DELETE', op],
+      ]);
+      expect((rows[0].after as unknown[]).length).toBe(2);
+    });
+  });
+
+  describe('replaceBySource', () => {
+    const src = { sourceType: 'FEED_DISTRIBUTION', sourceId: 's1' } as const;
+    const base = (stockItemId: string, n: number) => ({
+      farmId,
+      stockItemId,
+      date: day('2026-01-05'),
+      type: 'SORTIE' as const,
+      quantity: -n,
+      reason: 'CONSOMMATION' as const,
+      userId,
+    });
+
+    it('replaces what a source wrote, on other articles too, in one transaction', async () => {
+      await entry('2026-01-01', 100, 10);
+      await record({
+        type: 'ENTREE',
+        stockItemId: item2,
+        date: day('2026-01-01'),
+        quantity: 100,
+        unitCost: 20,
+      });
+      await exit('2026-01-05', 10, src);
+      const { removed, results } = await prisma.$transaction((tx) =>
+        ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 's1', [
+          base(item2, 30),
+          base(item, 5),
+        ]),
+      );
+      expect(removed).toHaveLength(1);
+      expect(results.map((r) => r.cost.toNumber())).toEqual([600, 50]);
+      expect((await level(item)).quantity).toBe(95);
+      expect((await level(item2)).quantity).toBe(70);
+      expect(
+        await prisma.stockMovement.count({ where: { sourceId: 's1' } }),
+      ).toBe(2);
+    });
+
+    it('writes nothing when the new movements are refused, even if the caller keeps its transaction', async () => {
+      await entry('2026-01-01', 100, 10);
+      await exit('2026-01-05', 10, src);
+      const count = await prisma.$transaction(async (tx) => {
+        await expect(
+          ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 's1', [
+            base(item, 500),
+          ]),
+        ).rejects.toThrow('Stock insuffisant');
+        return tx.stockMovement.count({ where: { sourceId: 's1' } });
+      });
+      expect(count).toBe(1);
+      expect((await level()).quantity).toBe(90);
+    });
+
+    it('replaces with nothing (a plain reversal) and with something when the source had nothing', async () => {
+      await entry('2026-01-01', 100, 10);
+      await prisma.$transaction((tx) =>
+        ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 'new', [base(item, 5)]),
+      );
+      expect((await level()).quantity).toBe(95);
+      await prisma.$transaction((tx) =>
+        ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 'new', []),
+      );
+      expect((await level()).quantity).toBe(100);
+    });
+
+    it('does not deadlock when two concurrent edits swap the articles of their operations', async () => {
+      await entry('2026-01-01', 1000, 10);
+      await record({
+        type: 'ENTREE',
+        stockItemId: item2,
+        date: day('2026-01-01'),
+        quantity: 1000,
+        unitCost: 10,
+      });
+      for (let round = 0; round < 4; round += 1) {
+        const [first, second] = round % 2 === 0 ? [item, item2] : [item2, item];
+        await prisma.stockMovement.deleteMany({
+          where: { sourceType: { not: null } },
+        });
+        await prisma.$transaction(async (tx) => {
+          await ledger.recordMany(tx, [
+            {
+              ...base(first, 10),
+              sourceType: 'FEED_DISTRIBUTION',
+              sourceId: 'x',
+            },
+            { ...base(second, 10), sourceType: 'HEALTH_ACT', sourceId: 'y' },
+          ]);
+        });
+        const swap = (
+          type: 'FEED_DISTRIBUTION' | 'HEALTH_ACT',
+          id: string,
+          to: string,
+        ) =>
+          prisma.$transaction((tx) =>
+            ledger.replaceBySource(tx, type, id, [base(to, 20)]),
+          );
+        const results = await Promise.allSettled([
+          swap('FEED_DISTRIBUTION', 'x', second),
+          swap('HEALTH_ACT', 'y', first),
+        ]);
+        expect(results.map((r) => r.status)).toEqual([
+          'fulfilled',
+          'fulfilled',
+        ]);
+      }
+    });
   });
 
   describe('reverseBySource', () => {
-    const src = { sourceType: 'FEED_DISTRIBUTION', sourceId: 's1' };
+    const src = { sourceType: 'FEED_DISTRIBUTION', sourceId: 's1' } as const;
 
     it('removes every movement of the source across articles and recosts later exits', async () => {
       await entry('2026-01-01', 100, 100);
@@ -531,7 +783,7 @@ describe('StockLedgerService (test database)', () => {
 
     it('refuses, leaving everything unchanged, when a later exit would go negative', async () => {
       await entry('2026-01-01', 100, 100);
-      const e2 = { ...src, sourceId: 'entry-source' };
+      const e2 = { ...src, sourceId: 'entry-source' } as const;
       await prisma.$transaction((tx) =>
         ledger.record(
           tx,
@@ -675,6 +927,7 @@ describe('StockLedgerService (test database)', () => {
             quantity: 5,
             unitCost: 0,
             reason: 'AUTRE',
+            operationId: 'op-1',
             createdById: userId,
           },
         }),
@@ -689,6 +942,7 @@ describe('StockLedgerService (test database)', () => {
             quantity: 0,
             unitCost: 0,
             reason: 'INVENTAIRE',
+            operationId: 'op-2',
             createdById: userId,
           },
         }),
@@ -807,6 +1061,7 @@ describe('StockLedgerService (test database)', () => {
     });
 
     it('averages the consumption of the last 30 days over reasons CONSOMMATION and TRAITEMENT only', async () => {
+      const startDay = daysAgo(0);
       await record({
         type: 'ENTREE',
         date: day(daysAgo(60)),
@@ -818,6 +1073,8 @@ describe('StockLedgerService (test database)', () => {
       await exit(daysAgo(30), 9000); // outside the 30-day window
       await exit(daysAgo(5), 9000, { reason: 'PERTE' });
       const per = await ledger.dailyConsumption([farmId], [item]);
+      // The window is anchored on the server's day: skip the check if midnight passed while the data was written.
+      if (daysAgo(0) !== startDay) return;
       expect(per.get(levelKey(farmId, item))?.toNumber()).toBe(300);
     });
   });
