@@ -1,9 +1,13 @@
-import type { ComponentType } from 'react';
+import { useRef, type ComponentType } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { ArrowDownToLine, ArrowUpFromLine, SlidersHorizontal } from 'lucide-react';
 import { ActionDialog } from '../components/module/ActionDialog';
 import type { ModuleConfig, RowAction } from '../components/module/types';
+import { errorMessage } from '../components/module/errorMessage';
 import { Pill } from '../components/ui/Pill';
-import { api } from '../lib/api';
+import { ApiError, api } from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { farmKey } from '../lib/query';
 import { formatNumber, orDash, todayIso } from '../lib/format';
 import { InventoryDetail } from '../pages/details/InventoryDetail';
 import { StockItemDetail } from '../pages/details/StockItemDetail';
@@ -24,25 +28,39 @@ function StockDetail({ id }: { id: string }) {
 /**
  * Add / edit an item. The item is organisation data (`/stock-items`), the thresholds belong to the active farm
  * (`PUT /stock/:id/thresholds`): adding makes both calls, editing sends each only when something of it changed.
+ * Once the item exists its id is kept for the life of the dialog: a retry after a failed thresholds call redoes
+ * only the thresholds (a second POST would be a 409), and the list is refreshed as soon as the item exists.
  */
-function StockItemForm({ row, onSaved, onClose }: { row?: StockRow; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }) {
+function StockItemForm({ row, onSaved, onClose }: { row?: StockRow; onSaved: () => void; onClose: () => void }) {
+  const { farmId } = useAuth();
+  const queryClient = useQueryClient();
+  const created = useRef<string | null>(null);
   return (
     <ActionDialog
       title={`${row ? 'Modifier' : 'Ajouter'} — Stocks`}
       mode={row ? 'update' : 'create'}
-      initial={row as unknown as Record<string, unknown> | undefined}
+      // The list only holds active items unless the API says otherwise.
+      initial={row ? { ...row, active: row.active ?? true } : undefined}
       fields={[
         { name: 'name', label: 'Nom', type: 'text', required: true },
         { name: 'category', label: 'Catégorie', type: 'select', required: true, options: CATEGORIES },
         { name: 'unit', label: 'Unité', type: 'text', required: true },
         { name: 'minQty', label: 'Seuil minimum', type: 'number', required: true, min: 0, step: 0.01 },
         { name: 'maxQty', label: 'Seuil maximum', type: 'number', min: 0, step: 0.01 },
+        { name: 'active', label: 'Actif', type: 'checkbox', defaultValue: true },
       ]}
       onSubmit={async (body) => {
         const { minQty, maxQty, ...item } = body as Record<string, unknown>;
         if (!row) {
-          const created = await api.post<{ id: string }>('/stock-items', { ...item, active: true });
-          await api.put(`/stock/${created.id}/thresholds`, { minQty, ...(maxQty === undefined ? {} : { maxQty }) });
+          if (!created.current) {
+            created.current = (await api.post<{ id: string }>('/stock-items', item)).id;
+            void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
+          }
+          try {
+            await api.put(`/stock/${created.current}/thresholds`, { minQty, ...(maxQty === undefined ? {} : { maxQty }) });
+          } catch (e) {
+            throw new ApiError(e instanceof ApiError ? e.status : 0, `Article créé, mais les seuils n'ont pas été enregistrés : ${errorMessage(e)}`);
+          }
           return;
         }
         if (Object.keys(item).length > 0) await api.patch(`/stock-items/${row.id}`, item);

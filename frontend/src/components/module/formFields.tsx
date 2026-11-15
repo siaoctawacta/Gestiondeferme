@@ -33,6 +33,9 @@ function linesValue(columns: CellField[], raw: unknown): LineRow[] {
   })));
 }
 
+/** A row whose every cell is empty is an untouched line: it is dropped from the payload and not counted for `minRows`. */
+const isBlankRow = (columns: CellField[], row: LineRow) => columns.every((c) => c.computed || (row[c.name] ?? '').trim() === '');
+
 /** A row as sent: numbers as numbers, text trimmed, empty and computed cells left out. */
 function linePayload(columns: CellField[], row: LineRow): Values {
   const out: Values = {};
@@ -50,7 +53,7 @@ export function defaultPayload(fields: Field[], values: Values, mode: FormMode):
     if (f.only && f.only !== mode) continue;
     const v = values[f.name];
     if (f.type === 'lines') {
-      out[f.name] = (v as LineRow[]).map((r) => linePayload(f.columns, r));
+      out[f.name] = (v as LineRow[]).filter((r) => !isBlankRow(f.columns, r)).map((r) => linePayload(f.columns, r));
     } else if (f.type === 'number') {
       if (v !== '') out[f.name] = Number(v);
     } else if (f.type === 'select' || f.type === 'date' || f.type === 'time') {
@@ -64,11 +67,15 @@ export function defaultPayload(fields: Field[], values: Values, mode: FormMode):
   return out;
 }
 
-/** Every message of a `lines` field: too few rows, then each row's cells in order (`Ligne 2 : le champ « X » est requis`). */
+/**
+ * Every message of a `lines` field: too few rows (blank rows do not count), then each filled row's cells in order
+ * (`Ligne 2 : le champ « X » est requis`, numbered as on screen).
+ */
 export function validateLines(field: Extract<Field, { type: 'lines' }>, rows: LineRow[]): string[] {
   const out: string[] = [];
-  if (rows.length < (field.minRows ?? 0)) out.push('Ajoutez au moins une ligne');
-  rows.forEach((row, i) => {
+  const filled = rows.map((row, i) => ({ row, i })).filter(({ row }) => !isBlankRow(field.columns, row));
+  if (filled.length < (field.minRows ?? 0)) out.push('Ajoutez au moins une ligne');
+  for (const { row, i } of filled) {
     for (const c of field.columns) {
       if (c.computed) continue;
       const v = (row[c.name] ?? '').trim();
@@ -77,7 +84,7 @@ export function validateLines(field: Extract<Field, { type: 'lines' }>, rows: Li
       else if (c.type === 'number' && v !== '' && c.min !== undefined && Number(v) < c.min) out.push(`${at} doit être supérieur ou égal à ${c.min}`);
       else if (c.type === 'number' && v !== '' && c.max !== undefined && Number(v) > c.max) out.push(`${at} doit être inférieur ou égal à ${c.max}`);
     }
-  });
+  }
   return out;
 }
 
@@ -107,10 +114,6 @@ export function firstInvalid(fields: Field[], values: Values, mode: FormMode): {
     }
   }
   return null;
-}
-
-export function validate(fields: Field[], values: Values, mode: FormMode): string | null {
-  return firstInvalid(fields, values, mode)?.message ?? null;
 }
 
 export interface FieldInputProps {

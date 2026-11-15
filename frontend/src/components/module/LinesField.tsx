@@ -37,11 +37,15 @@ export function LinesField({ field, value: rows, onChange, errors = [], fixed = 
   const taken = (column: CellField, at: number) =>
     column.type === 'select' && column.unique ? rows.filter((_, i) => i !== at).map((r) => r[column.name]).filter(Boolean) : undefined;
   const editable = !fixed && !disabled;
-  const width = (c: CellField) => (c.type === 'number' || c.computed ? 'w-28 shrink-0' : 'min-w-0 flex-1');
+  // Numeric columns keep their width and the first (text / select) one a minimum, so on a phone the grid scrolls
+  // sideways inside its container instead of squeezing the article column to nothing.
+  const width = (c: CellField) => (c.type === 'number' || c.computed ? 'w-20 shrink-0 sm:w-28' : 'min-w-32 flex-1');
+  const name = (c: CellField, i: number) => `${c.label} ligne ${i + 1}`;
 
   return (
     <fieldset className="space-y-2" aria-describedby={errors.length ? `${id}-errors` : undefined}>
       <legend className="block text-sm font-medium">{field.label}</legend>
+      <div className="space-y-2 overflow-x-auto">
       <div className="flex items-center gap-2 text-xs text-muted-foreground" aria-hidden>
         {field.columns.map((c) => <span key={c.name} className={width(c)}>{c.label}</span>)}
         {editable && <span className="w-9 shrink-0" />}
@@ -51,14 +55,20 @@ export function LinesField({ field, value: rows, onChange, errors = [], fixed = 
           {field.columns.map((c) => (
             <div key={c.name} className={width(c)}>
               {c.computed ? (
-                <div data-testid={`${c.name}-${i + 1}`} className="px-2 text-sm font-medium">{c.computed(row)}</div>
+                <div data-testid={`${c.name}-${i + 1}`} className="px-2 text-sm font-medium">
+                  <span className="sr-only">{name(c, i)} : </span>
+                  {c.computed(row)}
+                </div>
               ) : c.readOnly ? (
-                <p className="px-2 text-sm">{shown(c, row[c.name] ?? '')}</p>
+                <p className="px-2 text-sm">
+                  <span className="sr-only">{name(c, i)} : </span>
+                  {shown(c, row[c.name] ?? '')}
+                </p>
               ) : (
                 <CellControl
                   field={c}
                   value={row[c.name] ?? ''}
-                  aria-label={`${c.label} ligne ${i + 1}`}
+                  aria-label={name(c, i)}
                   disabled={disabled}
                   excluded={taken(c, i)}
                   onChange={(v) => setCell(i, c.name, String(v))}
@@ -79,6 +89,7 @@ export function LinesField({ field, value: rows, onChange, errors = [], fixed = 
           )}
         </div>
       ))}
+      </div>
       {errors.length > 0 && (
         <ul id={`${id}-errors`} role="alert" className="space-y-0.5 text-sm text-destructive">
           {errors.map((e) => <li key={e}>{e}</li>)}

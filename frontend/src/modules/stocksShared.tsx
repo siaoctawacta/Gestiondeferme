@@ -24,6 +24,8 @@ export interface StockRow {
   quantity: number;
   minQty: number;
   maxQty: number | null;
+  /** Absent (the list holds active items) unless the API also returns inactive ones. */
+  active?: boolean;
   level: StockLevel;
   /** Whole days of stock left at the recent consumption; `null` without consumption. */
   daysOfStock: number | null;

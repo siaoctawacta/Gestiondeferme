@@ -15,6 +15,7 @@ export interface RecordFormProps {
   initial?: Values;
   intro?: ReactNode;
   toPayload?: (values: Values, mode: FormMode) => unknown;
+  /** Check across fields, run after the fields' own checks on submit; return the French message to show, or `null` (see `ActionDialog`). */
   validate?: (values: Values) => string | null;
   /** `POST` target when adding. */
   createPath: string;

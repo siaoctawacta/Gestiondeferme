@@ -8,6 +8,7 @@ import { setAccessToken, setFarmHeader } from '../lib/api';
 import { ModulePage } from '../components/module/ModulePage';
 import { todayIso } from '../lib/format';
 import { stocks } from './stocks';
+import type { StockItemDetailData } from './stocksShared';
 
 function json(status: number, body?: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -56,6 +57,7 @@ const page = (items: unknown[], extra: object = {}) => json(200, { items, total:
 
 /** Set per test to make a write fail. */
 let failWith: { url: RegExp; status: number; message: string } | null = null;
+let detailData = DETAIL as StockItemDetailData;
 
 function mount(ui: React.ReactNode, { perms = ALL, farm }: { perms?: string[]; farm?: string } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
@@ -72,7 +74,7 @@ function mount(ui: React.ReactNode, { perms = ALL, farm }: { perms?: string[]; f
     }
     const url = call.url;
     if (url.startsWith('/api/stock/movements')) return page(MOVEMENTS);
-    if (/^\/api\/stock\/s2(\?|$)/.test(url)) return json(200, DETAIL);
+    if (/^\/api\/stock\/s2(\?|$)/.test(url)) return json(200, detailData);
     if (/^\/api\/stock\/s9(\?|$)/.test(url)) return json(404, { message: 'Introuvable' });
     if (url.startsWith('/api/stock')) return page(STOCK, { levelCounts: LEVEL_COUNTS });
     if (/^\/api\/inventories\/i1(\?|$)/.test(url)) return json(200, DRAFT);
@@ -98,6 +100,7 @@ const mountDetail = (id: string, opts?: Parameters<typeof mount>[1]) => mount(<D
 beforeEach(() => {
   calls.length = 0;
   failWith = null;
+  detailData = DETAIL as StockItemDetailData;
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -329,7 +332,7 @@ describe('inventories', () => {
     const counted = await screen.findByLabelText('Compté ligne 2');
     expect(screen.getByText('Aliment ponte')).toBeInTheDocument();
     await user.type(counted, '880');
-    expect(screen.getByTestId('gap-2')).toHaveTextContent('-20');
+    expect(screen.getByTestId('gap-2')).toHaveTextContent('Écart ligne 2 : −20');
 
     await user.click(screen.getByRole('button', { name: 'Enregistrer le brouillon' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
@@ -337,7 +340,7 @@ describe('inventories', () => {
 
     await user.click(screen.getByRole('button', { name: "Valider l'inventaire" }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText("Valider l'inventaire du 2026-11-10 ? Les écarts seront enregistrés comme ajustements.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Valider l'inventaire du 2026-11-10 ? Les écarts seront enregistrés comme ajustements. Les articles non comptés sont ignorés.")).toBeInTheDocument();
     expect(writes()).toHaveLength(1);
     await user.click(within(dialog).getByRole('button', { name: 'Valider' }));
     await waitFor(() => expect(writes().map((w) => `${w.method} ${w.url}`)).toEqual([
@@ -357,7 +360,133 @@ describe('inventories', () => {
     expect(await screen.findByText('Validée')).toBeInTheDocument();
     expect(screen.getByText('Aliment ponte')).toBeInTheDocument();
     expect(screen.getByLabelText('Compté ligne 1')).toBeDisabled();
-    expect(screen.getByTestId('gap-1')).toHaveTextContent('-20');
+    expect(screen.getByTestId('gap-1')).toHaveTextContent('−20');
+    expect(screen.queryByRole('button', { name: 'Enregistrer le brouillon' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: "Valider l'inventaire" })).not.toBeInTheDocument();
+  });
+});
+
+describe('stocks list: fix round 1', () => {
+  it('keeps the created item when the thresholds fail: the retry only redoes the thresholds', async () => {
+    mountPage();
+    await screen.findByText('Aliment ponte');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Stocks' });
+    await user.type(within(dialog).getByLabelText('Nom'), 'Désinfectant');
+    await user.selectOptions(within(dialog).getByLabelText('Catégorie'), 'Consommable');
+    await user.type(within(dialog).getByLabelText('Unité'), 'litres');
+    await user.type(within(dialog).getByLabelText('Seuil minimum'), '10');
+    failWith = { url: /thresholds$/, status: 500, message: 'Erreur serveur' };
+    const listCalls = () => calls.filter((c) => c.method === 'GET' && /^\/api\/stock\?/.test(c.url)).length;
+    const before = listCalls();
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText("Article créé, mais les seuils n'ont pas été enregistrés : Erreur serveur")).toBeInTheDocument();
+    await waitFor(() => expect(listCalls()).toBeGreaterThan(before));
+
+    failWith = null;
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(writes().map((w) => `${w.method} ${w.url}`)).toEqual([
+      'POST /api/stock-items', 'PUT /api/stock/new1/thresholds', 'PUT /api/stock/new1/thresholds',
+    ]);
+  });
+
+  it('sends a cleared maximum threshold as null', async () => {
+    mountPage();
+    await screen.findByText('Aliment ponte');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('Aliment ponte').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Stocks' });
+    await user.clear(within(dialog).getByLabelText('Seuil maximum'));
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PUT', url: '/api/stock/s2/thresholds', body: { minQty: 1500, maxQty: null } });
+  });
+
+  it('deactivates an item through the item endpoint, sending active only when changed', async () => {
+    mountPage();
+    await screen.findByText('Aliment ponte');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('Aliment ponte').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Stocks' });
+    expect(within(dialog).getByRole('checkbox', { name: 'Actif' })).toBeChecked();
+    await user.click(within(dialog).getByRole('checkbox', { name: 'Actif' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/stock-items/s2', body: { active: false } });
+  });
+});
+
+describe('batch expiry pills', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('flags expired before today, soon from today to 30 days, nothing beyond', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date('2026-11-15T10:00:00Z'));
+    detailData = {
+      ...(DETAIL as StockItemDetailData),
+      batches: [
+        { id: 'x1', lotNumber: 'L-YESTERDAY', expiryDate: '2026-11-14', receivedDate: '2026-10-01', quantity: 1 },
+        { id: 'x2', lotNumber: 'L-TODAY', expiryDate: '2026-11-15', receivedDate: '2026-10-01', quantity: 1 },
+        { id: 'x3', lotNumber: 'L-PLUS30', expiryDate: '2026-12-15', receivedDate: '2026-10-01', quantity: 1 },
+        { id: 'x4', lotNumber: 'L-PLUS31', expiryDate: '2026-12-16', receivedDate: '2026-10-01', quantity: 1 },
+        { id: 'x5', lotNumber: 'L-NONE', expiryDate: null, receivedDate: '2026-10-01', quantity: 1 },
+      ],
+    };
+    mountDetail('s2');
+    await screen.findByText('L-TODAY');
+    const pill = (lot: string) => within(screen.getByText(lot).closest('tr')!);
+    expect(pill('L-YESTERDAY').getByText('Périmé')).toBeInTheDocument();
+    expect(pill('L-TODAY').getByText('Bientôt périmé')).toBeInTheDocument();
+    expect(pill('L-PLUS30').getByText('Bientôt périmé')).toBeInTheDocument();
+    expect(pill('L-PLUS31').queryByText(/périmé/i)).not.toBeInTheDocument();
+    expect(pill('L-NONE').queryByText(/périmé/i)).not.toBeInTheDocument();
+  });
+});
+
+describe('inventory: fix round 1', () => {
+  it('names the read-only and computed cells and gives the gap a sign in text', async () => {
+    mountDetail('inv-i1');
+    const user = userEvent.setup();
+    const counted = await screen.findByLabelText('Compté ligne 2');
+    expect(screen.getByText('Article ligne 2 :')).toBeInTheDocument();
+    expect(screen.getByText('Théorique ligne 2 :')).toBeInTheDocument();
+    await user.type(counted, '905');
+    expect(screen.getByTestId('gap-2')).toHaveTextContent('Écart ligne 2 : +5');
+  });
+
+  it('refuses a negative count on save and on validation, with the message under the grid', async () => {
+    mountDetail('inv-i1');
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText('Compté ligne 2'), '-3');
+    await user.click(screen.getByRole('button', { name: 'Enregistrer le brouillon' }));
+    expect(await screen.findByText('Ligne 2 : le champ « Compté » doit être supérieur ou égal à 0')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: "Valider l'inventaire" }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it('shows a validation failure after the save and lets a retry go through', async () => {
+    mountDetail('inv-i1');
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText('Compté ligne 2'), '880');
+    await user.click(screen.getByRole('button', { name: "Valider l'inventaire" }));
+    const dialog = await screen.findByRole('dialog');
+    failWith = { url: /validate$/, status: 409, message: 'Inventaire déjà validé' };
+    await user.click(within(dialog).getByRole('button', { name: 'Valider' }));
+    expect(await within(dialog).findByText('Inventaire déjà validé')).toBeInTheDocument();
+    failWith = null;
+    await user.click(within(dialog).getByRole('button', { name: 'Valider' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(writes().map((w) => `${w.method} ${w.url}`)).toEqual([
+      'PUT /api/inventories/i1/lines', 'POST /api/inventories/i1/validate', 'PUT /api/inventories/i1/lines', 'POST /api/inventories/i1/validate',
+    ]);
+  });
+
+  it('is read-only under all farms', async () => {
+    mountDetail('inv-i1', { farm: 'all' });
+    expect(await screen.findByLabelText('Compté ligne 1')).toBeDisabled();
     expect(screen.queryByRole('button', { name: 'Enregistrer le brouillon' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: "Valider l'inventaire" })).not.toBeInTheDocument();
   });

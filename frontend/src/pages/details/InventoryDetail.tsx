@@ -8,6 +8,7 @@ import { allPages } from '../../components/module/allPages';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
+import { validateLines } from '../../components/module/formFields';
 import { LinesField, type LinesFieldDef } from '../../components/module/LinesField';
 import type { LineRow } from '../../components/module/types';
 import { Alert } from '../../components/ui/Alert';
@@ -37,7 +38,9 @@ const GRID: LinesFieldDef = {
       computed: (row) => {
         const gap = gapOf(row);
         if (gap === null) return '—';
-        return <span className={gap < 0 ? 'text-destructive' : gap > 0 ? 'text-accent-foreground' : ''}>{formatNumber(gap)}</span>;
+        // The sign is in the text, the colour only reinforces it.
+        const text = gap > 0 ? `+${formatNumber(gap)}` : gap < 0 ? `−${formatNumber(-gap)}` : '0';
+        return <span className={gap < 0 ? 'text-destructive' : gap > 0 ? 'text-accent-foreground' : ''}>{text}</span>;
       },
     },
   ],
@@ -80,12 +83,21 @@ function Sheet({ data, initial }: { data: InventoryData; initial: LineRow[] }) {
   const canValidate = draft && can('stocks', 'validate') && farmId !== 'all';
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
 
+  const [errors, setErrors] = useState<string[]>([]);
+  /** Count errors (a negative count) shown under the grid; true when the sheet can be sent. */
+  const checked = () => {
+    const found = validateLines(GRID, rows);
+    setErrors(found);
+    return found.length === 0;
+  };
+
   const save = () =>
     api.put(`/inventories/${data.id}/lines`, {
       lines: rows.filter((r) => r.countedQty !== '').map((r) => ({ stockItemId: r.stockItemId, countedQty: Number(r.countedQty) })),
     });
 
   const saveDraft = async () => {
+    if (!checked()) return;
     setBusy(true);
     setNotice(null);
     try {
@@ -109,19 +121,19 @@ function Sheet({ data, initial }: { data: InventoryData; initial: LineRow[] }) {
         actions={
           <>
             {writable && <Button variant="outline" disabled={busy} onClick={saveDraft}>Enregistrer le brouillon</Button>}
-            {canValidate && <Button disabled={busy} onClick={() => setConfirming(true)}>Valider l&apos;inventaire</Button>}
+            {canValidate && <Button disabled={busy} onClick={() => checked() && setConfirming(true)}>Valider l&apos;inventaire</Button>}
           </>
         }
         notice={notice && <Alert tone={notice.tone} className="mb-4">{notice.message}</Alert>}
       >
         <Card className="p-4">
-          <LinesField field={GRID} value={rows} onChange={setRows} fixed disabled={!writable} />
+          <LinesField field={GRID} value={rows} onChange={(r) => { setRows(r); setErrors([]); }} errors={errors} fixed disabled={!writable} />
         </Card>
       </DetailLayout>
       {confirming && (
         <ConfirmDialog
           title="Valider l'inventaire"
-          message={`Valider l'inventaire du ${formatDate(data.date)} ? Les écarts seront enregistrés comme ajustements.`}
+          message={`Valider l'inventaire du ${formatDate(data.date)} ? Les écarts seront enregistrés comme ajustements. Les articles non comptés sont ignorés.`}
           confirmLabel="Valider"
           onClose={() => setConfirming(false)}
           onConfirm={async () => {

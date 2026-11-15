@@ -138,4 +138,23 @@ describe('LinesField', () => {
     await waitFor(() => expect(second.onSubmit).toHaveBeenCalled());
     expect(second.onSubmit).toHaveBeenCalledWith({ items: [{ productId: 'a', percentage: 70 }, { productId: 'b', percentage: 40 }] });
   });
+
+  it('drops fully empty rows of a non-required grid before counting minRows and building the payload', async () => {
+    const optional: Field = {
+      name: 'items', label: 'Lignes', type: 'lines', minRows: 1, defaultValue: [{ a: 'x', n: '2' }, { a: '', n: '' }],
+      columns: [{ name: 'a', label: 'Texte', type: 'text' }, { name: 'n', label: 'Nombre', type: 'number' }],
+    };
+    const { onSubmit, onDone } = mount({ fields: [optional] });
+    const user = userEvent.setup();
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(onSubmit).toHaveBeenCalledWith({ items: [{ a: 'x', n: 2 }] });
+
+    cleanup();
+    const empty = mount({ fields: [{ ...optional, defaultValue: [{ a: '', n: '' }] } as Field] });
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Enregistrer' }));
+    expect(await screen.findByText('Ajoutez au moins une ligne')).toBeInTheDocument();
+    expect(empty.onSubmit).not.toHaveBeenCalled();
+  });
 });
