@@ -688,9 +688,12 @@ model FeedDistribution {
   formulaId     String?
   formula       FeedFormula? @relation(fields: [formulaId], references: [id], onDelete: Restrict)
   quantityKg    Decimal      @db.Decimal(10, 2)
-  /// Copied at entry time (product cost, or formula cost per kg): later price changes never rewrite history.
+  /// SNAPSHOT written at entry time (product cost, or formula cost per kg; for stock-linked feed, what the ledger valued the exits at that moment). Later price changes never rewrite it, and neither does the ledger when it re-costs exits: what the screens show is the CURRENT cost (see FeedService.currentCosts): the ledger's exits for the stock-valued part plus `unlinkedCost`.
   unitCost      Decimal      @db.Decimal(12, 2)
+  /// SNAPSHOT of the whole cost at entry time (stock-valued part + `unlinkedCost`).
   cost          Decimal      @db.Decimal(14, 2)
+  /// The part of the cost that is NOT valued by the stock ledger: unlinked ingredients at their catalogue price x share, as written at entry (exact, 4 decimals). 0 for a feed fully linked to stock.
+  unlinkedCost  Decimal      @default(0) @db.Decimal(16, 4)
   note          String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt

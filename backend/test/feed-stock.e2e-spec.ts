@@ -15,6 +15,7 @@ interface Product extends Id {
   stockItemId: string | null;
 }
 interface Dist extends Id {
+  date: string;
   quantityKg: number;
   unitCost: number;
   cost: number;
@@ -30,6 +31,7 @@ interface Mv {
   unitCost: number;
   reason: string;
   sourceType: string | null;
+  sourceId: string | null;
 }
 interface Page<T> {
   items: T[];
@@ -376,29 +378,140 @@ describe('Feed distributions consume stock (e2e)', () => {
       ).toBe(60);
     });
 
-    it('keeps the cost frozen when a later (or back-dated) purchase changes the average', async () => {
-      const { item, product: p } = await stocked('Maïs', [
-        [1000, 300],
-        [500, 360],
-      ]);
-      const d = await distribute({ feedProductId: p.id, quantityKg: 620 });
-      await entry(item.id, 1000, 500, daysAgo(1));
+    it('shows the ledger cost: a back-dated purchase re-values the list, the detail and batchPerformance.feedCost', async () => {
+      // Purchase A at 100 on D1; distributions on D10..D15; purchase B received dated D10 at 200.
+      const { item, product: p } = await stocked('Maïs', [[10000, 100]]);
+      const son = await product('Son', 50);
+      const rows: Dist[] = [];
+      for (let i = 0; i < 6; i++) {
+        rows.push(
+          await distribute({
+            feedProductId: p.id,
+            quantityKg: 100,
+            date: daysAgo(30 - i),
+          }),
+        );
+      }
+      const free = await distribute({
+        feedProductId: son.id,
+        quantityKg: 10,
+        date: daysAgo(27),
+      });
+      expect(rows.map((r) => r.cost)).toEqual(Array(6).fill(10000));
+      await entry(item.id, 10000, 200, daysAgo(30));
+
+      const out = await exits(item.id);
+      const ledgerCost = new Map(
+        out.map((m) => [
+          m.sourceId,
+          Math.round(-m.quantity * m.unitCost * 100) / 100,
+        ]),
+      );
+      // The exits were re-valued (D10's distribution came before the purchase, the others after).
+      expect([...ledgerCost.values()].filter((c) => c !== 10000).length).toBe(
+        5,
+      );
+
+      const listed = (
+        (
+          await http()
+            .get('/api/feed-distributions')
+            .query({ batchId: lotId })
+            .set(h)
+            .expect(200)
+        ).body as Page<Dist>
+      ).items;
+      for (const r of rows) {
+        const row = listed.find((l) => l.id === r.id);
+        expect(row?.cost).toBe(ledgerCost.get(r.id));
+        expect(row?.unitCost).toBe(
+          Math.round(((ledgerCost.get(r.id) ?? 0) / 100) * 100) / 100,
+        );
+      }
+      // The unlinked product keeps its catalogue price.
+      expect(listed.find((l) => l.id === free.id)).toMatchObject({
+        unitCost: 50,
+        cost: 500,
+      });
+      // The detail (the response of an edit that leaves the feed alone) agrees.
+      const edited = (await patch(rows[5].id, { note: 'soir' })).body as Dist;
+      expect(edited.cost).toBe(ledgerCost.get(rows[5].id));
+      // Export: the same figures.
+      const csv = await http()
+        .get('/api/feed-distributions')
+        .query({ batchId: lotId, format: 'csv' })
+        .set(h)
+        .expect(200);
+      expect(String(csv.text)).toContain(String(ledgerCost.get(rows[5].id)));
+      // The lot's feed cost is the sum of the ledger's exits plus the unlinked product.
+      const perf = (
+        (await http().get(`/api/batches/${lotId}`).set(h).expect(200)).body as {
+          performance: { feedCost: number; feedKg: number };
+        }
+      ).performance;
+      const total = [...ledgerCost.values()].reduce((a, c) => a + c, 0) + 500;
+      expect(perf.feedKg).toBe(610);
+      expect(perf.feedCost).toBeCloseTo(total, 2);
+      // The stored columns stay the snapshot written at entry.
       const stored = await prisma.feedDistribution.findUniqueOrThrow({
-        where: { id: d.id },
+        where: { id: rows[5].id },
       });
-      expect(Number(stored.unitCost)).toBe(320);
-      expect(Number(stored.cost)).toBe(198400);
-      // A back-dated entry re-costs the ledger's exit, not the distribution: known limitation.
-      await entry(item.id, 1000, 100, daysAgo(39));
+      expect(Number(stored.cost)).toBe(10000);
+    });
+
+    it('a formula mixing a linked and an unlinked ingredient shows ledger cost + catalogue part', async () => {
+      const { item, product: maize } = await stocked('Maïs', [[10000, 100]]);
+      const son = await product('Son', 50);
+      const f = await world.post<Id>(h, '/feed-formulas', {
+        name: 'Mixte',
+        species: 'AVICOLE',
+        stage: 'Croissance',
+        items: [
+          { feedProductId: maize.id, percentage: 60 },
+          { feedProductId: son.id, percentage: 40 },
+        ],
+      });
+      const d = await distribute({
+        formulaId: f.id,
+        quantityKg: 100,
+        date: daysAgo(20),
+      });
+      // 60 kg of maize at 100 + 40 kg of bran at 50.
+      expect(d.cost).toBe(6000 + 2000);
+      await entry(item.id, 10000, 300, daysAgo(25));
       const [out] = await exits(item.id);
-      expect(out.unitCost).not.toBe(320);
-      const after = await prisma.feedDistribution.findUniqueOrThrow({
-        where: { id: d.id },
-      });
-      expect(Number(after.cost)).toBe(198400);
-      // An edit that changes neither quantity, date nor feed keeps the frozen cost.
-      const edited = (await patch(d.id, { note: 'matin' })).body as Dist;
-      expect(edited).toMatchObject({ unitCost: 320, cost: 198400 });
+      const ledgerPart = Math.round(-out.quantity * out.unitCost * 100) / 100;
+      expect(ledgerPart).not.toBe(6000);
+      const row = (
+        (
+          await http()
+            .get('/api/feed-distributions')
+            .query({ batchId: lotId })
+            .set(h)
+            .expect(200)
+        ).body as Page<Dist>
+      ).items.find((l) => l.id === d.id);
+      expect(row?.cost).toBe(ledgerPart + 2000);
+      expect(row?.unitCost).toBe((ledgerPart + 2000) / 100);
+    });
+
+    it('refuses a distribution whose cost does not fit the column (400, not a 500) and writes nothing', async () => {
+      const { item, product: p } = await stocked('Maïs', []);
+      await entry(item.id, 1_000_000, 5_000_000, daysAgo(40));
+      const body = await distribute(
+        { feedProductId: p.id, quantityKg: 1_000_000 },
+        400,
+      );
+      expect((body as unknown as Msg).message).toBe(
+        'Le coût de la distribution est trop élevé : réduisez la quantité',
+      );
+      expect(await prisma.feedDistribution.count()).toBe(0);
+      expect(await exits(item.id)).toEqual([]);
+      // A smaller one fits, and cannot be edited past the limit.
+      const ok = await distribute({ feedProductId: p.id, quantityKg: 100_000 });
+      expect(ok.cost).toBe(500_000_000_000);
+      await patch(ok.id, { quantityKg: 1_000_000 }, 400);
+      expect((await level(item.id)).quantity).toBe(900_000);
     });
 
     it('batchPerformance.feedCost is the sum of the stock-valued costs', async () => {
@@ -508,6 +621,65 @@ describe('Feed distributions consume stock (e2e)', () => {
         await prisma.stockMovement.count({ where: { sourceId: d.id } }),
       ).toBe(0);
       expect(d.cost).toBe(2);
+    });
+
+    it('validates the items of a payload that looks unchanged: a duplicated ingredient is a 400', async () => {
+      const a = await stocked('Maïs', [[1000, 300]]);
+      const b = await stocked('Soja', [[1000, 500]]);
+      const f = await formula([
+        [a.product.id, 60],
+        [b.product.id, 40],
+      ]);
+      // Same size as the stored composition and every pair already in it.
+      const res = await http()
+        .patch(`/api/feed-formulas/${f.id}`)
+        .set(h)
+        .send({
+          items: [
+            { feedProductId: a.product.id, percentage: 60 },
+            { feedProductId: a.product.id, percentage: 60 },
+          ],
+        })
+        .expect(400);
+      expect((res.body as Msg).message).toBe(
+        'Un aliment ne peut figurer qu’une fois',
+      );
+      await distribute({ formulaId: f.id, quantityKg: 10 });
+      await http()
+        .patch(`/api/feed-formulas/${f.id}`)
+        .set(h)
+        .send({
+          items: [
+            { feedProductId: a.product.id, percentage: 60 },
+            { feedProductId: a.product.id, percentage: 60 },
+          ],
+        })
+        .expect(400);
+    });
+
+    it('switching an entry from a formula to a product on another article gives the ingredients back and consumes the product', async () => {
+      const a = await stocked('Maïs', [[1000, 300]]);
+      const b = await stocked('Soja', [[1000, 500]]);
+      const c = await stocked('Sorgho', [[1000, 200]]);
+      const f = await formula([
+        [a.product.id, 60],
+        [b.product.id, 40],
+      ]);
+      const d = await distribute({ formulaId: f.id, quantityKg: 100 });
+      expect(await level(a.item.id)).toMatchObject({ quantity: 940 });
+      expect(await level(b.item.id)).toMatchObject({ quantity: 960 });
+      const switched = (await patch(d.id, { feedProductId: c.product.id }))
+        .body as Dist;
+      expect(await level(a.item.id)).toMatchObject({ quantity: 1000 });
+      expect(await level(b.item.id)).toMatchObject({ quantity: 1000 });
+      expect(await level(c.item.id)).toMatchObject({ quantity: 900 });
+      expect(switched).toMatchObject({ cost: 20000, unitCost: 200 });
+      expect(await exits(a.item.id)).toEqual([]);
+      expect(await exits(c.item.id)).toHaveLength(1);
+      const rows = await prisma.stockMovement.findMany({
+        where: { sourceId: d.id },
+      });
+      expect(rows.map((r) => r.stockItemId)).toEqual([c.item.id]);
     });
 
     it('refuses to change the items of a formula that has distributions (409), not its name', async () => {

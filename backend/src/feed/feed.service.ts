@@ -7,6 +7,7 @@ import {
 import { lockRow } from '../common/lock-row';
 import { Prisma } from '../generated/prisma/client';
 import type { FeedDistribution, FeedProduct } from '../generated/prisma/client';
+import { currentCost, type CostRow } from './feed-cost';
 import { formulaShares } from './formula-shares';
 import {
   FEED_COST,
@@ -60,8 +61,48 @@ export class FeedService
   }
 
   /**
+   * The CURRENT cost of distributions, from the ledger: for each row, the sum
+   * of its exits' costs (sourceType `FEED_DISTRIBUTION`, by source id) plus its
+   * unlinked part. The ledger re-costs exits when stock is entered back-dated
+   * or an entry's cost is edited, and never writes to the distribution rows
+   * (lock order), so the stored `cost`/`unitCost` are only the snapshot taken
+   * at entry. One query whatever the number of rows. A row with no exit shows
+   * its snapshot. Every reader of a distribution's cost goes through here.
+   */
+  async currentCosts(
+    rows: CostRow[],
+    client: Prisma.TransactionClient | PrismaService = this.prisma,
+  ): Promise<Map<string, { cost: Decimal; unitCost: Decimal }>> {
+    const result = new Map<string, { cost: Decimal; unitCost: Decimal }>();
+    if (rows.length === 0) return result;
+    const exits = await client.stockMovement.findMany({
+      where: {
+        sourceType: 'FEED_DISTRIBUTION',
+        sourceId: { in: rows.map((r) => r.id) },
+      },
+      select: {
+        sourceId: true,
+        operationId: true,
+        quantity: true,
+        unitCost: true,
+      },
+    });
+    const bySource = new Map<string, typeof exits>();
+    for (const e of exits) {
+      const group = bySource.get(e.sourceId ?? '');
+      if (group) group.push(e);
+      else bySource.set(e.sourceId ?? '', [e]);
+    }
+    for (const row of rows) {
+      result.set(row.id, currentCost(row, bySource.get(row.id) ?? []));
+    }
+    return result;
+  }
+
+  /**
    * Feed given to the lots themselves (`aliment`: `amount` = cost, `quantity` = kg);
-   * building-level distributions are not attributed to lots.
+   * building-level distributions are not attributed to lots. The cost is the
+   * current one (`currentCosts`), batched: two queries whatever the lots.
    */
   async costsFor(
     batchIds: string[],
@@ -70,23 +111,41 @@ export class FeedService
   ): Promise<Map<string, LotCost[]>> {
     const result = new Map<string, LotCost[]>();
     if (batchIds.length === 0) return result;
-    const groups = await (tx ?? this.prisma).feedDistribution.groupBy({
-      by: ['batchId'],
+    const client = tx ?? this.prisma;
+    const rows = await client.feedDistribution.findMany({
       where: {
         batchId: { in: batchIds },
         ...(range.from || range.to
           ? { date: { gte: range.from, lte: range.to } }
           : {}),
       },
-      _sum: { quantityKg: true, cost: true },
+      select: {
+        id: true,
+        batchId: true,
+        quantityKg: true,
+        unitCost: true,
+        cost: true,
+        unlinkedCost: true,
+      },
     });
-    for (const g of groups) {
-      if (!g.batchId) continue;
-      result.set(g.batchId, [
+    const current = await this.currentCosts(rows, client);
+    const totals = new Map<string, { amount: Decimal; kg: Decimal }>();
+    for (const r of rows) {
+      if (!r.batchId) continue;
+      const total = totals.get(r.batchId) ?? {
+        amount: new Prisma.Decimal(0),
+        kg: new Prisma.Decimal(0),
+      };
+      total.amount = total.amount.add(current.get(r.id)?.cost ?? r.cost);
+      total.kg = total.kg.add(r.quantityKg);
+      totals.set(r.batchId, total);
+    }
+    for (const [batchId, t] of totals) {
+      result.set(batchId, [
         {
           category: FEED_COST,
-          amount: Number(g._sum.cost ?? 0),
-          quantity: Number(g._sum.quantityKg ?? 0),
+          amount: t.amount.toNumber(),
+          quantity: t.kg.toNumber(),
         },
       ]);
     }
@@ -154,10 +213,12 @@ export class FeedService
    * decimals). A feed with no linked ingredient returns nothing: the service
    * keeps the catalogue price.
    *
-   * The cost is frozen when the distribution is written: a later stock entry,
-   * even back-dated, re-costs the ledger's exits but does not rewrite the
-   * distribution (accepted limitation). An edit that changes neither quantity,
-   * date nor feed leaves stock and cost untouched.
+   * What is returned (`cost`, `unitCost`, `unlinkedCost`) is stored on the row
+   * as the SNAPSHOT of entry time. A later stock entry, even back-dated,
+   * re-costs the ledger's exits but never rewrites the row (lock order):
+   * readers show `currentCosts`, the ledger being the single truth for the
+   * stock-valued part. An edit that changes neither quantity, date nor feed
+   * leaves stock and the snapshot untouched.
    *
    * Create = `recordMany`, edit = `replaceBySource`, delete =
    * `reverseBySource`, one ledger call per transaction. Locks, in order: the
@@ -171,7 +232,12 @@ export class FeedService
     ctx: RequestContext,
     before: FeedDistribution | null,
     after: FeedDistribution | null,
-  ): Promise<{ unitCost?: Decimal; cost?: Decimal } | void> {
+  ): Promise<{
+    unitCost?: Decimal;
+    cost?: Decimal;
+    /** The part of the cost the ledger does not value; 0 when omitted. */
+    unlinkedCost?: Decimal;
+  } | void> {
     if (!after) {
       if (before) {
         await this.ledger.reverseBySource(tx, 'FEED_DISTRIBUTION', before.id, [
@@ -215,7 +281,8 @@ export class FeedService
         })),
       );
     }
-    if (!plan.anyLinked) return;
+    // The catalogue price stays what the row was written with.
+    if (!plan.anyLinked) return { unlinkedCost: new Prisma.Decimal(0) };
     const total = results.reduce(
       (sum, r) => sum.add(r.cost),
       plan.unlinkedCost,
@@ -223,6 +290,7 @@ export class FeedService
     return {
       cost: total.toDecimalPlaces(2),
       unitCost: total.div(after.quantityKg).toDecimalPlaces(2),
+      unlinkedCost: plan.unlinkedCost,
     };
   }
 

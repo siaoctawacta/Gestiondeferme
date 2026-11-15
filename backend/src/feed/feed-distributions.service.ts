@@ -16,7 +16,7 @@ import type {
   FeedListQueryDto,
   UpdateFeedDistributionDto,
 } from './dto/feed-distribution.dto';
-import { formulaCostPerKg, lineCost } from './feed-cost';
+import { assertCostFits, formulaCostPerKg, lineCost } from './feed-cost';
 import { FeedTargets } from './feed-targets';
 import { FeedService } from './feed.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -52,7 +52,13 @@ export interface FeedDistributionItem {
    * Only then may `PATCH` set or clear `waterLiters`.
    */
   waterEditable: boolean;
+  /** Current cost per kg: see `cost`. */
   unitCost: number;
+  /**
+   * The CURRENT cost, from the stock ledger (the exits' costs, which a
+   * back-dated stock entry re-values) plus the part priced from the catalogue.
+   * The columns stored on the row are the snapshot taken at entry.
+   */
   cost: number;
   note: string | null;
 }
@@ -112,6 +118,7 @@ export class FeedDistributionsService {
       select: { id: true, batchId: true, buildingId: true, date: true },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
+    const current = await this.feed.currentCosts(rows, client);
     const liters = new Map(
       waters.map((w) => [
         key(w.batchId ?? w.buildingId, w.date),
@@ -138,8 +145,8 @@ export class FeedDistributionsService {
         quantityKg: Number(r.quantityKg),
         waterLiters: first.get(k) === r.id ? (liters.get(k) ?? null) : null,
         waterEditable: first.get(k) === r.id,
-        unitCost: Number(r.unitCost),
-        cost: Number(r.cost),
+        unitCost: (current.get(r.id)?.unitCost ?? r.unitCost).toNumber(),
+        cost: (current.get(r.id)?.cost ?? r.cost).toNumber(),
         note: r.note,
       };
     });
@@ -270,12 +277,19 @@ export class FeedDistributionsService {
       after,
     );
     if (!after) return before as Row;
-    if (result?.unitCost) {
+    if (result) {
+      const cost = result.unitCost
+        ? (result.cost ?? lineCost(after.quantityKg, result.unitCost))
+        : undefined;
+      if (cost) assertCostFits(cost);
+      // The snapshot of entry time; readers show the ledger's current cost.
       await tx.feedDistribution.update({
         where: { id: after.id },
         data: {
-          unitCost: result.unitCost,
-          cost: result.cost ?? lineCost(after.quantityKg, result.unitCost),
+          unlinkedCost: result.unlinkedCost ?? 0,
+          ...(result.unitCost && cost
+            ? { unitCost: result.unitCost, cost }
+            : {}),
         },
       });
     }
@@ -315,6 +329,8 @@ export class FeedDistributionsService {
       // Product and formula locks before the row's foreign keys take theirs.
       await this.feed.lockFeed(tx, dto);
       const feed = await this.resolveFeed(tx, ctx, dto);
+      const cost = lineCost(dto.quantityKg, feed.unitCost);
+      assertCostFits(cost);
       const created = await tx.feedDistribution.create({
         data: {
           farmId: target.farmId,
@@ -323,7 +339,7 @@ export class FeedDistributionsService {
           buildingId: target.buildingId,
           ...feed,
           quantityKg: dto.quantityKg,
-          cost: lineCost(dto.quantityKg, feed.unitCost),
+          cost,
           note: dto.note,
         },
         include,
@@ -379,13 +395,15 @@ export class FeedDistributionsService {
         changesFeed ||
         !before.quantityKg.equals(quantityKg) ||
         date.getTime() !== before.date.getTime();
+      const cost = repriced ? lineCost(quantityKg, feed.unitCost) : before.cost;
+      assertCostFits(cost);
       const updated = await tx.feedDistribution.update({
         where: { id },
         data: {
           date,
           ...feed,
           quantityKg,
-          cost: repriced ? lineCost(quantityKg, feed.unitCost) : before.cost,
+          cost,
           note: dto.note,
         },
         include,

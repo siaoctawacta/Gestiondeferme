@@ -205,6 +205,9 @@ export class FeedFormulasService {
         await lockRow(tx, 'FeedFormula', id);
         const before = await this.find(tx, ctx, id);
         const { items, ...fields } = dto;
+        // Whatever is sent is validated, even a payload that looks unchanged
+        // (a duplicated ingredient can hide behind an equal-size set).
+        if (items) await this.assertItems(tx, ctx, items);
         if (items && this.changesItems(before, items)) {
           // What was fed stays what it was: only a formula without distributions changes composition.
           if (
@@ -212,7 +215,6 @@ export class FeedFormulasService {
           ) {
             throw new ConflictException(FORMULA_USED);
           }
-          await this.assertItems(tx, ctx, items);
           await tx.feedFormulaItem.deleteMany({ where: { formulaId: id } });
           await tx.feedFormulaItem.createMany({
             data: items.map((i) => ({ ...i, formulaId: id })),
