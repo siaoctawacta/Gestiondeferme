@@ -49,13 +49,22 @@ interface FieldBase {
   /** Only shown (and sent) when creating / when editing (update DTOs reject unknown keys). */
   only?: 'create' | 'update';
   /**
+   * Hint of an empty text, number, password or date input: what the server will use when it is left blank (a due date
+   * computed from a setting). A date input shows no placeholder of its own, so the form also prints it under the input
+   * as `Par défaut : {placeholder}` while the input is empty.
+   */
+  placeholder?: string;
+  /**
    * Initial value when creating. A function is evaluated each time the dialog opens, so a date default
    * (`todayIso`) is never frozen when the module loads.
    */
   defaultValue?: unknown | (() => unknown);
 }
 
-/** A row of a `lines` field as edited: every cell is a string (the payload coerces numbers). Extra keys are kept untouched. */
+/**
+ * A row of a `lines` field as edited: every cell is a string (the payload coerces numbers). Keys of the initial rows that are
+ * no column are kept untouched (as strings) and never sent: a `fixed` grid's `toPayload` reads them.
+ */
 export type LineRow = Record<string, string>;
 
 /**
@@ -343,6 +352,11 @@ type ModuleConfigBase<T extends { id: string }> = {
    * feeds, formulas) whose API routes need `update` sets `update`; daily entries keep `create`.
    */
   createPermission?: Action;
+  /**
+   * No `Ajouter` button at all, for a list whose records are made elsewhere (credit notes are made from an invoice).
+   * `fields: []` goes with it; `canEdit` / `canDelete` answering `false` hide the row icons of a final record.
+   */
+  noCreate?: boolean;
   /**
    * Permission that shows the built-in edit button (default `update`), on top of `canEdit`. A list of daily
    * entries (movements, weighings, heats, egg records, distributions) whose API routes accept `create` for

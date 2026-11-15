@@ -20,6 +20,8 @@ interface SettingField {
   sub?: keyof Legal;
   label: string;
   kind: 'number' | 'text';
+  /** A number that must be a whole number above 0 (a number of days, of eggs). */
+  positiveInteger?: boolean;
 }
 
 const GROUPS: { title: string; fields: SettingField[] }[] = [
@@ -38,6 +40,13 @@ const GROUPS: { title: string; fields: SettingField[] }[] = [
     fields: [
       { key: 'farrowingWarningDays', label: 'Alerte de mise bas (jours)', kind: 'number' },
       { key: 'gestationDays', label: 'Durée de gestation (jours)', kind: 'number' },
+    ],
+  },
+  {
+    title: 'Ventes',
+    fields: [
+      { key: 'invoiceDueDays', label: 'Échéance des factures (jours)', kind: 'number', positiveInteger: true },
+      { key: 'eggsPerTray', label: 'Œufs par plateau', kind: 'number', positiveInteger: true },
     ],
   },
   {
@@ -85,7 +94,8 @@ function SettingInput({ field, value, readOnly, onChange }: {
       <Input
         id={id}
         type={field.kind === 'number' ? 'number' : 'text'}
-        step={field.kind === 'number' ? 'any' : undefined}
+        step={field.kind === 'number' ? (field.positiveInteger ? 1 : 'any') : undefined}
+        min={field.positiveInteger ? 1 : undefined}
         readOnly={readOnly}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -114,6 +124,11 @@ function SettingsCard({ title, fields, data, canEdit }: {
       setFeedback({ tone: 'error', message: `Le champ « ${missing.label} » est requis et doit être un nombre` });
       return;
     }
+    const notWhole = fields.find((f) => f.positiveInteger && !/^[1-9]\d*$/.test(values[fieldId(f)].trim()));
+    if (notWhole) {
+      setFeedback({ tone: 'error', message: `Le champ « ${notWhole.label} » doit être un entier positif` });
+      return;
+    }
     setSaving(true);
     try {
       for (const [key, value] of toRequests(fields, values)) await api.put(`/settings/${key}`, { value });
@@ -128,7 +143,7 @@ function SettingsCard({ title, fields, data, canEdit }: {
 
   return (
     <Card className="p-6">
-      <form onSubmit={save} className="space-y-4">
+      <form onSubmit={save} noValidate className="space-y-4">
         <h2 className="text-lg font-bold">{title}</h2>
         <div className="grid gap-4 sm:grid-cols-2">
           {fields.map((f) => (

@@ -55,9 +55,18 @@
   }
 }
 
-/* Printed pages (the bon de commande): a margin around the sheet. */
+/* Printed pages (the sales and purchase sheets): a margin around the sheet. */
 @media print {
   @page {
     margin: 15mm;
+  }
+  /* A sheet printed from a list or a dialog (`PrintOverlay`): the app is hidden, the sheet is all that prints. */
+  body.print-overlay-active > #root {
+    display: none;
+  }
+}
+@media screen {
+  .print-overlay {
+    display: none;
   }
 }

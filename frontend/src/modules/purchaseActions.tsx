@@ -123,7 +123,7 @@ function ReceiveDialog({ row, onClose, onDone }: PurchaseDialogProps) {
   );
 }
 
-const PAY_FIELDS = (remaining: number): Field[] => [
+export const PAY_FIELDS = (remaining: number): Field[] => [
   { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
   { name: 'amount', label: 'Montant (FCFA)', type: 'number', required: true, min: 0.01, step: 0.01, defaultValue: remaining },
   { name: 'method', label: 'Mode de paiement', type: 'select', required: true, options: PAYMENT_METHODS, defaultValue: 'ESPECES' },

@@ -20,25 +20,14 @@ import {
   ORDERED, activityLabel, methodLabel, statusDef, type PurchaseData, type PurchasePayment,
 } from '../../modules/purchasingShared';
 import NotFound from '../NotFound';
+import { SheetFrame, SheetHeads, SheetTable, SheetTotal, useLegal, type Legal } from '../print/SheetFrame';
 import { DetailLayout } from './DetailLayout';
-
-/** The `legal` setting: the block printed on the bon de commande. */
-type Legal = Record<'name' | 'address' | 'nif' | 'rccm', string>;
-
-/** `plain`: no tinted background (the printed sheet rules a border instead). */
-function Heads({ labels, plain = false }: { labels: string[]; plain?: boolean }) {
-  return (
-    <THead className={plain ? 'bg-transparent! border-b-2 border-foreground [&_th]:text-foreground!' : ''}>
-      <TR className="border-b!">{labels.map((h) => <TH key={h}>{h}</TH>)}</TR>
-    </THead>
-  );
-}
 
 function LinesTab({ data }: { data: PurchaseData }) {
   return (
     <Card className="overflow-hidden">
       <Table>
-        <Heads labels={['ARTICLE', 'QUANTITÉ', 'PRIX UNITAIRE', 'QUANTITÉ REÇUE', 'N° DE LOT', 'PÉREMPTION', 'TOTAL']} />
+        <SheetHeads labels={['ARTICLE', 'QUANTITÉ', 'PRIX UNITAIRE', 'QUANTITÉ REÇUE', 'N° DE LOT', 'PÉREMPTION', 'TOTAL']} />
         <tbody>
           {data.lines.map((l) => (
             <TR key={l.itemId}>
@@ -94,7 +83,7 @@ function HistoryTab({ data }: { data: PurchaseData }) {
   return (
     <Card className="overflow-hidden">
       <Table>
-        <Heads labels={['ÉTAPE', 'DATE', 'PAR', 'NOTE']} />
+        <SheetHeads labels={['ÉTAPE', 'DATE', 'PAR', 'NOTE']} />
         <tbody>
           {data.history.length === 0 && (
             <TR><TD colSpan={4} className="py-10 text-center text-muted-foreground">Aucun enregistrement</TD></TR>
@@ -114,51 +103,39 @@ function HistoryTab({ data }: { data: PurchaseData }) {
 }
 
 /**
- * The bon de commande: shown only when printing (`print:block`), the screen layout being hidden then. It states what
- * was ordered, whatever was received since. The legal block comes from the settings and is left out when the user
- * cannot read them.
+ * The bon de commande: it states what was ordered, whatever was received since. The legal block comes from the
+ * settings and is left out when the user cannot read them.
  */
 function PurchaseOrderSheet({ data, farmName, legal }: { data: PurchaseData; farmName: string | undefined; legal: Legal | undefined }) {
   // What was ordered, as the API computed each line; the sum of 2-decimal amounts, re-rounded only against float noise.
   const total = Math.round(data.lines.reduce((sum, l) => sum + l.orderedAmount, 0) * 100) / 100;
   return (
-    <section aria-label="Bon de commande" className="hidden space-y-6 text-sm print:block">
-      <header className="flex items-start justify-between gap-6 border-b border-border pb-4">
-        <div>
-          <p className="text-lg font-bold">{legal?.name || farmName}</p>
-          {legal?.address && <p>{legal.address}</p>}
-          {(legal?.nif || legal?.rccm) && (
-            <p>{[legal.nif && `NIF : ${legal.nif}`, legal.rccm && `RCCM : ${legal.rccm}`].filter(Boolean).join(' · ')}</p>
-          )}
-        </div>
-        <div className="text-right">
-          <h2 className="text-2xl font-bold">Bon de commande</h2>
+    <SheetFrame
+      label="Bon de commande"
+      meta={
+        <>
           <p>Référence : {data.reference}</p>
           {data.requestNumber !== data.reference && <p>Demande : {data.requestNumber}</p>}
           <p>Date : {formatDate(data.orderedAt ?? data.date)}</p>
-        </div>
-      </header>
-      <div>
-        <p className="text-xs uppercase tracking-wider text-muted-foreground">Fournisseur</p>
-        <span className="block font-semibold">{data.supplierName}</span>
-        {data.supplierAddress && <p>{data.supplierAddress}</p>}
-        {data.supplierPhone && <p>{data.supplierPhone}</p>}
-      </div>
-      <Table>
-        <Heads plain labels={['ARTICLE', 'QUANTITÉ', 'PRIX UNITAIRE', 'MONTANT']} />
-        <tbody>
-          {data.lines.map((l) => (
-            <TR key={l.itemId}>
-              <TD>{l.itemName}</TD>
-              <TD>{formatNumber(l.quantity)} {l.unit}</TD>
-              <TD>{formatMoney(l.unitPrice)}</TD>
-              <TD>{formatMoney(l.orderedAmount)}</TD>
-            </TR>
-          ))}
-        </tbody>
-      </Table>
-      <p className="text-right text-base font-bold">Total : {formatMoney(total)}</p>
-    </section>
+        </>
+      }
+      partyLabel="Fournisseur"
+      party={{ name: data.supplierName, address: data.supplierAddress, phone: data.supplierPhone }}
+      farmName={farmName}
+      legal={legal}
+    >
+      <SheetTable labels={['ARTICLE', 'QUANTITÉ', 'PRIX UNITAIRE', 'MONTANT']}>
+        {data.lines.map((l) => (
+          <TR key={l.itemId}>
+            <TD>{l.itemName}</TD>
+            <TD>{formatNumber(l.quantity)} {l.unit}</TD>
+            <TD>{formatMoney(l.unitPrice)}</TD>
+            <TD>{formatMoney(l.orderedAmount)}</TD>
+          </TR>
+        ))}
+      </SheetTable>
+      <SheetTotal total={total} />
+    </SheetFrame>
   );
 }
 
@@ -170,9 +147,7 @@ function Loaded({ data }: { data: PurchaseData }) {
 
   const writable = farmId !== 'all';
   const printable = ORDERED.includes(data.status);
-  const legal = useFarmQuery<Record<string, unknown>>(['settings'], () => api.get<Record<string, unknown>>('/settings'), {
-    enabled: printable && can('parametres', 'read'),
-  });
+  const { legal } = useLegal(printable);
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
   const done = () => { setActing(null); refresh(); };
   const def = statusDef(data.status);
@@ -228,7 +203,7 @@ function Loaded({ data }: { data: PurchaseData }) {
         <PurchaseOrderSheet
           data={data}
           farmName={farms.find((f) => f.id === farmId)?.name}
-          legal={legal.data?.legal as Legal | undefined}
+          legal={legal}
         />
       )}
       {acting && <acting.Dialog row={data} onClose={() => setActing(null)} onDone={done} />}

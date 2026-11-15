@@ -82,6 +82,7 @@ export function CellControl({ field, value, onChange, id, disabled, excluded, pa
       min={field.type === 'number' ? field.min : undefined}
       max={field.type === 'number' ? field.max : undefined}
       step={field.type === 'number' ? (typeof field.step === 'function' ? field.step(row ?? {}) : field.step) : undefined}
+      placeholder={'placeholder' in field ? field.placeholder : undefined}
       autoComplete={field.type === 'password' ? 'new-password' : undefined}
       value={String(value)}
       onChange={(e) => onChange(e.target.value)}

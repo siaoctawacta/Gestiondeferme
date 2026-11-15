@@ -442,3 +442,29 @@ describe('ActionDialog: three-level chains and required options', () => {
     expect(urls.some((u) => u.startsWith('/api/zones'))).toBe(false);
   });
 });
+
+describe('ActionDialog: fixed lines keep what the stored rows say beyond the columns', () => {
+  const fixed: Field = {
+    name: 'lines', label: 'Lignes', type: 'lines', fixed: true,
+    columns: [
+      { name: 'designation', label: 'Désignation', type: 'text', readOnly: true },
+      { name: 'quantity', label: 'Quantité', type: 'number' },
+    ],
+  };
+  const initial = { lines: [{ lineId: 'ln1', designation: 'Poulets', quantity: '', unitPrice: 3500 }] };
+
+  it('hands the extra keys (as strings) to toPayload, and never sends them by default', async () => {
+    const toPayload = vi.fn((v: Record<string, unknown>) => ({ ids: (v.lines as Record<string, string>[]).map((r) => `${r.lineId}:${r.unitPrice}`) }));
+    const { onSubmit } = mount({ fields: [fixed], initial, toPayload });
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ ids: ['ln1:3500'] }));
+  });
+
+  it('leaves them out of the default payload', async () => {
+    const { onSubmit } = mount({ fields: [fixed], initial });
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.setup().type(within(dialog).getByLabelText('Quantité ligne 1'), '4');
+    await userEvent.setup().click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ lines: [{ designation: 'Poulets', quantity: 4 }] }));
+  });
+});

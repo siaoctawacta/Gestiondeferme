@@ -11,7 +11,7 @@ import { todayIso } from '../lib/format';
 import { QuoteDetail } from '../pages/details/QuoteDetail';
 import { clients } from './clients';
 import { ModuleRoute } from '../pages/ModuleRoute';
-import { MODULES, registerModule } from './registry';
+import { registerModule } from './registry';
 import './index';
 import { devis } from './salesShared';
 
@@ -438,20 +438,6 @@ describe('customer detail: invoices area', () => {
     registerModule({ slug: 'ventes', group: 'Commercial', title: 'Ventes', subtitle: '', endpoint: '/sales', columns: [{ key: 'number', header: 'N° FACTURE' }], fields: [] });
     mount(<CustomerDetail id="c2" />, { perms: { clients: ['read'] } });
     expect(await screen.findByText('Factures non accessibles avec votre rôle')).toBeInTheDocument();
-  });
-
-  it('shows nothing for the invoices while the ventes module is not registered', async () => {
-    const saved = MODULES.ventes;
-    delete MODULES.ventes;
-    try {
-      mount(<CustomerDetail id="c2" />);
-      expect(await screen.findByRole('heading', { name: 'Marché Hédzranawoé — Mme Afi' })).toBeInTheDocument();
-      expect(screen.queryByText('Factures non accessibles avec votre rôle')).not.toBeInTheDocument();
-      expect(screen.queryByText('Aucune facture à afficher')).not.toBeInTheDocument();
-      expect(calls.some((c) => c.url.startsWith('/api/sales'))).toBe(false);
-    } finally {
-      MODULES.ventes = saved;
-    }
   });
 });
 

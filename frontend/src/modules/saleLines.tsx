@@ -1,5 +1,5 @@
 import type { Field, LineRow, OptionItem } from '../components/module/types';
-import { formatMoney } from '../lib/format';
+import { formatMoney, formatNumber } from '../lib/format';
 import { lineAmount, linesTotal } from '../lib/money';
 
 /* ---------------------------------------------------------------------------------------------
@@ -79,7 +79,8 @@ const pick = (option: OptionItem, row: LineRow): Partial<LineRow> => {
   };
 };
 
-const isWhole = (kind: string) => kind === 'LOT' || kind === 'ANIMAL' || kind === 'OEUFS';
+/** Birds, animals and eggs are counted whole; feed and services may have decimals. */
+export const isWhole = (kind: string) => kind === 'LOT' || kind === 'ANIMAL' || kind === 'OEUFS';
 
 const rowAmount = (row: LineRow) => lineAmount(Number(row.quantity || 0), Number(row.unitPrice || 0));
 
@@ -132,6 +133,12 @@ export function saleLinesField(date: string, labels: Record<string, string> = {}
     footer: (rows) => <p className="text-sm font-semibold">Total : {formatMoney(linesTotal(rows))}</p>,
   };
 }
+
+/** A line's quantity as printed and listed: eggs carry their unit (`400 plateau`, `12 œuf`), the others are bare numbers. */
+export const lineQuantityLabel = (l: Pick<SaleLineData, 'kind' | 'unit' | 'quantity'>): string => {
+  const unit = l.kind === 'OEUFS' ? (l.unit === 'OEUF' ? 'œuf' : 'plateau') : '';
+  return unit ? `${formatNumber(l.quantity)} ${unit}` : formatNumber(l.quantity);
+};
 
 /** The rows of the form from the lines of a stored document. */
 export const saleLinesToForm = (lines: SaleLineData[]): LineRow[] =>

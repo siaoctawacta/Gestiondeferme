@@ -125,7 +125,7 @@ function ModuleView<T extends { id: string }>({
 
   const scoped = config.farmScoped !== false;
   const writable = !scoped || farmId !== 'all';
-  const canCreate = !readOnly && !noCreate && can(config.slug, config.createPermission ?? 'create') && writable;
+  const canCreate = !readOnly && !noCreate && !config.noCreate && can(config.slug, config.createPermission ?? 'create') && writable;
   const canEditRows = !readOnly && can(config.slug, config.editPermission ?? 'update') && writable;
   const closedGates = readOnly ? config.whenReadOnly : undefined;
   const canDeleteRows = (!readOnly || Boolean(closedGates?.canDelete)) && can(config.slug, config.deletePermission ?? 'delete') && writable;

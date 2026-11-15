@@ -230,6 +230,41 @@ describe('Settings page', () => {
     expect(calls.some((c) => c.method === 'PUT')).toBe(false);
   });
 
+  it('offers the two sales settings in their own card, saves them as numbers and refuses what is not a positive integer', async () => {
+    mount(<Settings />, (c) => {
+      if (c.method === 'GET' && c.url === '/api/settings') return json(200, { ...SETTINGS, invoiceDueDays: 15, eggsPerTray: 30 });
+      if (c.method === 'PUT') return json(200, {});
+      return undefined;
+    });
+    const card = (await screen.findByRole('heading', { name: 'Ventes' })).closest('form')!;
+    const days = within(card).getByLabelText('Échéance des factures (jours)');
+    const tray = within(card).getByLabelText('Œufs par plateau');
+    expect(days).toHaveValue(15);
+    expect(tray).toHaveValue(30);
+    const user = userEvent.setup();
+
+    await user.clear(tray);
+    await user.type(tray, '0');
+    await user.click(within(card).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(card).findByText('Le champ « Œufs par plateau » doit être un entier positif')).toBeInTheDocument();
+    await user.clear(tray);
+    await user.type(tray, '12.5');
+    await user.click(within(card).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(card).findByText('Le champ « Œufs par plateau » doit être un entier positif')).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+
+    await user.clear(tray);
+    await user.type(tray, '12');
+    await user.clear(days);
+    await user.type(days, '30');
+    await user.click(within(card).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(card).findByText('Paramètres enregistrés')).toBeInTheDocument();
+    expect(calls.filter((c) => c.method === 'PUT').map((c) => [c.url, c.body])).toEqual([
+      ['/api/settings/invoiceDueDays', { value: 30 }],
+      ['/api/settings/eggsPerTray', { value: 12 }],
+    ]);
+  });
+
   it('sends the legal fields as one object', async () => {
     mount(<Settings />, (c) => {
       if (c.method === 'GET' && c.url === '/api/settings') return json(200, SETTINGS);

@@ -26,13 +26,19 @@ export function initialValue(field: Field, raw: Values, mode: FormMode = 'create
   }
 }
 
-/** The rows of a `lines` field as edited: only the columns, every cell a string (a stored `null` is empty). */
+/**
+ * The rows of a `lines` field as edited: every column, every cell a string (a stored `null` is empty). Keys of the stored
+ * row that are no column are kept as strings, untouched, so a `toPayload` over a `fixed` grid can read what the row
+ * stands for (an invoice line's id and price); they are never part of a request (`linePayload` reads the columns only).
+ */
 function linesValue(columns: CellField[], raw: unknown): LineRow[] {
   if (!Array.isArray(raw)) return [];
-  return raw.map((r) => Object.fromEntries(columns.map((c) => {
-    const v = (r as Record<string, unknown> | null)?.[c.name];
-    return [c.name, v === null || v === undefined ? '' : String(v)];
-  })));
+  const text = (v: unknown) => (v === null || v === undefined ? '' : String(v));
+  return raw.map((r) => {
+    const stored = (r ?? {}) as Record<string, unknown>;
+    const extras = Object.fromEntries(Object.entries(stored).filter(([key]) => !columns.some((c) => c.name === key)).map(([key, v]) => [key, text(v)]));
+    return { ...extras, ...Object.fromEntries(columns.map((c) => [c.name, text(stored[c.name])])) };
+  });
 }
 
 /** A row whose every cell is empty is an untouched line: it is dropped from the payload and not counted for `minRows`. */
@@ -175,6 +181,9 @@ function LabelledControl({ field, value, onChange, parentValue, waitingFor }: Fi
         />
       ) : (
         <CellControl id={id} field={field} value={value} onChange={(v) => onChange(v)} parentValue={parentValue} waitingFor={waitingFor} currentLabel={field.type === 'select' ? field.currentLabel : undefined} />
+      )}
+      {field.type === 'date' && field.placeholder && String(value) === '' && (
+        <p className="text-xs text-muted-foreground">Par défaut : {field.placeholder}</p>
       )}
     </div>
   );
