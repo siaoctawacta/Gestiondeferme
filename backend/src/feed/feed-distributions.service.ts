@@ -312,6 +312,8 @@ export class FeedDistributionsService {
     return this.prisma.$transaction(async (tx) => {
       const date = requireDay(dto.date);
       const target = await this.targets.resolve(tx, ctx, dto, date);
+      // Product and formula locks before the row's foreign keys take theirs.
+      await this.feed.lockFeed(tx, dto);
       const feed = await this.resolveFeed(tx, ctx, dto);
       const created = await tx.feedDistribution.create({
         data: {
@@ -349,7 +351,8 @@ export class FeedDistributionsService {
     return this.prisma.$transaction(async (tx) => {
       const found = await this.find(tx, ctx, id);
       const target = await this.targets.forRow(tx, ctx, found);
-      // The ledger reads the source's rows before its own locks: serialise on the row first.
+      // The ledger reads the source's rows before its own locks, and `before`
+      // must not go stale: serialise edits of the row first (a building target has no lock).
       await lockRow(tx, 'FeedDistribution', id, ctx.farmIds);
       const before = await this.find(tx, ctx, id);
       const date = dto.date ? requireDay(dto.date) : before.date;
@@ -361,6 +364,7 @@ export class FeedDistributionsService {
         asked &&
         ((dto.feedProductId ?? null) !== before.feedProductId ||
           (dto.formulaId ?? null) !== before.formulaId);
+      if (changesFeed) await this.feed.lockFeed(tx, dto);
       const feed = changesFeed
         ? await this.resolveFeed(tx, ctx, dto)
         : {

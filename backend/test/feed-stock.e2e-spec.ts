@@ -1,7 +1,13 @@
 import { INestApplication } from '@nestjs/common';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { daysAgo, Headers, Id, Msg, World } from './fixtures';
-import { createOrganization, createTestApp } from './setup';
+import {
+  createFarm,
+  createOrganization,
+  createTestApp,
+  createUser,
+  tokenFor,
+} from './setup';
 
 interface Product extends Id {
   name: string;
@@ -18,6 +24,7 @@ interface Level {
   averageCost: number;
 }
 interface Mv {
+  date: string;
   type: string;
   quantity: number;
   unitCost: number;
@@ -191,8 +198,15 @@ describe('Feed distributions consume stock (e2e)', () => {
           unit: 'kg',
         },
       });
-      await product('C', 1, { stockItemId: foreign.id }, 400);
-      await product('D', 1, { stockItemId: 'inconnu' }, 400);
+      for (const [name, id] of [
+        ['C', foreign.id],
+        ['D', 'inconnu'],
+      ]) {
+        expect(
+          ((await product(name, 1, { stockItemId: id }, 400)) as unknown as Msg)
+            .message,
+        ).toBe('Article de stock invalide');
+      }
       const ok = await stockItem('Maïs');
       await product('E', 1, { stockItemId: ok.id });
       await product('F', 1, { stockItemId: ok.id }, 409);
@@ -310,7 +324,10 @@ describe('Feed distributions consume stock (e2e)', () => {
       expect(await level(a.item.id)).toMatchObject({ quantity: 100 });
       expect(await level(b.item.id)).toMatchObject({ quantity: 90 });
       await patch(d.id, { date: daysAgo(2) });
-      expect((await exits(b.item.id))[0]).toMatchObject({ quantity: -10 });
+      expect((await exits(b.item.id))[0]).toMatchObject({
+        quantity: -10,
+        date: daysAgo(2),
+      });
     });
 
     it('records the exit on the distribution farm and names the distribution as source', async () => {
@@ -463,6 +480,104 @@ describe('Feed distributions consume stock (e2e)', () => {
       ).toBe(0);
     });
 
+    it('shares the quantity by largest remainder: 50/50 of 10.01 kg consumes 10.01 kg', async () => {
+      const a = await stocked('Maïs', [[100, 300]]);
+      const b = await stocked('Soja', [[100, 500]]);
+      const f = await formula([
+        [a.product.id, 50],
+        [b.product.id, 50],
+      ]);
+      const d = await distribute({ formulaId: f.id, quantityKg: 10.01 });
+      expect(await level(a.item.id)).toMatchObject({ quantity: 94.99 });
+      expect(await level(b.item.id)).toMatchObject({ quantity: 95 });
+      // 5.01 x 300 + 5.00 x 500
+      expect(d).toMatchObject({ cost: 4003, unitCost: 399.9 });
+    });
+
+    it('0.01 kg of a formula in thirds moves exactly one hundredth', async () => {
+      const a = await stocked('Maïs', [[100, 300]]);
+      const b = await stocked('Soja', [[100, 500]]);
+      const son = await product('Son', 200);
+      const f = await formula([
+        [a.product.id, 33.33],
+        [b.product.id, 33.33],
+        [son.id, 33.34],
+      ]);
+      const d = await distribute({ formulaId: f.id, quantityKg: 0.01 });
+      expect(
+        await prisma.stockMovement.count({ where: { sourceId: d.id } }),
+      ).toBe(0);
+      expect(d.cost).toBe(2);
+    });
+
+    it('refuses to change the items of a formula that has distributions (409), not its name', async () => {
+      const a = await stocked('Maïs', [[1000, 300]]);
+      const b = await stocked('Soja', [[1000, 500]]);
+      const f = await formula([
+        [a.product.id, 60],
+        [b.product.id, 40],
+      ]);
+      const url = `/api/feed-formulas/${f.id}`;
+      const same = [
+        { feedProductId: a.product.id, percentage: 60 },
+        { feedProductId: b.product.id, percentage: 40 },
+      ];
+      // No distribution yet: the composition is free.
+      await http()
+        .patch(url)
+        .set(h)
+        .send({ items: [{ feedProductId: a.product.id, percentage: 100 }] })
+        .expect(200);
+      await http().patch(url).set(h).send({ items: same }).expect(200);
+      await distribute({ formulaId: f.id, quantityKg: 10 });
+      const res = await http()
+        .patch(url)
+        .set(h)
+        .send({ items: [{ feedProductId: a.product.id, percentage: 100 }] })
+        .expect(409);
+      expect((res.body as Msg).message).toBe(
+        'Cette formule a déjà des distributions : créez une nouvelle formule',
+      );
+      await http()
+        .patch(url)
+        .set(h)
+        .send({ items: [...same].reverse() })
+        .expect(200);
+      await http()
+        .patch(url)
+        .set(h)
+        .send({
+          name: 'Renommée',
+          stage: 'Finition',
+          active: true,
+          items: same,
+        })
+        .expect(200);
+      // The hole: a product consumed through the formula cannot be detached by removing it first.
+      await http()
+        .patch(`/api/feed-products/${b.product.id}`)
+        .set(h)
+        .send({ stockItemId: null })
+        .expect(409);
+    });
+
+    it('switching an entry between a product and a formula re-plans the stock', async () => {
+      const a = await stocked('Maïs', [[1000, 300]]);
+      const b = await stocked('Soja', [[1000, 500]]);
+      const f = await formula([
+        [a.product.id, 60],
+        [b.product.id, 40],
+      ]);
+      const d = await distribute({
+        feedProductId: a.product.id,
+        quantityKg: 100,
+      });
+      expect(await level(b.item.id)).toMatchObject({ quantity: 1000 });
+      await patch(d.id, { formulaId: f.id });
+      expect(await level(a.item.id)).toMatchObject({ quantity: 940 });
+      expect(await level(b.item.id)).toMatchObject({ quantity: 960 });
+    });
+
     it('mixes linked ingredients (ledger cost) and unlinked ones (catalogue price × share)', async () => {
       const a = await stocked('Maïs', [
         [1000, 300],
@@ -507,6 +622,264 @@ describe('Feed distributions consume stock (e2e)', () => {
     });
   });
 
+  describe('permissions', () => {
+    it('create-stock-item needs master on alimentation AND stocks', async () => {
+      const p = await product('Tourteau', 250);
+      const url = `/api/feed-products/${p.id}/create-stock-item`;
+      // alimentation master but only read on stocks
+      await http()
+        .post(url)
+        .set(await world.actor('RESP_AVICOLE'))
+        .expect(403);
+      await http()
+        .post(url)
+        .set(await world.actor('RESP_PORCIN'))
+        .expect(403);
+      // stocks rights but only read on alimentation
+      await http()
+        .post(url)
+        .set(await world.actor('RESP_STOCK'))
+        .expect(403);
+      expect(await prisma.stockItem.count()).toBe(0);
+      await http().post(url).set(h).expect(201);
+    });
+
+    it('linking an existing article needs master on alimentation only', async () => {
+      const item = await stockItem('Maïs');
+      const avicole = await world.actor('RESP_AVICOLE');
+      const res = await http()
+        .post('/api/feed-products')
+        .set(avicole)
+        .send({
+          name: 'Maïs',
+          kind: 'ALIMENT_COMPLET',
+          unitCost: 300,
+          stockItemId: item.id,
+        })
+        .expect(201);
+      expect((res.body as Product).stockItemId).toBe(item.id);
+    });
+
+    it('a role with alimentation create but no stocks rights consumes stock implicitly', async () => {
+      const { product: p } = await stocked('Maïs', [[100, 300]]);
+      const avicole = await world.actor('RESP_AVICOLE');
+      const res = await http()
+        .post('/api/feed-distributions')
+        .set(avicole)
+        .send({
+          batchId: lotId,
+          date: daysAgo(1),
+          feedProductId: p.id,
+          quantityKg: 500,
+        })
+        .expect(400);
+      expect((res.body as Msg).message).toBe(
+        'Stock insuffisant pour Maïs (disponible 100 kg)',
+      );
+    });
+  });
+
+  describe('link rules', () => {
+    it('refuses an inactive article; deactivating a linked one keeps consumption going', async () => {
+      const off = await stockItem('Vieux', { active: false });
+      expect(
+        (
+          (await product(
+            'A',
+            1,
+            { stockItemId: off.id },
+            400,
+          )) as unknown as Msg
+        ).message,
+      ).toBe("L'article de stock est inactif");
+      const { item, product: p } = await stocked('Maïs', [[100, 300]]);
+      await http()
+        .patch(`/api/stock-items/${item.id}`)
+        .set(h)
+        .send({ active: false })
+        .expect(200);
+      expect(
+        await distribute({ feedProductId: p.id, quantityKg: 10 }),
+      ).toMatchObject({
+        cost: 3000,
+      });
+      expect(await level(item.id)).toMatchObject({ quantity: 90 });
+    });
+
+    it('a linked article cannot be deleted even with no movement (409)', async () => {
+      const item = await stockItem('Maïs');
+      await product('Maïs', 300, { stockItemId: item.id });
+      await http().delete(`/api/stock-items/${item.id}`).set(h).expect(409);
+    });
+
+    it('a product used only through a formula cannot be linked or unlinked once the formula has distributions', async () => {
+      const item = await stockItem('Maïs');
+      await entry(item.id, 100, 300);
+      const a = await product('Maïs', 300);
+      const b = await product('Soja', 500);
+      const f = await world.post<Id>(h, '/feed-formulas', {
+        name: 'F',
+        species: 'AVICOLE',
+        stage: 'x',
+        items: [
+          { feedProductId: a.id, percentage: 50 },
+          { feedProductId: b.id, percentage: 50 },
+        ],
+      });
+      await distribute({ formulaId: f.id, quantityKg: 10 });
+      const res = await http()
+        .patch(`/api/feed-products/${a.id}`)
+        .set(h)
+        .send({ stockItemId: item.id })
+        .expect(409);
+      expect((res.body as Msg).message).toMatch(/distributions/);
+    });
+
+    it('two products linked to the same article in parallel: one wins, the other gets the right 409', async () => {
+      for (let round = 0; round < 4; round++) {
+        const item = await stockItem(`Article ${round}`);
+        const a = await product(`P${round}a`, 1);
+        const b = await product(`P${round}b`, 1);
+        const rs = await Promise.all(
+          [a, b].map((p) =>
+            http()
+              .patch(`/api/feed-products/${p.id}`)
+              .set(h)
+              .send({ stockItemId: item.id }),
+          ),
+        );
+        expect(rs.map((r) => r.status).sort()).toEqual([200, 409]);
+        const loser = rs.find((r) => r.status === 409);
+        expect((loser?.body as Msg).message).toBe(
+          'Cet article de stock est déjà lié à un autre aliment',
+        );
+      }
+    });
+
+    it('a link change racing the first distribution of the product never deadlocks and stays consistent', async () => {
+      for (let round = 0; round < 5; round++) {
+        const item = await stockItem(`Article ${round}`);
+        await entry(item.id, 100, 300);
+        const p = await product(`Produit ${round}`, 200);
+        const [link, dist] = await Promise.all([
+          http()
+            .patch(`/api/feed-products/${p.id}`)
+            .set(h)
+            .send({ stockItemId: item.id }),
+          http()
+            .post('/api/feed-distributions')
+            .set(h)
+            .send({
+              batchId: lotId,
+              date: daysAgo(1),
+              feedProductId: p.id,
+              quantityKg: 10,
+            }),
+        ]);
+        expect(dist.status).toBe(201);
+        expect([200, 409]).toContain(link.status);
+        const moved = await prisma.stockMovement.count({
+          where: { stockItemId: item.id, type: 'SORTIE' },
+        });
+        // Linked first: the distribution consumed stock; distribution first: the link was refused.
+        expect(moved).toBe(link.status === 200 ? 1 : 0);
+        expect((dist.body as Dist).unitCost).toBe(
+          link.status === 200 ? 300 : 200,
+        );
+      }
+    });
+  });
+
+  describe('farms', () => {
+    it('stock on one farm is not available to a distribution on another; edits and deletes act on the row farm', async () => {
+      const farmB = (await createFarm(world.orgId, 'Ferme B')).id;
+      const siteB = await prisma.site.create({
+        data: { farmId: farmB, name: 'Site B' },
+      });
+      const bldB = await prisma.building.create({
+        data: {
+          farmId: farmB,
+          siteId: siteB.id,
+          name: 'Poulailler B',
+          type: 'AVICOLE',
+          capacity: 1000,
+        },
+      });
+      const user = await createUser({
+        organizationId: world.orgId,
+        role: 'DIRECTEUR_FERME',
+        farmIds: [world.farmId, farmB],
+      });
+      const auth = `Bearer ${await tokenFor(user.id)}`;
+      const onA = { Authorization: auth, 'X-Farm-Id': world.farmId };
+      const onB = { Authorization: auth, 'X-Farm-Id': farmB };
+      const { item, product: p } = await stocked('Maïs', [[100, 300]]);
+      const body = {
+        date: daysAgo(1),
+        buildingId: bldB.id,
+        feedProductId: p.id,
+        quantityKg: 30,
+      };
+      const refused = await http()
+        .post('/api/feed-distributions')
+        .set(onB)
+        .send(body)
+        .expect(400);
+      expect((refused.body as Msg).message).toBe(
+        'Stock insuffisant pour Maïs (disponible 0 kg)',
+      );
+      await http()
+        .post('/api/stock/movements')
+        .set(onB)
+        .send({
+          itemId: item.id,
+          type: 'ENTREE',
+          date: daysAgo(40),
+          quantity: 50,
+          unitCost: 400,
+          reason: 'ACHAT',
+        })
+        .expect(201);
+      const d = (
+        await http()
+          .post('/api/feed-distributions')
+          .set(onB)
+          .send(body)
+          .expect(201)
+      ).body as Dist;
+      expect(d).toMatchObject({ unitCost: 400, cost: 12000 });
+      const levelOn = async (headers: Headers) =>
+        (await http().get(`/api/stock/${item.id}`).set(headers).expect(200))
+          .body as Level;
+      expect(await levelOn(onA)).toMatchObject({ quantity: 100 });
+      expect(await levelOn(onB)).toMatchObject({ quantity: 20 });
+      // Another farm's distribution is 404 and its stock is untouched.
+      await http()
+        .patch(`/api/feed-distributions/${d.id}`)
+        .set(onA)
+        .send({ quantityKg: 40 })
+        .expect(404);
+      await http()
+        .delete(`/api/feed-distributions/${d.id}`)
+        .set(onA)
+        .expect(404);
+      expect(await levelOn(onB)).toMatchObject({ quantity: 20 });
+      await http()
+        .patch(`/api/feed-distributions/${d.id}`)
+        .set(onB)
+        .send({ quantityKg: 40 })
+        .expect(200);
+      expect(await levelOn(onB)).toMatchObject({ quantity: 10 });
+      expect(await levelOn(onA)).toMatchObject({ quantity: 100 });
+      await http()
+        .delete(`/api/feed-distributions/${d.id}`)
+        .set(onB)
+        .expect(200);
+      expect(await levelOn(onB)).toMatchObject({ quantity: 50 });
+      expect(await levelOn(onA)).toMatchObject({ quantity: 100 });
+    });
+  });
+
   describe('concurrency', () => {
     it('parallel distributions on a short stock: exactly one succeeds', async () => {
       const { item, product: p } = await stocked('Maïs', [[50, 300]]);
@@ -539,6 +912,36 @@ describe('Feed distributions consume stock (e2e)', () => {
         .post('/api/feed-distributions')
         .set(h)
         .send({ date: daysAgo(1), ...body });
+
+    it('a stale read of the row cannot desynchronise stock from the row (building target)', async () => {
+      const { item, product: p } = await stocked('Maïs', [[10000, 300]]);
+      const d = await distribute({
+        batchId: undefined,
+        buildingId: world.poultryBld,
+        feedProductId: p.id,
+        quantityKg: 100,
+      });
+      for (let round = 0; round < 8; round++) {
+        await Promise.all([
+          patch(d.id, { quantityKg: 200 }),
+          patch(d.id, { quantityKg: 100 }),
+        ]);
+        const row = await prisma.feedDistribution.findUniqueOrThrow({
+          where: { id: d.id },
+        });
+        const moved = await prisma.stockMovement.findMany({
+          where: { sourceId: d.id },
+        });
+        expect(moved.map((m) => Math.abs(Number(m.quantity)))).toEqual([
+          Number(row.quantityKg),
+        ]);
+        expect(await level(item.id)).toMatchObject({
+          quantity: 10000 - Number(row.quantityKg),
+        });
+        // Put the row back to 100 for the next round whichever order won.
+        await patch(d.id, { quantityKg: 100 });
+      }
+    });
 
     it('two parallel edits of the same distribution leave exactly one set of movements', async () => {
       const a = await stocked('Maïs', [[1000, 300]]);

@@ -106,14 +106,21 @@ export class StockItemsService {
 
   create(ctx: RequestContext, dto: CreateStockItemDto): Promise<StockItemItem> {
     return orConflict(() =>
-      this.prisma.$transaction(async (tx) => {
-        const created = await tx.stockItem.create({
-          data: { ...dto, organizationId: ctx.user.organizationId },
-        });
-        await this.log(tx, ctx, 'CREATE', created, undefined, created);
-        return toItem(created);
-      }),
+      this.prisma.$transaction((tx) => this.createIn(tx, ctx, dto)),
     );
+  }
+
+  /** `create` inside the caller's transaction (the caller maps a name clash with `orConflict`). */
+  async createIn(
+    tx: Prisma.TransactionClient,
+    ctx: RequestContext,
+    dto: CreateStockItemDto,
+  ): Promise<StockItemItem> {
+    const created = await tx.stockItem.create({
+      data: { ...dto, organizationId: ctx.user.organizationId },
+    });
+    await this.log(tx, ctx, 'CREATE', created, undefined, created);
+    return toItem(created);
   }
 
   update(

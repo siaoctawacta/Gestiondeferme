@@ -8,8 +8,9 @@ import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { FeedProduct, Prisma } from '../generated/prisma/client';
 import type { AuditAction } from '../generated/prisma/enums';
+import { AccessService } from '../access/access.service';
 import { lockRow } from '../common/lock-row';
-import { toItem as toStockItem } from '../stock/stock-items.service';
+import { StockItemsService } from '../stock/stock-items.service';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
@@ -34,6 +35,7 @@ export interface FeedProductItem {
 const NOT_FOUND = 'Aliment introuvable';
 const STOCK_INVALID = 'Article de stock invalide';
 const STOCK_CATEGORY = "L'article de stock doit être de catégorie Aliment";
+const STOCK_INACTIVE = "L'article de stock est inactif";
 const STOCK_UNIT = "L'article de stock doit être en kg";
 const STOCK_TAKEN = 'Cet article de stock est déjà lié à un autre aliment';
 const LINK_LOCKED =
@@ -56,6 +58,8 @@ export class FeedProductsService {
   constructor(
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
+    private readonly access: AccessService,
+    private readonly stockItems: StockItemsService,
   ) {}
 
   list(ctx: RequestContext, q: FeedProductQueryDto) {
@@ -114,6 +118,27 @@ export class FeedProductsService {
     );
   }
 
+  /**
+   * `orConflict` that tells the two unique constraints apart: a second product
+   * on the same article (a race past the pre-check) is not a name clash.
+   */
+  private async linkConflicts<T>(write: () => Promise<T>): Promise<T> {
+    return orConflict(async () => {
+      try {
+        return await write();
+      } catch (error) {
+        const e = error as { code?: string; meta?: unknown; message?: string };
+        if (
+          e.code === 'P2002' &&
+          JSON.stringify(e.meta ?? e.message ?? '').includes('stockItemId')
+        ) {
+          throw new ConflictException(STOCK_TAKEN);
+        }
+        throw error;
+      }
+    });
+  }
+
   /** The article exists in the organisation, is an Aliment counted in kg, and feeds no other product. */
   private async assertStockItem(
     tx: Prisma.TransactionClient,
@@ -125,6 +150,7 @@ export class FeedProductsService {
       where: { id: stockItemId, organizationId: ctx.user.organizationId },
     });
     if (!item) throw new BadRequestException(STOCK_INVALID);
+    if (!item.active) throw new BadRequestException(STOCK_INACTIVE);
     if (item.category !== 'ALIMENT') {
       throw new BadRequestException(STOCK_CATEGORY);
     }
@@ -158,7 +184,7 @@ export class FeedProductsService {
     ctx: RequestContext,
     dto: CreateFeedProductDto,
   ): Promise<FeedProductItem> {
-    return orConflict(() =>
+    return this.linkConflicts(() =>
       this.prisma.$transaction(async (tx) => {
         if (dto.stockItemId) {
           await this.assertStockItem(tx, ctx, dto.stockItemId);
@@ -177,7 +203,7 @@ export class FeedProductsService {
     id: string,
     dto: UpdateFeedProductDto,
   ): Promise<FeedProductItem> {
-    return orConflict(() =>
+    return this.linkConflicts(() =>
       this.prisma.$transaction(async (tx) => {
         await lockRow(tx, 'FeedProduct', id);
         const before = await this.find(tx, ctx, id);
@@ -200,8 +226,13 @@ export class FeedProductsService {
     );
   }
 
-  /** Creates the stock article named after the product (Aliment, kg) and links it. */
+  /**
+   * Creates the stock article named after the product (Aliment, kg) and links
+   * it. Creates stock master data, so it needs master on `stocks` as well as
+   * on `alimentation` (the route's rule).
+   */
   createStockItem(ctx: RequestContext, id: string): Promise<FeedProductItem> {
+    this.access.assertMaster(ctx, 'stocks');
     return orConflict(
       () =>
         this.prisma.$transaction(async (tx) => {
@@ -209,25 +240,11 @@ export class FeedProductsService {
           const before = await this.find(tx, ctx, id);
           if (before.stockItemId) throw new ConflictException(STOCK_TAKEN);
           await this.assertNoDistributions(tx, id);
-          const item = await tx.stockItem.create({
-            data: {
-              organizationId: ctx.user.organizationId,
-              name: before.name,
-              category: 'ALIMENT',
-              unit: 'kg',
-            },
+          const item = await this.stockItems.createIn(tx, ctx, {
+            name: before.name,
+            category: 'ALIMENT',
+            unit: 'kg',
           });
-          await this.audit.log(
-            {
-              ctx,
-              module: 'stocks',
-              action: 'CREATE',
-              recordId: item.id,
-              label: item.name,
-              after: toStockItem(item),
-            },
-            tx,
-          );
           const updated = await tx.feedProduct.update({
             where: { id },
             data: { stockItemId: item.id },

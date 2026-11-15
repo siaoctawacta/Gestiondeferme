@@ -6,7 +6,8 @@ import {
 } from '../herd/batch-history';
 import { lockRow } from '../common/lock-row';
 import { Prisma } from '../generated/prisma/client';
-import type { FeedDistribution } from '../generated/prisma/client';
+import type { FeedDistribution, FeedProduct } from '../generated/prisma/client';
+import { formulaShares } from './formula-shares';
 import {
   FEED_COST,
   LotCostRegistry,
@@ -93,6 +94,51 @@ export class FeedService
   }
 
   /**
+   * Locks what prices a distribution, in the fixed order formula, then
+   * products by id, and reads it once under those locks. A link change
+   * (`FeedProductsService`) takes the product lock too, so a distribution
+   * never sees a link half-changed. Called BEFORE the distribution row is
+   * inserted or its feed changed: the row's foreign key takes a key-share lock
+   * on the product, which would deadlock with a link change that holds the
+   * product lock and waits to update the unique column.
+   */
+  async lockFeed(
+    tx: Prisma.TransactionClient,
+    ids: { feedProductId?: string | null; formulaId?: string | null },
+  ): Promise<{ product: FeedProduct; percentage: Decimal }[]> {
+    if (!ids.feedProductId === !ids.formulaId) return [];
+    let shares: { productId: string; percentage: Decimal }[];
+    if (ids.feedProductId) {
+      shares = [
+        { productId: ids.feedProductId, percentage: new Prisma.Decimal(100) },
+      ];
+    } else {
+      const formulaId = ids.formulaId ?? '';
+      await lockRow(tx, 'FeedFormula', formulaId);
+      shares = (
+        await tx.feedFormulaItem.findMany({
+          where: { formulaId },
+          orderBy: [{ percentage: 'desc' }, { id: 'asc' }],
+        })
+      ).map((i) => ({ productId: i.feedProductId, percentage: i.percentage }));
+    }
+    for (const id of shares.map((x) => x.productId).sort()) {
+      await lockRow(tx, 'FeedProduct', id);
+    }
+    const products = new Map(
+      (
+        await tx.feedProduct.findMany({
+          where: { id: { in: shares.map((x) => x.productId) } },
+        })
+      ).map((p) => [p.id, p]),
+    );
+    return shares.flatMap((x) => {
+      const product = products.get(x.productId);
+      return product ? [{ product, percentage: x.percentage }] : [];
+    });
+  }
+
+  /**
    * Called inside the distribution's transaction after every create (`before`
    * null), update and delete (`after` null), BEFORE the response item and the
    * audit row are built. The service then reprices the row with what it returns.
@@ -100,12 +146,13 @@ export class FeedService
    * A product linked to a stock item consumes it: one `SORTIE` (reason
    * `CONSOMMATION`, source `FEED_DISTRIBUTION`) of `quantityKg`, on the
    * distribution's farm, valued by the ledger at the weighted-average cost. A
-   * formula writes one exit per linked ingredient (`quantityKg × percentage /
-   * 100`, rounded to 2 decimals, the stock's precision); unlinked ingredients
-   * contribute their catalogue price × share and move no stock. The returned
-   * `cost` is the sum of the ledger's exit costs and those shares, and the unit
-   * cost is `cost / quantityKg` (2 decimals). A feed with no linked product
-   * returns nothing: the service keeps the catalogue price.
+   * formula writes one exit per linked ingredient; the quantity is shared by
+   * largest remainder (`formulaShares`) so the shares add up to `quantityKg`
+   * to the hundredth. Unlinked ingredients contribute their catalogue price x
+   * share and move no stock. The returned `cost` is the sum of the ledger's
+   * exit costs and those shares, and the unit cost is `cost / quantityKg` (2
+   * decimals). A feed with no linked ingredient returns nothing: the service
+   * keeps the catalogue price.
    *
    * The cost is frozen when the distribution is written: a later stock entry,
    * even back-dated, re-costs the ledger's exits but does not rewrite the
@@ -114,10 +161,10 @@ export class FeedService
    *
    * Create = `recordMany`, edit = `replaceBySource`, delete =
    * `reverseBySource`, one ledger call per transaction. Locks, in order: the
-   * lot or building and the distribution row (the service), then the feed
-   * products (by id), then the ledger's (farm, article) locks (by article id).
-   * Reversal goes through the movements keyed by the distribution's id, never
-   * through the current formula, whose composition may have changed.
+   * lot (a building has no row lock), the distribution row on edit and delete
+   * (the service), the formula, the products by id (`lockFeed`), then the
+   * ledger's (farm, article) locks by article id. Reversal goes through the
+   * movements keyed by the distribution's id, never through the current formula.
    */
   async afterDistributionChange(
     tx: Prisma.TransactionClient,
@@ -147,6 +194,7 @@ export class FeedService
       return;
     }
     const plan = await this.plan(tx, ctx, after);
+    let results: RecordResult[] = [];
     if (before) {
       if (plan.inputs.length === 0) {
         await this.ledger.reverseBySource(
@@ -157,18 +205,17 @@ export class FeedService
           [after.farmId],
         );
       } else {
-        const { results } = await this.ledger.replaceBySource(
+        ({ results } = await this.ledger.replaceBySource(
           tx,
           'FEED_DISTRIBUTION',
           after.id,
           plan.inputs,
           undefined,
           [after.farmId],
-        );
-        return this.priced(after, plan, results);
+        ));
       }
     } else if (plan.inputs.length > 0) {
-      const results = await this.ledger.recordMany(
+      results = await this.ledger.recordMany(
         tx,
         plan.inputs.map((i) => ({
           ...i,
@@ -176,9 +223,16 @@ export class FeedService
           sourceId: after.id,
         })),
       );
-      return this.priced(after, plan, results);
     }
-    return;
+    if (!plan.anyLinked) return;
+    const total = results.reduce(
+      (sum, r) => sum.add(r.cost),
+      plan.unlinkedCost,
+    );
+    return {
+      cost: total.toDecimalPlaces(2),
+      unitCost: total.div(after.quantityKg).toDecimalPlaces(2),
+    };
   }
 
   /** The exits a distribution writes, and what its unlinked ingredients cost. */
@@ -189,70 +243,35 @@ export class FeedService
   ): Promise<{
     inputs: Omit<RecordInput, 'sourceType' | 'sourceId' | 'audit'>[];
     unlinkedCost: Decimal;
+    anyLinked: boolean;
   }> {
-    const ids = d.feedProductId
-      ? [d.feedProductId]
-      : (
-          await tx.feedFormulaItem.findMany({
-            where: { formulaId: d.formulaId ?? '' },
-            select: { feedProductId: true },
-          })
-        ).map((i) => i.feedProductId);
-    // A link cannot change under a running distribution: take the product locks first.
-    for (const id of [...ids].sort()) await lockRow(tx, 'FeedProduct', id);
-    const shares = d.feedProductId
-      ? [
-          {
-            product: await tx.feedProduct.findUniqueOrThrow({
-              where: { id: d.feedProductId },
-            }),
-            fraction: new Prisma.Decimal(1),
-          },
-        ]
-      : (
-          await tx.feedFormulaItem.findMany({
-            where: { formulaId: d.formulaId ?? '' },
-            include: { feedProduct: true },
-          })
-        ).map((i) => ({
-          product: i.feedProduct,
-          fraction: i.percentage.div(100),
-        }));
+    const lines = await this.lockFeed(tx, d);
+    const shares = formulaShares(
+      d.quantityKg,
+      lines.map((l) => l.percentage),
+    );
     const inputs: Omit<RecordInput, 'sourceType' | 'sourceId' | 'audit'>[] = [];
     let unlinkedCost = new Prisma.Decimal(0);
-    for (const { product, fraction } of shares) {
-      const share = d.quantityKg.mul(fraction);
+    lines.forEach(({ product }, i) => {
+      const share = shares[i];
       if (!product.stockItemId) {
         unlinkedCost = unlinkedCost.add(share.mul(product.unitCost));
-        continue;
+      } else if (!share.isZero()) {
+        inputs.push({
+          farmId: d.farmId,
+          stockItemId: product.stockItemId,
+          date: d.date,
+          type: 'SORTIE',
+          quantity: share.neg(),
+          reason: 'CONSOMMATION',
+          userId: ctx.user.id,
+        });
       }
-      const quantity = share.toDecimalPlaces(2);
-      if (quantity.isZero()) continue;
-      inputs.push({
-        farmId: d.farmId,
-        stockItemId: product.stockItemId,
-        date: d.date,
-        type: 'SORTIE',
-        quantity: quantity.neg(),
-        reason: 'CONSOMMATION',
-        userId: ctx.user.id,
-      });
-    }
-    return { inputs, unlinkedCost };
-  }
-
-  private priced(
-    d: FeedDistribution,
-    plan: { unlinkedCost: Decimal },
-    results: RecordResult[],
-  ): { unitCost: Decimal; cost: Decimal } {
-    const total = results.reduce(
-      (sum, r) => sum.add(r.cost),
-      plan.unlinkedCost,
-    );
+    });
     return {
-      cost: total.toDecimalPlaces(2),
-      unitCost: total.div(d.quantityKg).toDecimalPlaces(2),
+      inputs,
+      unlinkedCost,
+      anyLinked: lines.some((l) => l.product.stockItemId),
     };
   }
 }

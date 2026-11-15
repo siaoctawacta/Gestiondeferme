@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -7,6 +8,7 @@ import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
 import type { AuditAction } from '../generated/prisma/enums';
+import { lockRow } from '../common/lock-row';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
@@ -44,6 +46,8 @@ export interface FeedFormulaItem {
 }
 
 const NOT_FOUND = 'Formule introuvable';
+export const FORMULA_USED =
+  'Cette formule a déjà des distributions : créez une nouvelle formule';
 const SORTABLE = ['name', 'stage'];
 
 const toItem = (f: Row): FeedFormulaItem => ({
@@ -107,6 +111,18 @@ export class FeedFormulasService {
     });
     if (!row) throw new NotFoundException(NOT_FOUND);
     return row;
+  }
+
+  /** Whether `items` differ from the stored composition (order does not matter). */
+  private changesItems(stored: Row, items: FormulaItemDto[]): boolean {
+    const key = (id: string, pct: number) => `${id}:${Math.round(pct * 100)}`;
+    const was = new Set(
+      stored.items.map((i) => key(i.feedProductId, Number(i.percentage))),
+    );
+    return (
+      items.length !== was.size ||
+      items.some((i) => !was.has(key(i.feedProductId, i.percentage)))
+    );
   }
 
   /** Items must be distinct products of the organisation and total 100 % (± 0.01). */
@@ -185,9 +201,17 @@ export class FeedFormulasService {
   ): Promise<FeedFormulaItem> {
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
+        // Distributions lock the formula too: the check below holds until we commit.
+        await lockRow(tx, 'FeedFormula', id);
         const before = await this.find(tx, ctx, id);
         const { items, ...fields } = dto;
-        if (items) {
+        if (items && this.changesItems(before, items)) {
+          // What was fed stays what it was: only a formula without distributions changes composition.
+          if (
+            (await tx.feedDistribution.count({ where: { formulaId: id } })) > 0
+          ) {
+            throw new ConflictException(FORMULA_USED);
+          }
           await this.assertItems(tx, ctx, items);
           await tx.feedFormulaItem.deleteMany({ where: { formulaId: id } });
           await tx.feedFormulaItem.createMany({
