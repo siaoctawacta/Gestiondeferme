@@ -37,7 +37,12 @@ const LIST = [
 ];
 const COUNTS = { DEMANDE: 1, VALIDEE: 0, COMMANDEE: 1, RECUE: 1, PAYEE: 0, ANNULEE: 0 };
 
-const line = (o: object) => ({ receivedQuantity: null, lotNumber: null, expiryDate: null, unit: 'kg', ...o });
+/** A line as the API sends it: `amount` (received quantity once received) and `orderedAmount` are computed there; tests may state them. */
+const line = (o: { quantity?: number; unitPrice?: number; receivedQuantity?: number | null } & Record<string, unknown>) => {
+  const { quantity = 0, unitPrice = 0, receivedQuantity = null } = o;
+  const cents = (q: number) => Math.round(q * unitPrice * 100) / 100;
+  return { receivedQuantity: null, lotNumber: null, expiryDate: null, unit: 'kg', amount: cents(receivedQuantity ?? quantity), orderedAmount: cents(quantity), ...o };
+};
 const DETAILS: Record<string, unknown> = {
   p1: {
     ...LIST[0], ...base,
@@ -699,21 +704,26 @@ describe('purchase detail', () => {
     expect(screen.queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
   });
 
-  it('rounds line amounts to 2 decimals on the Lignes tab and the printed sheet', async () => {
+  it('shows the amounts the API stored on the Lignes tab and the printed sheet, multiplying nothing itself', async () => {
+    // 0.7 × 12.25 is 8.575: the API (Decimal, half away from zero) stores 8.58, where float arithmetic gives 8.57.
     DETAILS.p7 = {
-      ...(DETAILS.p1 as object), id: 'p7', reference: 'BC-0160', amount: 868435.05 + 3.3,
+      ...(DETAILS.p1 as object), id: 'p7', reference: 'BC-0160', amount: 868435.05 + 8.58 + 40,
       lines: [
         line({ itemId: 's2', itemName: 'Aliment ponte', quantity: 2800.5, unitPrice: 310.1 }),
-        line({ itemId: 's1', itemName: 'Aliment croissance chair', quantity: 3, unitPrice: 1.1 }),
+        line({ itemId: 's1', itemName: 'Aliment croissance chair', quantity: 0.7, unitPrice: 12.25, amount: 8.58, orderedAmount: 8.58 }),
+        // Ordered 10 at 5, received 8: the tab shows what was received, the bon de commande what was ordered.
+        line({ itemId: 's4', itemName: 'Vaccin Gumboro', quantity: 10, unitPrice: 5, receivedQuantity: 8, amount: 40, orderedAmount: 50 }),
       ],
     };
     mountDetail('p7');
     await screen.findByRole('heading', { name: 'BC-0160' });
-    expect(cells(screen.getAllByText('Aliment croissance chair')[0].closest('tr'))).toContain('3.3 FCFA');
+    expect(cells(screen.getAllByText('Aliment croissance chair')[0].closest('tr'))).toContain('8.58 FCFA');
     expect(cells(screen.getAllByText('Aliment ponte')[0].closest('tr'))).toContain('868 435.05 FCFA');
+    expect(cells(screen.getAllByText('Vaccin Gumboro')[0].closest('tr'))).toContain('40 FCFA');
     const sheet = screen.getByRole('region', { name: 'Bon de commande' });
-    expect(cells(within(sheet).getByText('Aliment croissance chair').closest('tr'))).toContain('3.3 FCFA');
-    expect(flat(within(sheet).getByText(/^Total/).textContent)).toBe('Total : 868 438.35 FCFA');
+    expect(cells(within(sheet).getByText('Aliment croissance chair').closest('tr'))).toContain('8.58 FCFA');
+    expect(cells(within(sheet).getByText('Vaccin Gumboro').closest('tr'))).toContain('50 FCFA');
+    expect(flat(within(sheet).getByText(/^Total/).textContent)).toBe('Total : 868 493.63 FCFA');
   });
 
   it('prints the bon de commande once ordered, with the farm legal block and the ordered lines', async () => {

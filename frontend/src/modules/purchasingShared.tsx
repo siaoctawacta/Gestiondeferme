@@ -36,6 +36,10 @@ export interface PurchaseLine {
   unit: string;
   quantity: number;
   unitPrice: number;
+  /** The stored amount of the line (the API computes it): received quantity once received, else the ordered one. */
+  amount: number;
+  /** Ordered quantity × unit price, whatever was received: what the bon de commande states. */
+  orderedAmount: number;
   /** Set by the reception. */
   receivedQuantity: number | null;
   lotNumber: string | null;

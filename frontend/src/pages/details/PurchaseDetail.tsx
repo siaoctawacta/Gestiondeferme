@@ -4,7 +4,6 @@ import { Printer, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { formatDate, formatMoney, formatNumber } from '../../lib/format';
-import { lineAmount } from '../../lib/money';
 import { farmKey, useFarmQuery } from '../../lib/query';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ActionButton } from '../../components/module/DataTable';
@@ -36,7 +35,6 @@ function Heads({ labels, plain = false }: { labels: string[]; plain?: boolean })
 }
 
 function LinesTab({ data }: { data: PurchaseData }) {
-  const received = data.lines.some((l) => l.receivedQuantity !== null);
   return (
     <Card className="overflow-hidden">
       <Table>
@@ -50,7 +48,7 @@ function LinesTab({ data }: { data: PurchaseData }) {
               <TD>{l.receivedQuantity === null ? '—' : `${formatNumber(l.receivedQuantity)} ${l.unit}`}</TD>
               <TD>{l.lotNumber ?? '—'}</TD>
               <TD>{l.expiryDate ? formatDate(l.expiryDate) : '—'}</TD>
-              <TD>{formatMoney(lineAmount(received ? (l.receivedQuantity ?? 0) : l.quantity, l.unitPrice))}</TD>
+              <TD>{formatMoney(l.amount)}</TD>
             </TR>
           ))}
         </tbody>
@@ -121,7 +119,8 @@ function HistoryTab({ data }: { data: PurchaseData }) {
  * cannot read them.
  */
 function PurchaseOrderSheet({ data, farmName, legal }: { data: PurchaseData; farmName: string | undefined; legal: Legal | undefined }) {
-  const total = data.lines.reduce((sum, l) => sum + lineAmount(l.quantity, l.unitPrice), 0);
+  // What was ordered, as the API computed each line; the sum of 2-decimal amounts, re-rounded only against float noise.
+  const total = Math.round(data.lines.reduce((sum, l) => sum + l.orderedAmount, 0) * 100) / 100;
   return (
     <section aria-label="Bon de commande" className="hidden space-y-6 text-sm print:block">
       <header className="flex items-start justify-between gap-6 border-b border-border pb-4">
@@ -153,12 +152,12 @@ function PurchaseOrderSheet({ data, farmName, legal }: { data: PurchaseData; far
               <TD>{l.itemName}</TD>
               <TD>{formatNumber(l.quantity)} {l.unit}</TD>
               <TD>{formatMoney(l.unitPrice)}</TD>
-              <TD>{formatMoney(lineAmount(l.quantity, l.unitPrice))}</TD>
+              <TD>{formatMoney(l.orderedAmount)}</TD>
             </TR>
           ))}
         </tbody>
       </Table>
-      <p className="text-right text-base font-bold">Total : {formatMoney(Math.round(total * 100) / 100)}</p>
+      <p className="text-right text-base font-bold">Total : {formatMoney(total)}</p>
     </section>
   );
 }
