@@ -187,22 +187,6 @@ describe('allocateExit', () => {
     ).toThrow(AllocationError);
   });
 
-  it('serves a preferred lot first, then the others', () => {
-    const rows = [row('2026-01-01', 'A', 10), row('2026-01-01', 'B', 10)];
-    const pieces = allocateExit({
-      rows,
-      batches: [A, B],
-      date: day('2026-01-10'),
-      needed: D(15),
-      consumption: true,
-      prefer: 'B',
-    });
-    expect(take(pieces)).toEqual([
-      ['B', -10],
-      ['A', -5],
-    ]);
-  });
-
   it('reports what is available when the stock is short', () => {
     try {
       allocateExit({

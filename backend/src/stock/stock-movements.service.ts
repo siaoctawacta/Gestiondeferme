@@ -31,6 +31,8 @@ export interface MovementItem {
   id: string;
   /** Shared by the pieces of one operation (an exit split across lots): editing or deleting one acts on all. */
   operationId: string;
+  /** The exit was asked from this lot (an edit keeps it there) rather than picked by FEFO. */
+  lotExplicit: boolean;
   date: string;
   itemId: string;
   itemName: string;
@@ -62,6 +64,7 @@ export const movementItems = (rows: Row[]): MovementItem[] =>
   rows.map((r) => ({
     id: r.id,
     operationId: r.operationId,
+    lotExplicit: r.lotExplicit,
     date: formatDay(r.date),
     itemId: r.stockItemId,
     itemName: r.stockItem.name,
@@ -124,7 +127,7 @@ export class StockMovementsService {
         where: { id: { in: ids } },
         include,
         relationLoadStrategy: 'join',
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        orderBy: [{ createdAt: 'asc' }, { quantity: 'asc' }, { id: 'asc' }],
       }),
     );
   }

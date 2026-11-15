@@ -806,6 +806,8 @@ model StockMovement {
   sourceId     String?
   /// Shared by the pieces of one operation (FEFO may split an exit across lots); a movement written alone carries its own id.
   operationId  String
+  /// The exit was asked from this very lot (not picked by FEFO): an edit keeps it on that lot.
+  lotExplicit  Boolean           @default(false)
   note         String?
   createdById  String
   createdBy    User              @relation(fields: [createdById], references: [id], onDelete: Restrict)

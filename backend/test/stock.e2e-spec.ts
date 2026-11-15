@@ -37,6 +37,7 @@ interface Row {
 interface Mv {
   id: string;
   operationId: string;
+  lotExplicit: boolean;
   date: string;
   itemId: string;
   type: string;
@@ -941,6 +942,46 @@ describe('Stock (e2e)', () => {
         'UPDATE',
         'DELETE',
       ]);
+    });
+
+    it('flags an exit asked from a lot, keeps it on that lot when edited, and refuses what the lot cannot hold', async () => {
+      const { headers: h } = await actor('RESP_STOCK');
+      const it = await item(h, 'Vaccin', {
+        category: 'VACCIN',
+        unit: 'flacon',
+      });
+      await entry(h, it.id, 50, 10, daysAgo(40), {
+        lotNumber: 'A',
+        expiryDate: '2027-06-01',
+      });
+      const b = await entry(h, it.id, 50, 10, daysAgo(40), {
+        lotNumber: 'B',
+        expiryDate: '2027-12-01',
+      });
+      const named = (
+        await exit(h, it.id, 10, daysAgo(2), {
+          stockBatchId: b.batchId,
+        }).expect(201)
+      ).body as Mv[];
+      expect(named[0].lotExplicit).toBe(true);
+      const fefo = (await exit(h, it.id, 5, daysAgo(2)).expect(201))
+        .body as Mv[];
+      expect(fefo[0].lotExplicit).toBe(false);
+      await http()
+        .patch(`/api/stock/movements/${named[0].id}`)
+        .set(h)
+        .send({ quantity: 50 })
+        .expect(200);
+      await http()
+        .patch(`/api/stock/movements/${named[0].id}`)
+        .set(h)
+        .send({ quantity: 51 })
+        .expect(400)
+        .expect((r) =>
+          expect((r.body as Msg).message).toBe(
+            'Stock insuffisant pour Vaccin, lot B (disponible 50 flacon)',
+          ),
+        );
     });
   });
 

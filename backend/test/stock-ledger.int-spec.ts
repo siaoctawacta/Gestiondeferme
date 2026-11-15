@@ -461,6 +461,38 @@ describe('StockLedgerService (test database)', () => {
       expect(await batchQty()).toEqual({ OLD: 0, OK: 5 });
     });
 
+    it('does not let a consumption that is already expired in the history block unrelated writes', async () => {
+      const a = await batch('A', '2026-01-05', 100, '2026-01-01');
+      // Written before expiry rules were enforced (or by a lot edit): consumption dated after the expiry.
+      await prisma.stockMovement.create({
+        data: {
+          farmId,
+          stockItemId: item,
+          stockBatchId: a.id,
+          date: day('2026-01-10'),
+          type: 'SORTIE',
+          quantity: -10,
+          unitCost: 300,
+          reason: 'CONSOMMATION',
+          operationId: 'legacy',
+          createdById: userId,
+        },
+      });
+      await expect(entry('2026-01-20', 5, 300)).resolves.toBeDefined();
+      await expect(
+        exit('2026-01-21', 1, { reason: 'PERTE', stockBatchId: a.id }),
+      ).resolves.toBeDefined();
+      // Touching that lot's expiry does re-check it.
+      const received = await prisma.stockMovement.findFirstOrThrow({
+        where: { stockBatchId: a.id, quantity: { gt: 0 } },
+      });
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.update(tx, received.id, { expiryDate: day('2026-01-06') }),
+        ),
+      ).rejects.toThrow('Lot périmé');
+    });
+
     it('refuses an expiry before the reception, when creating or editing a lot', async () => {
       await expect(
         prisma.$transaction((tx) =>
@@ -533,7 +565,7 @@ describe('StockLedgerService (test database)', () => {
     const pieces = () =>
       prisma.stockMovement.findMany({
         where: { quantity: { lt: 0 } },
-        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        orderBy: [{ createdAt: 'asc' }, { quantity: 'asc' }, { id: 'asc' }],
       });
 
     it('shares one operation id between the pieces of a split exit, and gives a lone movement its own', async () => {
@@ -582,6 +614,107 @@ describe('StockLedgerService (test database)', () => {
       expect(
         (await pieces()).map((m) => [m.stockBatchId, m.quantity.toNumber()]),
       ).toEqual([[a.id, -20]]);
+    });
+
+    it('keeps an edited exit at its place in the day and keeps its ids: a quantity change does not reorder the day', async () => {
+      await entry('2026-01-01', 100, 100);
+      const e1 = await exit('2026-01-05', 10);
+      await entry('2026-01-05', 100, 200);
+      const e2 = await exit('2026-01-05', 10);
+      expect(e2.unitCost.toNumber()).toBe(
+        Number(((90 * 100 + 100 * 200) / 190).toFixed(2)),
+      );
+      const id = e1.movements[0].id;
+      const created = e1.movements[0].createdAt;
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, id, { quantity: -20 }),
+      );
+      const rows = await prisma.stockMovement.findMany({
+        where: { type: 'SORTIE' },
+        orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+      });
+      expect(rows.map((r) => r.id)).toEqual([id, e2.movements[0].id]);
+      expect(rows[0].createdAt).toEqual(created);
+      expect(rows[0].unitCost.toNumber()).toBe(100);
+      // 80 @ 100 then 100 @ 200 before the second exit.
+      expect(rows[1].unitCost.toNumber()).toBe(
+        Number(((80 * 100 + 100 * 200) / 180).toFixed(2)),
+      );
+      // The id the client edited is still there to be edited again.
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, id, { quantity: -15 }),
+      );
+      expect((await level()).quantity).toBe(100 + 100 - 15 - 10);
+    });
+
+    it('rewrites only the pieces that change, and keeps the id of a piece whose lot survives', async () => {
+      await twoLots();
+      const out = await exit('2026-01-10', 150);
+      const [pa, pb] = out.movements;
+      const before = await prisma.stockMovement.findMany({
+        orderBy: { createdAt: 'asc' },
+      });
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, pa.id, { quantity: -170 }),
+      );
+      const after = await prisma.stockMovement.findMany({
+        orderBy: { createdAt: 'asc' },
+      });
+      const same = (id: string) => ({
+        b: before.find((r) => r.id === id)!,
+        a: after.find((r) => r.id === id)!,
+      });
+      expect(same(pa.id).a.updatedAt).toEqual(same(pa.id).b.updatedAt); // lot A piece unchanged (-100)
+      expect(same(pb.id).a.quantity.toNumber()).toBe(-70);
+      expect(after).toHaveLength(before.length);
+    });
+
+    it('puts an operation whose date changes at the end of the new day', async () => {
+      await entry('2026-01-01', 100, 100);
+      const e1 = await exit('2026-01-05', 10);
+      await exit('2026-01-06', 10);
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, e1.movements[0].id, { date: day('2026-01-06') }),
+      );
+      const rows = await prisma.stockMovement.findMany({
+        where: { type: 'SORTIE' },
+        orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+      });
+      expect(rows[1].id).toBe(e1.movements[0].id);
+      expect(rows[1].createdAt.getTime()).toBeGreaterThan(
+        rows[0].createdAt.getTime(),
+      );
+    });
+
+    it('re-plans an explicit-lot exit strictly on its lot, and a FEFO exit on FEFO', async () => {
+      const { a, b } = await twoLots();
+      const named = await exit('2026-01-10', 10, { stockBatchId: b.id });
+      expect(named.movements[0].lotExplicit).toBe(true);
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, named.movements[0].id, { quantity: -100 }),
+      );
+      expect(
+        (await pieces()).map((m) => [m.stockBatchId, m.quantity.toNumber()]),
+      ).toEqual([[b.id, -100]]);
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.update(tx, named.movements[0].id, { quantity: -101 }),
+        ),
+      ).rejects.toThrow(
+        /^Stock insuffisant pour Aliment ponte, lot B \(disponible 100 kg\)$/,
+      );
+      await prisma.stockMovement.deleteMany({ where: { quantity: { lt: 0 } } });
+      const fefo = await exit('2026-01-10', 60);
+      expect(fefo.movements[0].lotExplicit).toBe(false);
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, fefo.movements[0].id, { quantity: -130 }),
+      );
+      expect(
+        (await pieces()).map((m) => [m.stockBatchId, m.quantity.toNumber()]),
+      ).toEqual([
+        [a.id, -100],
+        [b.id, -30],
+      ]);
     });
 
     it('audits an operation once, keyed by its operation id, with the pieces in the payload', async () => {
@@ -686,6 +819,67 @@ describe('StockLedgerService (test database)', () => {
         ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 'new', []),
       );
       expect((await level()).quantity).toBe(100);
+    });
+
+    it('keeps ids and place in the day for an input whose date is unchanged, and re-plans an explicit lot strictly', async () => {
+      await entry('2026-01-01', 100, 10);
+      await prisma.$transaction((tx) =>
+        ledger.recordMany(tx, [
+          {
+            ...base(item, 10),
+            sourceType: 'FEED_DISTRIBUTION',
+            sourceId: 's1',
+          },
+        ]),
+      );
+      const first = await prisma.stockMovement.findFirstOrThrow({
+        where: { sourceId: 's1' },
+      });
+      await entry('2026-01-05', 50, 40); // later in the same day
+      await prisma.$transaction((tx) =>
+        ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 's1', [base(item, 25)]),
+      );
+      const again = await prisma.stockMovement.findFirstOrThrow({
+        where: { sourceId: 's1' },
+      });
+      expect(again.id).toBe(first.id);
+      expect(again.createdAt).toEqual(first.createdAt);
+      expect(again.operationId).toBe(first.operationId);
+      expect(again.quantity.toNumber()).toBe(-25);
+      expect(again.unitCost.toNumber()).toBe(10);
+
+      const lot = await prisma.$transaction(async (tx) => {
+        const b = await ledger.createBatch(tx, {
+          farmId,
+          stockItemId: item,
+          lotNumber: 'L9',
+          expiryDate: null,
+          receivedDate: day('2026-01-02'),
+        });
+        await ledger.record(
+          tx,
+          input({
+            type: 'ENTREE',
+            date: day('2026-01-02'),
+            quantity: 20,
+            stockBatchId: b.id,
+          }),
+        );
+        return b;
+      });
+      await prisma.$transaction((tx) =>
+        ledger.replaceBySource(tx, 'HEALTH_ACT', 'h1', [
+          { ...base(item, 5), stockBatchId: lot.id },
+        ]),
+      );
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.replaceBySource(tx, 'HEALTH_ACT', 'h1', [
+            { ...base(item, 21), stockBatchId: lot.id },
+          ]),
+        ),
+      ).rejects.toThrow(/lot L9/);
+      expect((await level()).quantity).toBe(100 - 25 + 50 + 20 - 5);
     });
 
     it('does not deadlock when two concurrent edits swap the articles of their operations', async () => {
@@ -1060,21 +1254,25 @@ describe('StockLedgerService (test database)', () => {
       ).toBe(70);
     });
 
-    it('averages the consumption of the last 30 days over reasons CONSOMMATION and TRAITEMENT only', async () => {
-      const startDay = daysAgo(0);
+    it('averages the consumption of the 30 days ending on the given day, over CONSOMMATION and TRAITEMENT only', async () => {
+      const now = new Date('2026-06-30T23:59:00.000Z');
       await record({
         type: 'ENTREE',
-        date: day(daysAgo(60)),
+        date: day('2026-01-01'),
         quantity: 100000,
         unitCost: 1,
       });
-      await exit(daysAgo(0), 3000);
-      await exit(daysAgo(29), 6000, { reason: 'TRAITEMENT' });
-      await exit(daysAgo(30), 9000); // outside the 30-day window
-      await exit(daysAgo(5), 9000, { reason: 'PERTE' });
-      const per = await ledger.dailyConsumption([farmId], [item]);
-      // The window is anchored on the server's day: skip the check if midnight passed while the data was written.
-      if (daysAgo(0) !== startDay) return;
+      await exit('2026-06-30', 3000); // today: in
+      await exit('2026-06-01', 6000, { reason: 'TRAITEMENT' }); // 29 days before: in
+      await exit('2026-05-31', 9000); // 30 days before: out
+      await exit('2026-06-15', 9000, { reason: 'PERTE' }); // not a consumption
+      const per = await ledger.dailyConsumption(
+        [farmId],
+        [item],
+        30,
+        prisma,
+        now,
+      );
       expect(per.get(levelKey(farmId, item))?.toNumber()).toBe(300);
     });
   });

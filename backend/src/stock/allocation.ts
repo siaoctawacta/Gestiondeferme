@@ -71,7 +71,7 @@ export function headrooms(
  * earliest expiry first (no expiry last), then the stock held in no lot. A
  * consumption never touches an expired lot (expiry before `date`); any other
  * exit writes expired lots off first. `batchId` names the only lot to use;
- * `prefer` a lot to serve first. Each bucket gives at most its headroom.
+ * Each bucket gives at most its headroom.
  */
 export function allocateExit(opts: {
   rows: AllocRow[];
@@ -80,7 +80,6 @@ export function allocateExit(opts: {
   needed: Decimal;
   consumption: boolean;
   batchId?: string | null;
-  prefer?: string | null;
 }): Piece[] {
   const { rows, batches, date, needed, consumption } = opts;
   const room = headrooms(rows, date);
@@ -111,11 +110,6 @@ export function allocateExit(opts: {
     ...fresh.map((b) => b.id),
     null,
   ];
-  if (opts.prefer && sequence.includes(opts.prefer)) {
-    sequence.splice(sequence.indexOf(opts.prefer), 1);
-    sequence.unshift(opts.prefer);
-  }
-
   const pieces: Piece[] = [];
   let remaining = needed;
   for (const id of sequence) {
