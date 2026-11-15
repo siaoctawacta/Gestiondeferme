@@ -486,6 +486,9 @@ export class BreedingService implements LitterWeaningSource {
       if (row.farrowingDate && date < row.farrowingDate) {
         throw new BadRequestException('La date est antérieure à la mise bas');
       }
+      // The weaning sits strictly after every event of the litter written so
+      // far (its own write-off included), even within the same millisecond.
+      let weanedAt = new Date();
       if (row.litterBatchId) {
         // Serialises with any other change to the litter before its count is read.
         // A closed litter takes no weaning, whether or not deaths are implied.
@@ -515,6 +518,14 @@ export class BreedingService implements LitterWeaningSource {
             audit: { ctx },
           });
         }
+        const latest = await tx.batchEvent.aggregate({
+          where: { batchId: row.litterBatchId },
+          _max: { createdAt: true },
+        });
+        const last = latest._max.createdAt;
+        if (last && last.getTime() >= weanedAt.getTime()) {
+          weanedAt = new Date(last.getTime() + 1);
+        }
       } else if (dto.weanedCount > 0) {
         throw new BadRequestException(
           'Aucun porcelet né vivant : le nombre de sevrés doit être 0',
@@ -525,7 +536,7 @@ export class BreedingService implements LitterWeaningSource {
         data: {
           status: 'SEVRAGE',
           weaningDate: date,
-          weanedAt: new Date(),
+          weanedAt,
           weanedCount: dto.weanedCount,
         },
       });

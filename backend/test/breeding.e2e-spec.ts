@@ -1206,6 +1206,52 @@ describe('Breeding (e2e)', () => {
         .expect(200);
     });
 
+    it('the write-off of a weaning counts as before it even when both are stamped in the same millisecond', async () => {
+      const { headers, rec } = await freshLitter();
+      jest.useFakeTimers({
+        now: new Date(),
+        doNotFake: [
+          'hrtime',
+          'nextTick',
+          'performance',
+          'queueMicrotask',
+          'requestAnimationFrame',
+          'cancelAnimationFrame',
+          'requestIdleCallback',
+          'cancelIdleCallback',
+          'setImmediate',
+          'clearImmediate',
+          'setInterval',
+          'clearInterval',
+          'setTimeout',
+          'clearTimeout',
+        ],
+      });
+      try {
+        // 12 alive, 10 weaned: a write-off of 2 and the weaning share one instant.
+        await wean(headers, rec.id, 10).expect(200);
+        const writeOff = await prisma.batchEvent.findFirstOrThrow({
+          where: { batchId: rec.litterBatchId!, sourceType: 'BREEDING' },
+        });
+        const record = await prisma.breedingRecord.findUniqueOrThrow({
+          where: { id: rec.id },
+        });
+        expect(record.weanedAt!.getTime()).toBeGreaterThan(
+          writeOff.createdAt.getTime(),
+        );
+        // Counting the write-off, the 2 more deaths would leave 8 of 10.
+        await death(headers, rec.litterBatchId, daysAgo(2), 2).expect(400);
+        jest.setSystemTime(Date.now() + 5000);
+        await http()
+          .post(`/api/batches/${rec.litterBatchId}/events`)
+          .set(headers)
+          .send({ type: 'VENTE', date: daysAgo(1), quantity: 10 })
+          .expect(201);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+
     it('a pre-weaning event can go down in quantity, not up', async () => {
       const { headers, rec } = await freshLitter();
       const early = (await death(
