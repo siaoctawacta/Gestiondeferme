@@ -17,6 +17,8 @@ import {
   RequirePermission,
 } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
+import { formatDayOrNull } from '../common/days';
+import { WithdrawalRegistry } from '../herd/withdrawal';
 import { ListQueryDto } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
 import { AnimalsService } from './animals.service';
@@ -32,7 +34,10 @@ import {
 @ApiTags('animals')
 @Controller('animals')
 export class AnimalsController {
-  constructor(private readonly animals: AnimalsService) {}
+  constructor(
+    private readonly animals: AnimalsService,
+    private readonly withdrawal: WithdrawalRegistry,
+  ) {}
 
   @Get()
   @RequirePermission('porcs', 'read')
@@ -49,8 +54,15 @@ export class AnimalsController {
 
   @Get(':id')
   @RequirePermission('porcs', 'read')
-  get(@Ctx() ctx: RequestContext, @Param('id') id: string) {
-    return this.animals.get(ctx, id);
+  async get(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    const animal = await this.animals.get(ctx, id);
+    return {
+      ...animal,
+      // Last day (inclusive) under a withdrawal period, whatever it is today.
+      withdrawalUntil: formatDayOrNull(
+        await this.withdrawal.until({ animalId: id }),
+      ),
+    };
   }
 
   @Patch(':id')

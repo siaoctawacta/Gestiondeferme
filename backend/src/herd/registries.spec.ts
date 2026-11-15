@@ -2,6 +2,7 @@ import { AnimalTargetRegistry } from './animal-target';
 import { BatchHistoryRegistry } from './batch-history';
 import { BatchPerformanceRegistry } from './batch-performance';
 import { OccupationRegistry } from './occupation';
+import { WithdrawalRegistry } from './withdrawal';
 import { LotCostRegistry } from '../indicators/lot-cost';
 import { AlertsRegistry } from '../indicators/alerts/alerts-registry';
 
@@ -18,6 +19,7 @@ describe('the application registries', () => {
   it.each([
     ['historique des lots', () => new BatchHistoryRegistry()],
     ['alertes', () => new AlertsRegistry()],
+    ['délais d’attente', () => new WithdrawalRegistry()],
   ])('boots without a source for "%s"', (_name, make) => {
     expect(() => make().onApplicationBootstrap()).not.toThrow();
   });

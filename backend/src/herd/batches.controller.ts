@@ -15,6 +15,7 @@ import type { Response } from 'express';
 import { AccessService } from '../access/access.service';
 import { AnyAuthenticated, Ctx } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
+import { formatDayOrNull } from '../common/days';
 import { sendList } from '../listing/list-helpers';
 import { ListQueryDto } from '../listing/list-query.dto';
 import { BatchPerformanceRegistry } from './batch-performance';
@@ -27,6 +28,7 @@ import {
 } from './dto/batch.dto';
 import { CreateEventDto, TransferDto, UpdateEventDto } from './dto/event.dto';
 import { speciesModule } from './species';
+import { WithdrawalRegistry } from './withdrawal';
 
 /**
  * Poultry batches fall under `lots`, pig batches under `porcs`, so the module
@@ -40,6 +42,7 @@ export class BatchesController {
     private readonly events: BatchEventsService,
     private readonly access: AccessService,
     private readonly performance: BatchPerformanceRegistry,
+    private readonly withdrawal: WithdrawalRegistry,
   ) {}
 
   /**
@@ -93,7 +96,14 @@ export class BatchesController {
   async get(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     await this.guard(ctx, id, 'read');
     const batch = await this.batches.get(ctx, id);
-    return { ...batch, performance: await this.performance.get(ctx, id) };
+    return {
+      ...batch,
+      performance: await this.performance.get(ctx, id),
+      // Last day (inclusive) under a withdrawal period, whatever it is today.
+      withdrawalUntil: formatDayOrNull(
+        await this.withdrawal.until({ batchId: id }),
+      ),
+    };
   }
 
   @Patch(':id')

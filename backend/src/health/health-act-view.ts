@@ -1,0 +1,116 @@
+import { addDays, formatDay, formatDayOrNull, today } from '../common/days';
+import type { Prisma } from '../generated/prisma/client';
+import type { HealthActStatus, HealthActType } from '../generated/prisma/enums';
+import type { ExportColumn } from '../listing/export';
+
+/** What an act row needs of its target, loaded with it. */
+export const actInclude = {
+  batch: { select: { code: true } },
+  animal: { select: { tag: true } },
+  building: { select: { name: true } },
+} satisfies Prisma.HealthActInclude;
+
+export type ActRow = Prisma.HealthActGetPayload<{
+  include: typeof actInclude;
+}>;
+
+/** The stored statuses plus `EN_RETARD`, derived: planned and dated before today. */
+export type ActStatus = HealthActStatus | 'EN_RETARD';
+
+export interface HealthActItem {
+  id: string;
+  /** The planned date, or the day it was done for an act created as done. */
+  date: string;
+  doneDate: string | null;
+  /** Lot code, animal tag or building name. */
+  target: string;
+  targetKind: 'LOT' | 'ANIMAL' | 'BATIMENT';
+  batchId: string | null;
+  animalId: string | null;
+  buildingId: string | null;
+  type: HealthActType;
+  productName: string | null;
+  stockItemId: string | null;
+  stockBatchId: string | null;
+  dose: string | null;
+  quantity: number | null;
+  durationDays: number | null;
+  withdrawalDays: number | null;
+  veterinarian: string | null;
+  symptoms: string | null;
+  diagnosis: string | null;
+  status: ActStatus;
+  planId: string | null;
+  note: string | null;
+  /** Last day (inclusive) of the withdrawal period this act causes; done acts with a withdrawal only. */
+  withdrawalUntil: string | null;
+}
+
+const TYPE_LABEL: Record<HealthActType, string> = {
+  VACCINATION: 'Vaccination',
+  TRAITEMENT: 'Traitement',
+  DESINFECTION: 'Désinfection',
+  DIAGNOSTIC: 'Diagnostic',
+};
+
+const STATUS_LABEL: Record<ActStatus, string> = {
+  PLANIFIE: 'Planifié',
+  REALISE: 'Réalisé',
+  EN_RETARD: 'En retard',
+  ANNULE: 'Annulé',
+};
+
+export const ACT_STATUSES = Object.keys(STATUS_LABEL) as ActStatus[];
+export const actTypeLabel = (type: HealthActType): string => TYPE_LABEL[type];
+
+export const ACT_COLUMNS: ExportColumn<HealthActItem>[] = [
+  { header: 'Date', value: (a) => a.date },
+  { header: 'Lot / Animal', value: (a) => a.target },
+  { header: 'Type', value: (a) => TYPE_LABEL[a.type] },
+  { header: 'Produit', value: (a) => a.productName },
+  { header: 'Dose', value: (a) => a.dose },
+  { header: 'Vétérinaire', value: (a) => a.veterinarian },
+  { header: 'Statut', value: (a) => STATUS_LABEL[a.status] },
+];
+
+/** Last day under withdrawal: done date + treatment days + withdrawal days (inclusive). */
+export function withdrawalEnd(act: {
+  status: HealthActStatus;
+  doneDate: Date | null;
+  durationDays: number | null;
+  withdrawalDays: number | null;
+}): Date | null {
+  if (act.status !== 'REALISE' || !act.doneDate) return null;
+  if (act.withdrawalDays === null) return null;
+  return addDays(act.doneDate, (act.durationDays ?? 0) + act.withdrawalDays);
+}
+
+export function toActItem(row: ActRow, now: Date = today()): HealthActItem {
+  const overdue =
+    row.status === 'PLANIFIE' && row.date.getTime() < now.getTime();
+  return {
+    id: row.id,
+    date: formatDay(row.date),
+    doneDate: formatDayOrNull(row.doneDate),
+    target: row.batch?.code ?? row.animal?.tag ?? row.building?.name ?? '',
+    targetKind: row.batchId ? 'LOT' : row.animalId ? 'ANIMAL' : 'BATIMENT',
+    batchId: row.batchId,
+    animalId: row.animalId,
+    buildingId: row.buildingId,
+    type: row.type,
+    productName: row.productName,
+    stockItemId: row.stockItemId,
+    stockBatchId: row.stockBatchId,
+    dose: row.dose,
+    quantity: row.quantity ? row.quantity.toNumber() : null,
+    durationDays: row.durationDays,
+    withdrawalDays: row.withdrawalDays,
+    veterinarian: row.veterinarian,
+    symptoms: row.symptoms,
+    diagnosis: row.diagnosis,
+    status: overdue ? 'EN_RETARD' : row.status,
+    planId: row.planId,
+    note: row.note,
+    withdrawalUntil: formatDayOrNull(withdrawalEnd(row)),
+  };
+}

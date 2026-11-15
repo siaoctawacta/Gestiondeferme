@@ -120,23 +120,24 @@ enum AuditAction {
 }
 
 model Organization {
-  id           String        @id @default(cuid())
-  name         String
-  currency     String        @default("FCFA")
-  legalId      String?
-  address      String?
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  farms        Farm[]
-  users        User[]
-  settings     Setting[]
-  auditLogs    AuditLog[]
-  breeds       Breed[]
-  feedProducts FeedProduct[]
-  feedFormulas FeedFormula[]
-  stockItems   StockItem[]
-  suppliers    Supplier[]
-  purchases    Purchase[]
+  id               String            @id @default(cuid())
+  name             String
+  currency         String            @default("FCFA")
+  legalId          String?
+  address          String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  farms            Farm[]
+  users            User[]
+  settings         Setting[]
+  auditLogs        AuditLog[]
+  breeds           Breed[]
+  feedProducts     FeedProduct[]
+  feedFormulas     FeedFormula[]
+  stockItems       StockItem[]
+  suppliers        Supplier[]
+  purchases        Purchase[]
+  vaccinationPlans VaccinationPlan[]
 }
 
 model Farm {
@@ -169,6 +170,10 @@ model Farm {
   inventories       InventorySession[]
   purchases         Purchase[]
   supplierPayments  SupplierPayment[]
+  healthActs        HealthAct[]
+  quarantines       Quarantine[]
+  healthIncidents   HealthIncident[]
+  biosecurityLogs   BiosecurityLog[]
 }
 
 model Site {
@@ -200,6 +205,9 @@ model Building {
   animals           Animal[]
   feedDistributions FeedDistribution[]
   waterConsumptions WaterConsumption[]
+  healthActs        HealthAct[]
+  healthIncidents   HealthIncident[]
+  biosecurityLogs   BiosecurityLog[]
 
   @@unique([farmId, name])
   @@index([siteId])
@@ -255,6 +263,7 @@ model User {
   purchasesReceived    Purchase[]         @relation("PurchaseReceivedBy")
   purchasesCancelled   Purchase[]         @relation("PurchaseCancelledBy")
   supplierPayments     SupplierPayment[]
+  healthActs           HealthAct[]
 }
 
 model UserFarm {
@@ -401,6 +410,9 @@ model AnimalBatch {
   sourceOfIncubations Incubation[]       @relation("IncubationSource")
   hatchedFrom         Incubation?        @relation("IncubationChicks")
   litterOf            BreedingRecord?    @relation("BreedingLitter")
+  healthActs          HealthAct[]
+  quarantines         Quarantine[]
+  healthIncidents     HealthIncident[]
 
   @@unique([farmId, code])
   @@index([farmId])
@@ -507,34 +519,36 @@ model Incubation {
 }
 
 model Animal {
-  id         String            @id @default(cuid())
-  farmId     String
-  farm       Farm              @relation(fields: [farmId], references: [id])
-  tag        String
-  category   AnimalCategory
-  breedId    String?
-  breed      Breed?            @relation(fields: [breedId], references: [id], onDelete: Restrict)
-  sex        AnimalSex
-  birthDate  DateTime?         @db.Date
-  sireId     String?
-  sire       Animal?           @relation("Sire", fields: [sireId], references: [id], onDelete: Restrict)
-  damId      String?
-  dam        Animal?           @relation("Dam", fields: [damId], references: [id], onDelete: Restrict)
-  buildingId String
-  building   Building          @relation(fields: [buildingId], references: [id])
-  status     AnimalStatus      @default(ACTIF)
-  exitDate   DateTime?         @db.Date
-  exitReason AnimalExitReason?
-  notes      String?
-  createdAt  DateTime          @default(now())
-  updatedAt  DateTime          @updatedAt
-  sired      Animal[]          @relation("Sire")
-  born       Animal[]          @relation("Dam")
-  weighings  AnimalWeighing[]
-  heats      Heat[]
-  breedings  BreedingRecord[]  @relation("BreedingSow")
-  services   BreedingRecord[]  @relation("BreedingBoar")
-  litters    AnimalBatch[]     @relation("SowLitters")
+  id          String            @id @default(cuid())
+  farmId      String
+  farm        Farm              @relation(fields: [farmId], references: [id])
+  tag         String
+  category    AnimalCategory
+  breedId     String?
+  breed       Breed?            @relation(fields: [breedId], references: [id], onDelete: Restrict)
+  sex         AnimalSex
+  birthDate   DateTime?         @db.Date
+  sireId      String?
+  sire        Animal?           @relation("Sire", fields: [sireId], references: [id], onDelete: Restrict)
+  damId       String?
+  dam         Animal?           @relation("Dam", fields: [damId], references: [id], onDelete: Restrict)
+  buildingId  String
+  building    Building          @relation(fields: [buildingId], references: [id])
+  status      AnimalStatus      @default(ACTIF)
+  exitDate    DateTime?         @db.Date
+  exitReason  AnimalExitReason?
+  notes       String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+  sired       Animal[]          @relation("Sire")
+  born        Animal[]          @relation("Dam")
+  weighings   AnimalWeighing[]
+  heats       Heat[]
+  breedings   BreedingRecord[]  @relation("BreedingSow")
+  services    BreedingRecord[]  @relation("BreedingBoar")
+  litters     AnimalBatch[]     @relation("SowLitters")
+  healthActs  HealthAct[]
+  quarantines Quarantine[]
 
   @@unique([farmId, tag])
   @@index([farmId])
@@ -742,21 +756,23 @@ enum InventoryStatus {
 
 /// An article of the organisation's catalogue; its quantity per farm is the sum of that farm's movements.
 model StockItem {
-  id             String          @id @default(cuid())
+  id             String                @id @default(cuid())
   organizationId String
-  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   name           String
   category       StockCategory
   unit           String
-  active         Boolean         @default(true)
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  active         Boolean               @default(true)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
   farmItems      FarmStockItem[]
   batches        StockBatch[]
   movements      StockMovement[]
   inventoryLines InventoryLine[]
   feedProduct    FeedProduct?
   purchaseItems  PurchaseItem[]
+  healthActs     HealthAct[]
+  planItems      VaccinationPlanItem[]
 
   @@unique([organizationId, name])
 }
@@ -791,6 +807,7 @@ model StockBatch {
   createdAt    DateTime        @default(now())
   updatedAt    DateTime        @updatedAt
   movements    StockMovement[]
+  healthActs   HealthAct[]
 
   @@index([farmId])
   @@index([stockItemId])
@@ -986,4 +1003,187 @@ model SupplierPayment {
   @@index([farmId])
   @@index([purchaseId])
   @@index([createdById])
+}
+
+enum HealthActType {
+  VACCINATION
+  TRAITEMENT
+  DESINFECTION
+  DIAGNOSTIC
+}
+
+/// `EN_RETARD` is derived (planned and dated before today), never stored.
+enum HealthActStatus {
+  PLANIFIE
+  REALISE
+  ANNULE
+}
+
+enum QuarantineStatus {
+  EN_COURS
+  LEVEE
+}
+
+enum IncidentSeverity {
+  FAIBLE
+  MOYENNE
+  GRAVE
+}
+
+enum IncidentStatus {
+  OUVERT
+  CLOS
+}
+
+enum BiosecurityType {
+  NETTOYAGE
+  DESINFECTION
+  PEDILUVE
+  VISITEUR
+}
+
+/// A vaccination, treatment, disinfection or diagnosis on exactly one lot, animal or building (a disinfection: a building only).
+/// A done act with a stock article and a quantity consumes the stock through the ledger (source HEALTH_ACT, this row's id).
+model HealthAct {
+  id             String           @id @default(cuid())
+  farmId         String
+  farm           Farm             @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  /// The planned date, or the day it was done for an act created as done.
+  date           DateTime         @db.Date
+  type           HealthActType
+  batchId        String?
+  batch          AnimalBatch?     @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  animalId       String?
+  animal         Animal?          @relation(fields: [animalId], references: [id], onDelete: Restrict)
+  buildingId     String?
+  building       Building?        @relation(fields: [buildingId], references: [id], onDelete: Restrict)
+  stockItemId    String?
+  stockItem      StockItem?       @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
+  /// The product lot the exit was asked from; null = nearest expiry first.
+  stockBatchId   String?
+  stockBatch     StockBatch?      @relation(fields: [stockBatchId], references: [id], onDelete: Restrict)
+  productName    String?
+  dose           String?
+  quantity       Decimal?         @db.Decimal(12, 2)
+  durationDays   Int?
+  withdrawalDays Int?
+  veterinarian   String?
+  symptoms       String?
+  diagnosis      String?
+  status         HealthActStatus  @default(PLANIFIE)
+  /// Set exactly while the act is REALISE.
+  doneDate       DateTime?        @db.Date
+  planId         String?
+  plan           VaccinationPlan? @relation(fields: [planId], references: [id], onDelete: Restrict)
+  note           String?
+  createdById    String
+  createdBy      User             @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([farmId])
+  @@index([farmId, date])
+  @@index([batchId])
+  @@index([animalId])
+  @@index([buildingId])
+  @@index([stockItemId])
+  @@index([stockBatchId])
+  @@index([planId])
+  @@index([createdById])
+}
+
+/// Organisation master data: a vaccination programme applied to lots of one species.
+model VaccinationPlan {
+  id             String                @id @default(cuid())
+  organizationId String
+  organization   Organization          @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  name           String
+  species        Species
+  /// Lot type the plan is meant for; null = any type of the species.
+  type           BatchType?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  items          VaccinationPlanItem[]
+  acts           HealthAct[]
+
+  @@unique([organizationId, name])
+}
+
+model VaccinationPlanItem {
+  id          String          @id @default(cuid())
+  planId      String
+  plan        VaccinationPlan @relation(fields: [planId], references: [id], onDelete: Restrict)
+  /// Days after the lot's entry date.
+  ageDays     Int
+  productName String
+  stockItemId String?
+  stockItem   StockItem?      @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
+  dose        String?
+
+  @@index([planId])
+  @@index([stockItemId])
+}
+
+model Quarantine {
+  id        String           @id @default(cuid())
+  farmId    String
+  farm      Farm             @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  batchId   String?
+  batch     AnimalBatch?     @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  animalId  String?
+  animal    Animal?          @relation(fields: [animalId], references: [id], onDelete: Restrict)
+  startDate DateTime         @db.Date
+  /// Planned end while EN_COURS; the day it was lifted once LEVEE.
+  endDate   DateTime?        @db.Date
+  reason    String
+  status    QuarantineStatus @default(EN_COURS)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  @@index([farmId])
+  @@index([batchId])
+  @@index([animalId])
+}
+
+model HealthIncident {
+  id          String           @id @default(cuid())
+  farmId      String
+  farm        Farm             @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  date        DateTime         @db.Date
+  title       String
+  description String?
+  severity    IncidentSeverity
+  batchId     String?
+  batch       AnimalBatch?     @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  buildingId  String?
+  building    Building?        @relation(fields: [buildingId], references: [id], onDelete: Restrict)
+  status      IncidentStatus   @default(OUVERT)
+  /// Set exactly while the incident is CLOS.
+  closedAt    DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  @@index([farmId])
+  @@index([farmId, date])
+  @@index([batchId])
+  @@index([buildingId])
+}
+
+model BiosecurityLog {
+  id          String          @id @default(cuid())
+  farmId      String
+  farm        Farm            @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  date        DateTime        @db.Date
+  type        BiosecurityType
+  buildingId  String?
+  building    Building?       @relation(fields: [buildingId], references: [id], onDelete: Restrict)
+  productName String?
+  visitorName String?
+  note        String?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([farmId])
+  @@index([farmId, date])
+  @@index([buildingId])
 }

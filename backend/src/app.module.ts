@@ -9,6 +9,7 @@ import { EggsModule } from './eggs/eggs.module';
 import { FeedModule } from './feed/feed.module';
 import { HerdModule } from './herd/herd.module';
 import { HealthController } from './health/health.controller';
+import { HealthModule } from './health/health.module';
 import { IndicatorsModule } from './indicators/indicators.module';
 import { PigsModule } from './pigs/pigs.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -26,6 +27,7 @@ import { SuppliersModule } from './suppliers/suppliers.module';
     HerdModule,
     EggsModule,
     FeedModule,
+    HealthModule,
     PigsModule,
     BreedingModule,
     StockModule,
