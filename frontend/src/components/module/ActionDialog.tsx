@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
+import { useState, type FormEvent, type ReactNode } from 'react';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Dialog, DialogActions } from '../ui/Dialog';
@@ -18,11 +18,6 @@ export interface ActionDialogProps {
   fields: Field[] | ((values: Values) => Field[]);
   /** Initial values by field name (the record, for an edit); `defaultValue` of the field applies when creating only. */
   initial?: Values;
-  /**
-   * Called with the values as edited after every render (the initial ones first): lets the caller load what depends
-   * on a choice made in the form (the batches of the stock item picked). Keep what it stores primitive.
-   */
-  onValues?: (values: Values) => void;
   /** Text above the inputs. */
   intro?: ReactNode;
   /** Fields with `only` for the other mode are left out (default `create`). */
@@ -57,7 +52,7 @@ export interface ActionDialogProps {
  *   nothing sends no request and closes.
  */
 export function ActionDialog({
-  title, fields, initial = {}, onValues, intro, mode = 'create', submitLabel = 'Enregistrer', validate, toPayload, onSubmit, onClose, onDone,
+  title, fields, initial = {}, intro, mode = 'create', submitLabel = 'Enregistrer', validate, toPayload, onSubmit, onClose, onDone,
 }: ActionDialogProps) {
   const [edited, setEdited] = useState<Values>({});
   const [busy, setBusy] = useState(false);
@@ -68,8 +63,6 @@ export function ActionDialog({
   const all = typeof fields === 'function' ? fields({ ...initial, ...edited }) : fields;
   const shown = all.filter((f) => !f.only || f.only === mode);
   const values = valuesOf(edited, initial, shown, mode);
-
-  useEffect(() => { onValues?.(values); });
 
   /** Sets a field; every select depending on it is cleared, and theirs in turn (A -> B -> C). */
   const setField = (name: string, v: unknown) => {

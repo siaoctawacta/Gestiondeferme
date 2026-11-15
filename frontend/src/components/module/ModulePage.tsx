@@ -52,7 +52,7 @@ export interface ModuleListProps<T extends { id: string }> {
   config: ModuleConfig<T>;
   /** Fixed query parameters (merged over `config.scope`) for the list and the create payloads; never shown as filters. */
   scope?: Record<string, string>;
-  /** Hides the add, edit and delete controls (e.g. the embedded lists of a closed lot). */
+  /** Hides the add, edit and delete controls and the writing row actions (e.g. the embedded lists of a closed lot). */
   readOnly?: boolean;
   /** Hides `Ajouter` only: the rows keep their icons (disabled by `canEdit` / `canDelete` when the config says so). */
   noCreate?: boolean;
@@ -138,7 +138,7 @@ function ModuleView<T extends { id: string }>({
   };
 
   const tableActions: TableAction<T>[] = (config.actions ?? [])
-    .filter((a) => canRunAction(a.permission, config.slug, can, writable))
+    .filter((a) => canRunAction(a.permission, config.slug, can, writable && !readOnly && !(a.needsFarm && farmId === 'all')))
     .map((a) => ({
       key: a.key,
       label: a.label,

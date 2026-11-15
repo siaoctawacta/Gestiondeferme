@@ -1,5 +1,5 @@
 import {
-  formatDate, formatDateFr, formatDateTime, formatDateTimeFr, formatDecimal, formatMoney, formatNumber, formatPct, orDash, todayIso,
+  formatDate, formatDateFr, formatDateTime, formatDateTimeFr, formatDecimal, formatMoney, formatNumber, formatPct, orDash, todayIso, addDays,
 } from './format';
 
 describe('format', () => {
@@ -43,5 +43,10 @@ describe('format', () => {
   });
   it('returns a dash for an invalid date instead of throwing', () => {
     for (const f of [formatDate, formatDateFr, formatDateTime, formatDateTimeFr]) expect(f('pas une date')).toBe('—');
+  });
+  it('adds days to a calendar date in UTC, across month and year ends', () => {
+    expect(addDays('2026-11-15', 30)).toBe('2026-12-15');
+    expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
+    expect(addDays('2026-03-01', -1)).toBe('2026-02-28');
   });
 });

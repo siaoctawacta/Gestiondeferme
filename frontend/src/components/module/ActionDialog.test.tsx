@@ -22,6 +22,8 @@ function mount(props: Partial<ActionDialogProps> & { fields: ActionDialogProps['
     urls.push(url);
     if (url === '/api/auth/refresh') return json(200, { accessToken: 'acc', user: USER });
     if (url === '/api/auth/me') return json(200, { user: USER, farms: [{ id: 'f1', name: 'Ferme' }], canSeeAllFarms: true, permissions: {} });
+    const item = /^\/api\/items\/(\w+)$/.exec(url);
+    if (item) return json(200, { batches: [{ id: `b-${item[1]}`, n: Number(item[1].slice(1)) }] });
     if (url.startsWith('/api/zones')) {
       const site = new URL(url, 'http://x').searchParams.get('siteId');
       return json(200, { items: [{ id: `z-${site}`, name: `Zone ${site}` }], total: 1, page: 1, pageSize: 200 });
@@ -155,7 +157,7 @@ describe('ActionDialog: editing', () => {
   });
 });
 
-describe('ActionDialog: segmented field and value observer', () => {
+describe('ActionDialog: segmented field', () => {
   const fields: Field[] = [
     {
       name: 'kind', label: 'Genre', type: 'segmented', required: true, defaultValue: 'A',
@@ -172,12 +174,41 @@ describe('ActionDialog: segmented field and value observer', () => {
     await user.click(screen.getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ kind: 'B' }));
   });
+});
 
-  it('tells the observer the values as they change', async () => {
-    const seen: string[] = [];
-    mount({ fields, onValues: (v) => { seen.push(String(v.kind)); } });
-    await userEvent.setup().click(await screen.findByRole('radio', { name: 'Beta' }));
-    expect(seen[0]).toBe('A');
-    expect(seen.at(-1)).toBe('B');
+describe('ActionDialog: select with a path template', () => {
+  const fields: Field[] = [
+    { name: 'itemId', label: 'Article', type: 'select', options: [{ value: 'i1', label: 'Article 1' }, { value: 'i2', label: 'Article 2' }] },
+    {
+      name: 'batchId', label: 'Lot', type: 'select', dependsOn: 'itemId',
+      options: {
+        endpoint: '/items/{itemId}',
+        select: (data) => (data as { batches: { id: string; n: number }[] }).batches.map((b) => ({ value: b.id, label: `lot ${b.n}` })),
+      },
+    },
+  ];
+
+  it('waits for the parent without a request, loads the resolved path mapped to options, and clears on a parent change', async () => {
+    mount({ fields });
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Lot')).toBeDisabled();
+    expect(urls.some((u) => u.startsWith('/api/items'))).toBe(false);
+    const user = userEvent.setup();
+    await user.selectOptions(within(dialog).getByLabelText('Article'), 'Article 1');
+    await within(dialog).findByRole('option', { name: 'lot 1' });
+    // The parent value is part of the path, not a query parameter.
+    expect(urls.find((u) => u.startsWith('/api/items'))).toBe('/api/items/i1');
+    await user.selectOptions(within(dialog).getByLabelText('Lot'), 'lot 1');
+    await user.selectOptions(within(dialog).getByLabelText('Article'), 'Article 2');
+    expect(within(dialog).getByLabelText('Lot')).toHaveValue('');
+    await within(dialog).findByRole('option', { name: 'lot 2' });
+    expect(urls).toContain('/api/items/i2');
+  });
+
+  it('maps a fixed endpoint (no parent) too', async () => {
+    mount({
+      fields: [{ name: 'batchId', label: 'Lot', type: 'select', options: { endpoint: '/items/i3', select: (d) => (d as { batches: { id: string; n: number }[] }).batches.map((b) => ({ value: b.id, label: `lot ${b.n}` })) } }],
+    });
+    expect(await screen.findByRole('option', { name: 'lot 3' })).toBeInTheDocument();
   });
 });

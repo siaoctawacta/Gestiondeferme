@@ -122,7 +122,7 @@ export function AnimalDetail({ id }: { id: string }) {
           { key: 'weighings', label: 'Pesées', content: <ModuleList config={weighings} noCreate={left} /> },
           ...(breeding ? [{ key: 'breeding', label: 'Reproduction', content: <BreedingTab animalId={id} /> }] : []),
           ...(breeding ? [{ key: 'heats', label: 'Chaleurs', content: <ModuleList config={heats} noCreate={left} /> }] : []),
-          ...(health ? [{ key: 'health', label: 'Santé', content: <ModuleList config={health} scope={{ animalId: id }} noCreate={left} /> }] : []),
+          ...(health ? [{ key: 'health', label: 'Santé', content: <ModuleList config={health} scope={{ animalId: id }} readOnly={left} /> }] : []),
         ]}
       />
       {exiting && <ExitDialog animal={animal} onClose={() => setExiting(false)} onDone={() => { setExiting(false); refresh(); }} />}

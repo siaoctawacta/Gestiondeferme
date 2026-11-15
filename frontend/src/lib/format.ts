@@ -22,6 +22,9 @@ export const orDash = (v: number | null | undefined, fmt: (n: number) => string 
 /** Today's calendar date as `YYYY-MM-DD` (UTC, as the API reads operation dates). */
 export const todayIso = (): string => new Date().toISOString().slice(0, 10);
 
+/** `iso` (a `YYYY-MM-DD` date) shifted by `days` calendar days, in UTC like every operation date. */
+export const addDays = (iso: string, days: number): string => new Date(new Date(iso).getTime() + days * 86400000).toISOString().slice(0, 10);
+
 /** Money groups thousands with a regular no-break space (U+00A0): the reference's money lines show a wide gap, its tables a narrow one. */
 export const formatMoney = (n: number): string => `${formatNumber(n).replaceAll(NBSP, '\u00a0')}\u00a0FCFA`;
 

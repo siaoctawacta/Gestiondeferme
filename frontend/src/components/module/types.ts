@@ -5,12 +5,20 @@ import type { Action, ModuleKey } from '../../lib/modules';
 /**
  * Options read from a list endpoint (`{items}` shape); every page is loaded.
  * `params` are fixed query parameters sent with every page request (e.g. `{ status: 'ACTIF' }`).
+ *
+ * Two extras for a select that depends on another field (`dependsOn`):
+ * - `endpoint` may hold `{field}`, replaced by the (URL-encoded) value of that parent field
+ *   (`/stock/{stockItemId}`); the parent value is then part of the path and not sent as a query parameter;
+ * - `select` maps the response of a single `GET` (not a `{items}` page list, nothing is paged) to the options,
+ *   for an endpoint whose answer is a record holding the choices (a stock item and its batches).
+ * Until the parent has a value the select is disabled and no request is made; changing the parent clears it.
  */
 export type EndpointOptions = {
   endpoint: string;
   valueKey?: string;
   labelKey?: string;
   params?: Record<string, string>;
+  select?: (data: unknown) => { value: string; label: string }[];
 };
 
 /** Static `{value,label}` options, or options loaded from an endpoint. */
@@ -147,6 +155,8 @@ type RowActionBase<T> = {
   visible?: (row: T) => boolean;
   /** Permission needed on `slug` (default `update`; anything but `read` is also off under "all farms"). */
   permission?: Action;
+  /** For a module whose data is not farm-scoped: the action still needs one farm (a lot, a stock), so it is hidden under "all farms". */
+  needsFarm?: boolean;
 };
 
 /**

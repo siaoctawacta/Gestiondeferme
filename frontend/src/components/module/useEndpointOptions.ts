@@ -1,3 +1,4 @@
+import { api } from '../../lib/api';
 import { useFarmQuery } from '../../lib/query';
 import { allPages } from './allPages';
 import type { OptionsDef } from './types';
@@ -17,9 +18,9 @@ export function useEndpointOptions(
   const remote = Array.isArray(def) ? null : def;
   const params = { ...remote?.params, ...extraParams };
   const { data } = useFarmQuery<Option[]>(
-    [remote?.endpoint ?? '', 'options', remote?.valueKey, remote?.labelKey, params],
+    [remote?.endpoint ?? '', 'options', remote?.valueKey, remote?.labelKey, params, Boolean(remote?.select)],
     async () =>
-      (await allPages<Record<string, unknown>>(remote!.endpoint, params)).map((r) => ({
+      remote!.select ? remote!.select(await api.get<unknown>(remote!.endpoint, params)) : (await allPages<Record<string, unknown>>(remote!.endpoint, params)).map((r) => ({
         value: String(r[remote!.valueKey ?? 'id']),
         label: String(r[remote!.labelKey ?? 'name']),
       })),

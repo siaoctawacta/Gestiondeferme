@@ -3,20 +3,17 @@ import type { ModuleConfig, RowAction, StatusDef } from '../components/module/ty
 import { Pill } from '../components/ui/Pill';
 import { TYPE_LABELS } from './lotsShared';
 import {
-  ACT_STATUSES, ACT_TYPES, ApplyPlanDialog, BiosecurityForm, CancelActDialog, CloseIncidentDialog, CompleteActDialog,
-  IncidentForm, LOG_TYPES, LiftQuarantineDialog, QuarantineForm, SEVERITIES, ActForm, actTypeLabel, dueState,
+  ActForm, ApplyPlanDialog, BiosecurityForm, CancelActDialog, CloseIncidentDialog, CompleteActDialog, IncidentForm,
+  LiftQuarantineDialog, QuarantineForm,
+} from './santeDialogs';
+import {
+  ACT_STATUSES, ACT_TYPES, LOG_TYPES, SEVERITIES, actTypeLabel,
   type BiosecurityLogRow, type HealthActRow, type IncidentRow, type QuarantineRow, type VaccinationPlanRow,
 } from './santeShared';
 
 const options = <T extends { value: string; label: string }>(list: T[]) => list.map(({ value, label }) => ({ value, label }));
 
 const TYPE_OPTIONS = ['CHAIR', 'PONDEUSE', 'POUSSIN', 'REPRODUCTEUR', 'PORCELET', 'ENGRAISSEMENT'].map((value) => ({ value, label: TYPE_LABELS[value] }));
-
-/** The date of a planned act that came from a vaccination plan carries how pressing it is. */
-const dateCell = (a: HealthActRow) => {
-  const due = a.planId ? dueState(a.date, a.status) : null;
-  return due ? <span className="inline-flex flex-wrap items-center gap-2">{a.date}<Pill tone={due.tone}>{due.label}</Pill></span> : a.date;
-};
 
 const isOpen = (a: HealthActRow) => a.status === 'PLANIFIE' || a.status === 'EN_RETARD';
 
@@ -33,6 +30,8 @@ const plans: ModuleConfig<VaccinationPlanRow> = {
   subtitle: 'Programmes de vaccination appliqués aux lots.',
   endpoint: '/vaccination-plans',
   exportable: false,
+  // Organisation data like the feed formulas: master rights write it from any farm view.
+  farmScoped: false,
   columns: [
     { key: 'name', header: 'NOM' },
     { key: 'species', header: 'ESPÈCE', render: (p) => (p.species === 'AVICOLE' ? 'Avicole' : 'Porcin') },
@@ -56,11 +55,12 @@ const plans: ModuleConfig<VaccinationPlanRow> = {
       columns: [
         { name: 'ageDays', label: 'Âge (jours)', type: 'number', required: true, min: 0, step: 1 },
         { name: 'productName', label: 'Produit', type: 'text', required: true },
+        { name: 'stockItemId', label: 'Produit en stock', type: 'select', options: { endpoint: '/stock-items', params: { category: 'VACCIN', active: 'true' } } },
         { name: 'dose', label: 'Dose', type: 'text' },
       ],
     },
   ],
-  actions: [{ key: 'apply', label: 'Appliquer à un lot', icon: Syringe, permission: 'update', dialog: ApplyPlanDialog }],
+  actions: [{ key: 'apply', label: 'Appliquer à un lot', icon: Syringe, permission: 'update', needsFarm: true, dialog: ApplyPlanDialog }],
 };
 
 const biosecurity: ModuleConfig<BiosecurityLogRow> = {
@@ -163,7 +163,7 @@ export const sante: ModuleConfig<HealthActRow> = {
   subtitle: "Vaccinations, traitements, diagnostics et délais d'attente.",
   endpoint: '/health-acts',
   columns: [
-    { key: 'date', header: 'DATE', render: dateCell },
+    { key: 'date', header: 'DATE' },
     { key: 'target', header: 'LOT / ANIMAL' },
     { key: 'type', header: 'TYPE', render: (a) => actTypeLabel(a.type) },
     { key: 'productName', header: 'PRODUIT' },

@@ -183,9 +183,7 @@ export function FieldInput(props: FieldInputProps) {
     return (
       <div className="space-y-1.5">
         <span className={`${LABEL} ${field.required ? "after:content-['*']" : ''}`}>{field.label}</span>
-        <div className="max-w-full overflow-x-auto">
-          <Segmented label={field.label} value={String(value)} options={field.options} onChange={onChange} />
-        </div>
+        <Segmented label={field.label} value={String(value)} options={field.options} onChange={onChange} />
       </div>
     );
   }

@@ -27,9 +27,12 @@ export interface CellControlProps {
  */
 export function CellControl({ field, value, onChange, id, disabled, excluded, parentValue, waitingFor, ...aria }: CellControlProps) {
   const dependsOn = field.type === 'select' && 'dependsOn' in field ? field.dependsOn : undefined;
+  const source = field.type === 'select' ? field.options : [];
+  // `{parent}` in the endpoint is the parent's value (in the path); otherwise it is sent as a query parameter.
+  const templated = dependsOn && !Array.isArray(source) && source.endpoint.includes(`{${dependsOn}}`);
   const options = useEndpointOptions(
-    field.type === 'select' ? field.options : [],
-    dependsOn && parentValue ? { [dependsOn]: parentValue } : undefined,
+    templated && !Array.isArray(source) ? { ...source, endpoint: source.endpoint.replace(`{${dependsOn}}`, encodeURIComponent(parentValue ?? '')) } : source,
+    dependsOn && parentValue && !templated ? { [dependsOn]: parentValue } : undefined,
     !dependsOn || Boolean(parentValue),
   );
   if (field.type === 'select') {

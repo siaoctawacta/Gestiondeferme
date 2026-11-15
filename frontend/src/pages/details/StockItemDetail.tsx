@@ -1,5 +1,5 @@
 import { api, ApiError } from '../../lib/api';
-import { formatDate, formatMoney, formatNumber, orDash, todayIso } from '../../lib/format';
+import { addDays, formatDate, formatMoney, formatNumber, orDash, todayIso } from '../../lib/format';
 import { useFarmQuery } from '../../lib/query';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
@@ -13,8 +13,6 @@ import { DetailLayout } from './DetailLayout';
 
 /** A batch expiring within this many days is flagged `Bientôt périmé`. */
 const SOON_DAYS = 30;
-
-const addDays = (iso: string, days: number) => new Date(new Date(iso).getTime() + days * 86400000).toISOString().slice(0, 10);
 
 /** Expiry pill of a batch: `Périmé` once the date is past, `Bientôt périmé` within 30 days, nothing otherwise. */
 function expiryPill(expiryDate: string | null) {

@@ -10,7 +10,6 @@ import { todayIso } from '../lib/format';
 import { AnimalDetail } from '../pages/details/AnimalDetail';
 import { LotDetail } from '../pages/details/LotDetail';
 import { MODULES } from './index';
-import { dueState } from './santeShared';
 
 const sante = MODULES.sante!;
 
@@ -29,16 +28,18 @@ const act = (o: object) => ({
   withdrawalUntil: null, ...o,
 });
 const ACTS = [
-  act({ id: 'a1', date: '2026-10-24', target: 'LC-2026-15', type: 'VACCINATION', productName: 'Gumboro', dose: '1 goutte', veterinarian: 'Dr Koffi', status: 'PLANIFIE', stockItemId: 's4' }),
+  act({ id: 'a1', date: '2026-10-24', target: 'LC-2026-15', type: 'VACCINATION', productName: 'Gumboro', dose: '1 goutte', veterinarian: 'Dr Koffi', status: 'PLANIFIE', stockItemId: 's4', quantity: 2 }),
   act({ id: 'a2', date: '2026-10-18', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Newcastle', dose: 'Eau de boisson', veterinarian: 'Dr Koffi', status: 'REALISE' }),
   act({ id: 'a3', date: '2026-10-20', target: 'TR-021', type: 'TRAITEMENT', productName: 'Fer injectable porcelets', dose: '1 ml', veterinarian: 'Dr Amah', status: 'REALISE', batchId: null, animalId: 'p1', targetKind: 'ANIMAL' }),
   act({ id: 'a4', date: '2026-10-15', target: 'Porcherie 2', type: 'DESINFECTION', productName: 'Virkon S', dose: '1%', veterinarian: 'Équipe', status: 'EN_RETARD', batchId: null, buildingId: 'bd1', targetKind: 'BATIMENT' }),
+  act({ id: 'a6', date: '2026-12-01', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Marek libre', dose: null, veterinarian: null, status: 'PLANIFIE' }),
+  act({ id: 'a7', date: '2026-10-05', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Gumboro fait', dose: null, veterinarian: null, status: 'REALISE', stockItemId: 's4', quantity: 2 }),
   act({ id: 'a5', date: '2026-10-01', target: 'LC-2026-14', type: 'DIAGNOSTIC', productName: null, dose: null, veterinarian: null, status: 'ANNULE' }),
 ];
 const STATUS_COUNTS = { PLANIFIE: 1, REALISE: 2, EN_RETARD: 1, ANNULE: 1 };
 
 const PLANS = [
-  { id: 'pl1', name: 'Programme chair', species: 'AVICOLE', type: 'CHAIR', items: [{ ageDays: 1, productName: 'Marek', dose: '1 dose' }, { ageDays: 7, productName: 'Gumboro', dose: null }] },
+  { id: 'pl1', name: 'Programme chair', species: 'AVICOLE', type: 'CHAIR', items: [{ ageDays: 1, productName: 'Marek', dose: '1 dose', stockItemId: 's4' }, { ageDays: 7, productName: 'Gumboro', dose: null, stockItemId: 's4' }] },
 ];
 const QUARANTINES = [
   { id: 'q1', target: 'LC-2026-14', targetKind: 'LOT', batchId: 'l1', animalId: null, startDate: '2026-11-01', endDate: null, reason: 'Toux', status: 'EN_COURS' },
@@ -201,7 +202,8 @@ describe('sante row actions', () => {
     expect(within(dialog).getByLabelText('Date de réalisation')).toHaveValue(todayIso());
     await within(dialog).findByRole('option', { name: 'GB-77 (8)' });
     await user.selectOptions(within(dialog).getByLabelText('Lot de produit'), 'GB-77 (8)');
-    fireEvent.change(within(dialog).getByLabelText('Quantité'), { target: { value: '2' } });
+    // The quantity planned on the act is prefilled.
+    expect(within(dialog).getByLabelText('Quantité')).toHaveValue(2);
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     expect(await within(dialog).findByText('Lot périmé')).toBeInTheDocument();
     expect(writes()).toEqual([
@@ -340,7 +342,10 @@ describe('intervention form', () => {
     const vet = await openForm();
     await vet.user.click(within(vet.dialog).getByRole('radio', { name: 'Animal' }));
     await vet.user.selectOptions(await within(vet.dialog).findByLabelText('Animal'), 'TR-021');
+    // The lot select is replaced by the animal one: no lot option is offered any more.
+    expect(within(vet.dialog).queryByLabelText('Lot')).toBeNull();
     expect(within(vet.dialog).queryByRole('option', { name: 'PC-2026-01' })).toBeNull();
+    expect(within(vet.dialog).queryByRole('option', { name: 'LC-2026-14' })).toBeNull();
     await vet.user.click(within(vet.dialog).getByRole('radio', { name: 'Lot' }));
     await within(vet.dialog).findByRole('option', { name: 'PC-2026-01' });
   });
@@ -517,7 +522,7 @@ describe('withdrawal period on lot and animal pages', () => {
     expect(await screen.findByText(`Délai d'attente jusqu'au ${plusDays(3)}`)).toBeInTheDocument();
   });
 
-  it('shows nothing without withdrawal or once it has ended, and still shows it on the last day', async () => {
+  it('still shows the notice on the last day of the withdrawal (inclusive)', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-15T23:59:59Z'));
     lotData = { ...LOT, withdrawalUntil: '2026-11-15' };
@@ -525,7 +530,7 @@ describe('withdrawal period on lot and animal pages', () => {
     expect(await screen.findByText("Délai d'attente jusqu'au 2026-11-15")).toBeInTheDocument();
   });
 
-  it('hides the notice the day after', async () => {
+  it('hides the notice the day after the end date', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-16T00:00:00Z'));
     lotData = { ...LOT, withdrawalUntil: '2026-11-15' };
@@ -534,7 +539,7 @@ describe('withdrawal period on lot and animal pages', () => {
     expect(screen.queryByText(NOTICE)).toBeNull();
   });
 
-  it('shows nothing when the lot has no withdrawal', async () => {
+  it('shows no notice when the lot has no withdrawal', async () => {
     mountLot();
     await screen.findByText('LC-2026-14');
     expect(screen.queryByText(NOTICE)).toBeNull();
@@ -578,16 +583,168 @@ describe('withdrawal period on lot and animal pages', () => {
   });
 });
 
-describe('due state of a planned act', () => {
-  it('is late before today, to do within a week (today included), else nothing', () => {
-    vi.useFakeTimers({ toFake: ['Date'] });
-    vi.setSystemTime(new Date('2026-11-15T23:59:59Z'));
-    expect(dueState('2026-11-14', 'PLANIFIE')).toEqual({ label: 'En retard', tone: 'danger' });
-    expect(dueState('2026-11-14', 'EN_RETARD')).toEqual({ label: 'En retard', tone: 'danger' });
-    expect(dueState('2026-11-15', 'PLANIFIE')).toEqual({ label: 'À faire', tone: 'warning' });
-    expect(dueState('2026-11-22', 'PLANIFIE')).toEqual({ label: 'À faire', tone: 'warning' });
-    expect(dueState('2026-11-23', 'PLANIFIE')).toEqual({ label: 'Planifié', tone: 'neutral' });
-    expect(dueState('2026-11-01', 'REALISE')).toBeNull();
-    expect(dueState('2026-11-01', 'ANNULE')).toBeNull();
+describe('plans: stock product per step, farm scope, lot filter', () => {
+  it('keeps the stock product of every step when one step is edited', async () => {
+    mountPage();
+    await openTab('Plans vaccinaux');
+    await screen.findByText('Programme chair');
+    const user = userEvent.setup();
+    await user.click(within(rowOf('Programme chair')).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Produit en stock ligne 1')).toHaveValue('s4');
+    await user.type(within(dialog).getByLabelText('Dose ligne 2'), '2 gouttes');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toEqual({
+      method: 'PATCH',
+      url: '/api/vaccination-plans/pl1',
+      body: {
+        items: [
+          { ageDays: 1, productName: 'Marek', dose: '1 dose', stockItemId: 's4' },
+          { ageDays: 7, productName: 'Gumboro', dose: '2 gouttes', stockItemId: 's4' },
+        ],
+      },
+    });
+    expect(calls.some((c) => c.url.startsWith('/api/stock-items') && c.url.includes('category=VACCIN') && c.url.includes('active=true'))).toBe(true);
+  });
+
+  it('filters the lots offered by the plan species and lot type', async () => {
+    mountPage();
+    await openTab('Plans vaccinaux');
+    await screen.findByText('Programme chair');
+    await userEvent.setup().click(within(rowOf('Programme chair')).getByRole('button', { name: 'Appliquer à un lot' }));
+    await within(await screen.findByRole('dialog')).findByRole('option', { name: 'LC-2026-14' });
+    expect(calls.some((c) => c.url.startsWith('/api/batches') && c.url.includes('species=AVICOLE') && c.url.includes('type=CHAIR'))).toBe(true);
+  });
+
+  it('is organisation data: writable under all farms, but a plan is applied to a lot of one farm only', async () => {
+    mountPage({ farm: 'all' });
+    await openTab('Plans vaccinaux');
+    await screen.findByText('Programme chair');
+    expect(screen.getByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
+    expect(within(rowOf('Programme chair')).getByRole('button', { name: 'Modifier' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Appliquer à un lot' })).toBeNull();
+  });
+});
+
+describe('stock gating and targets', () => {
+  const NO_STOCK = { sante: ['read', 'create'], lots: ['read'] };
+  const stockCalls = () => calls.filter((c) => /^\/api\/stock(-items)?(\/|\?|$)/.test(c.url));
+
+  it('offers no stock product without read rights on stocks (create and complete), only free text', async () => {
+    mountPage({ perms: NO_STOCK });
+    await screen.findByText('Gumboro');
+    const user = userEvent.setup();
+    await user.click(button('Ajouter'));
+    let dialog = await screen.findByRole('dialog');
+    await within(dialog).findByRole('option', { name: 'LC-2026-14' });
+    expect(within(dialog).queryByLabelText('Produit en stock')).toBeNull();
+    expect(within(dialog).getByLabelText('Produit (texte libre)')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Annuler' }));
+    await user.click(within(rowOf('Gumboro')).getByRole('button', { name: 'Marquer réalisé' }));
+    dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Quantité')).toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Lot de produit')).toBeNull();
+    expect(stockCalls()).toEqual([]);
+  });
+
+  it('says no target is accessible and refuses to submit when the user may read no lot or animal', async () => {
+    mountPage({ perms: { sante: ['read', 'create'] } });
+    await screen.findByText('Gumboro');
+    const user = userEvent.setup();
+    await user.click(button('Ajouter'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText(/Aucune cible accessible/)).toBeInTheDocument();
+    expect(within(dialog).queryByRole('radiogroup', { name: 'Type de cible' })).toBeNull();
+    expect(dialog.textContent).not.toContain('undefined');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findAllByText(/Aucune cible accessible/)).not.toHaveLength(0);
+    expect(writes()).toEqual([]);
+  });
+
+  it('does not offer a disinfection inside a lot page', async () => {
+    mount(<LotDetail id="l1" />);
+    await screen.findByText('LC-2026-14', { selector: 'h1' });
+    await openTab('Santé');
+    await screen.findByText('Gumboro');
+    await userEvent.setup().click(button('Ajouter'));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByRole('radio', { name: 'Traitement' })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('radio', { name: 'Désinfection' })).toBeNull();
+  });
+
+  it('the incident form does not load animals', async () => {
+    mountPage();
+    await openTab('Incidents');
+    await screen.findByText('Chute de ponte');
+    await userEvent.setup().click(button('Ajouter'));
+    await within(await screen.findByRole('dialog')).findByRole('option', { name: 'LC-2026-14' });
+    expect(calls.some((c) => c.url.startsWith('/api/animals'))).toBe(false);
+  });
+});
+
+describe('complete and edit with stock', () => {
+  it('lets a free-text planned act consume stock when it is completed', async () => {
+    mountPage();
+    await screen.findByText('Marek libre');
+    const user = userEvent.setup();
+    await user.click(within(rowOf('Marek libre')).getByRole('button', { name: 'Marquer réalisé' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByLabelText('Quantité')).toBeNull();
+    await within(dialog).findByRole('option', { name: 'Vaccin Gumboro' });
+    await user.selectOptions(within(dialog).getByLabelText('Produit en stock'), 'Vaccin Gumboro');
+    fireEvent.change(await within(dialog).findByLabelText('Quantité'), { target: { value: '1' } });
+    await within(dialog).findByRole('option', { name: 'GB-77 (8)' });
+    await user.selectOptions(within(dialog).getByLabelText('Lot de produit'), 'GB-77 (8)');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toEqual({
+      method: 'POST', url: '/api/health-acts/a6/complete',
+      body: { doneDate: todayIso(), stockItemId: 's4', quantity: 1, stockBatchId: 'sb1' },
+    });
+  });
+
+  it('edits the quantity of a done stock act', async () => {
+    mountPage();
+    await screen.findByText('Gumboro fait');
+    const user = userEvent.setup();
+    await user.click(within(rowOf('Gumboro fait')).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Quantité')).toHaveValue(2);
+    fireEvent.change(within(dialog).getByLabelText('Quantité'), { target: { value: '3' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toEqual({ method: 'PATCH', url: '/api/health-acts/a7', body: { quantity: 3 } });
+  });
+
+  it('shows the plain date, with no second pill, for a planned act from a plan', async () => {
+    mountPage();
+    await screen.findByText('Gumboro');
+    expect(within(rowOf('Gumboro')).queryByText('À faire')).toBeNull();
+  });
+});
+
+describe('Santé tab is read-only when the target is closed', () => {
+  it('on a closed lot: no add, no row action', async () => {
+    lotData = { ...LOT, status: 'CLOTURE', closedAt: '2026-11-01' };
+    mount(<LotDetail id="l1" />);
+    await screen.findByText('LC-2026-14', { selector: 'h1' });
+    await openTab('Santé');
+    await screen.findByText('Gumboro');
+    expect(screen.queryByRole('button', { name: 'Ajouter' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Marquer réalisé' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Annuler' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Modifier' })).toBeNull();
+  });
+
+  it('on an animal that left: no add, no row action', async () => {
+    animalData = { ...ANIMAL, status: 'VENDU', exitDate: '2026-11-01', exitReason: 'VENDU' };
+    mount(<AnimalDetail id="p1" />);
+    await screen.findByText('TR-021', { selector: 'h1' });
+    await openTab('Santé');
+    await screen.findByText('Gumboro');
+    expect(screen.queryByRole('button', { name: 'Ajouter' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Marquer réalisé' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Modifier' })).toBeNull();
   });
 });
