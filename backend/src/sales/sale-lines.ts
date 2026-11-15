@@ -87,11 +87,6 @@ export function defaultDesignation(
   }
 }
 
-/** Lots that lay (the rule of the egg records): poultry layers and breeders. */
-export const canLay = (batch: { species: Species; type: BatchType }): boolean =>
-  batch.species === 'AVICOLE' &&
-  (batch.type === 'PONDEUSE' || batch.type === 'REPRODUCTEUR');
-
 export interface LineInput {
   kind: SaleLineKind;
   batchId?: string | null;

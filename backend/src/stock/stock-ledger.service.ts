@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
+import { lowestBalance } from '../common/balance';
 import { addDays, assertNotFuture, formatDay, today } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import { Prisma } from '../generated/prisma/client';
@@ -654,6 +655,74 @@ export class StockLedgerService {
         ? [{ batch, quantity: held.get(batch.id) ?? ZERO }]
         : [],
     );
+  }
+
+  /**
+   * What a sale dated `date` may take of each item in `farmId`: the quantity
+   * held on that date, less what sits in lots already past their expiry on it,
+   * and no more than any later day can spare (the lowest running balance from
+   * `date` to the end of the history, in (date, createdAt) order). Never
+   * negative. Three queries whatever the items. A read for pickers: the ledger
+   * still validates the real exit.
+   */
+  async sellableAt(
+    farmId: string,
+    itemIds: string[],
+    date: Date,
+    client: Tx | PrismaService = this.prisma,
+  ): Promise<Map<string, Dec>> {
+    const result = new Map(itemIds.map((id) => [id, ZERO]));
+    if (itemIds.length === 0) return result;
+    const where = { farmId, stockItemId: { in: itemIds } };
+    const held = await client.stockMovement.groupBy({
+      by: ['stockItemId', 'stockBatchId'],
+      where: { ...where, date: { lte: date } },
+      _sum: { quantity: true },
+    });
+    const later = await client.stockMovement.findMany({
+      where: { ...where, date: { gt: date } },
+      select: {
+        id: true,
+        stockItemId: true,
+        date: true,
+        createdAt: true,
+        quantity: true,
+      },
+      orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+    });
+    const batchIds = held.flatMap((h) =>
+      h.stockBatchId ? [h.stockBatchId] : [],
+    );
+    const expired = new Set(
+      batchIds.length
+        ? (
+            await client.stockBatch.findMany({
+              where: { id: { in: batchIds }, expiryDate: { lt: date } },
+              select: { id: true },
+            })
+          ).map((b) => b.id)
+        : [],
+    );
+    for (const id of itemIds) {
+      const mine = held.filter((h) => h.stockItemId === id);
+      const quantity = mine.reduce(
+        (n, h) => n.add(h._sum.quantity ?? ZERO),
+        ZERO,
+      );
+      const stale = mine.reduce(
+        (n, h) =>
+          h.stockBatchId && expired.has(h.stockBatchId)
+            ? n.add(Prisma.Decimal.max(h._sum.quantity ?? ZERO, ZERO))
+            : n,
+        ZERO,
+      );
+      const lowest = lowestBalance(
+        quantity,
+        later.filter((m) => m.stockItemId === id).map((m) => m.quantity),
+      );
+      result.set(id, Prisma.Decimal.max(lowest.sub(stale), ZERO));
+    }
+    return result;
   }
 
   /** Quantity held on `date` (movements dated on or before it), per item. */

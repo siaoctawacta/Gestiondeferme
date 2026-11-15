@@ -340,7 +340,7 @@ export class AnimalsService implements OccupationSource {
   }
 
   /** The building is in the farm and takes pigs (a poultry house does not). */
-  private async assertBuilding(tx: Tx, farmId: string, buildingId: string) {
+  async assertBuilding(tx: Tx, farmId: string, buildingId: string) {
     const building = await tx.building.findFirst({
       where: { id: buildingId, farmId },
       select: { id: true, type: true },

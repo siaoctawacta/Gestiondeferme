@@ -531,6 +531,22 @@ describe('Ledger seams of a sale (e2e)', () => {
       ).toBe('VENDU');
     });
 
+    it('unsell says so (409) when an animal is no longer sold by that document', async () => {
+      const a = await world.animal(h, { tag: 'TR-027' });
+      const sales = app.get(AnimalSales);
+      await inTx((tx) => sales.sell(tx, a.id, today(), SOURCE));
+      await prisma.animal.update({
+        where: { id: a.id },
+        data: { status: 'REFORME' },
+      });
+      await expect(
+        inTx((tx) => sales.unsell(tx, SOURCE)),
+      ).rejects.toMatchObject({
+        status: 409,
+        message: "Cet animal n'est plus vendu par ce document",
+      });
+    });
+
     it('unsell checks the building again (it may have changed type)', async () => {
       const a = await world.animal(h, { tag: 'TR-027' });
       const sales = app.get(AnimalSales);
@@ -1143,26 +1159,83 @@ describe('Ledger seams of a sale (e2e)', () => {
       expect(items.some((i) => i.label.startsWith('LC-2026-99'))).toBe(false);
     });
 
-    it('is batched: one withdrawal read, one headcount read, whatever the number of lots', async () => {
-      const withdrawals = app.get(WithdrawalRegistry);
-      const spy = jest.spyOn(withdrawals, 'untilMany');
-      const counts = jest.spyOn(app.get(HerdLedgerService), 'liveCounts');
+    /** Every Prisma delegate call made by the application while `fn` runs. */
+    async function queriesOf(fn: () => Promise<unknown>): Promise<number> {
+      const client: Record<string, unknown> = app.get<PrismaService>(
+        PrismaService,
+      ) as never;
+      const spies: jest.SpyInstance[] = [];
+      for (const key of Object.keys(client)) {
+        if (key.startsWith('$') || key.startsWith('_')) continue;
+        const delegate = client[key];
+        if (!delegate || typeof delegate !== 'object') continue;
+        for (const method of [
+          'findMany',
+          'findFirst',
+          'findUnique',
+          'groupBy',
+          'count',
+          'aggregate',
+        ]) {
+          if (
+            typeof (delegate as Record<string, unknown>)[method] === 'function'
+          ) {
+            spies.push(
+              jest.spyOn(delegate as Record<string, () => unknown>, method),
+            );
+          }
+        }
+      }
       try {
-        await list('LOT');
-        expect(spy).toHaveBeenCalledTimes(1);
-        expect(counts).toHaveBeenCalledTimes(1);
-        await list('ANIMAL');
-        expect(spy).toHaveBeenCalledTimes(2);
+        await fn();
+        return spies.reduce((n, spy) => n + spy.mock.calls.length, 0);
       } finally {
-        spy.mockRestore();
-        counts.mockRestore();
+        spies.forEach((spy) => spy.mockRestore());
+      }
+    }
+
+    it('is batched: the queries of a kind do not grow with the number of lots, animals, laying lots or articles', async () => {
+      const before: Record<string, number> = {};
+      for (const kind of ['LOT', 'ANIMAL', 'OEUFS', 'ARTICLE']) {
+        before[kind] = await queriesOf(() => list(kind));
+        expect(before[kind]).toBeGreaterThan(0);
+      }
+      for (let n = 0; n < 4; n++) {
+        await world.lot(h, { initialCount: 10 });
+        const extra = await world.lot(h, {
+          type: 'PONDEUSE',
+          initialCount: 10,
+        });
+        await world.post(h, '/egg-production', {
+          batchId: extra.id,
+          date: daysAgo(2),
+          collected: 100,
+        });
+        await world.animal(h, { tag: `TR-1${n}0` });
+        const item = await world.post<Id>(h, '/stock-items', {
+          name: `Article ${n}`,
+          category: 'ALIMENT',
+          unit: 'kg',
+        });
+        await world.post(h, '/stock/movements', {
+          itemId: item.id,
+          type: 'ENTREE',
+          date: daysAgo(10),
+          quantity: 10,
+          unitCost: 1,
+          reason: 'ACHAT',
+        });
+      }
+      for (const kind of ['LOT', 'ANIMAL', 'OEUFS', 'ARTICLE']) {
+        expect((await list(kind)).length).toBeGreaterThan(4);
+        expect(await queriesOf(() => list(kind))).toBe(before[kind]);
       }
     });
 
     it('answers a role that reads ventes but not lots, pigs or stock (the Comptable), with codes, labels and counts only', async () => {
-      const commercial = await world.actor('COMPTABLE');
+      const accountant = await world.actor('COMPTABLE');
       for (const kind of ['LOT', 'ANIMAL', 'OEUFS', 'ARTICLE']) {
-        const items = await list(kind, daysAgo(0), commercial);
+        const items = await list(kind, daysAgo(0), accountant);
         expect(items.length).toBeGreaterThan(0);
         for (const item of items) {
           expect(Object.keys(item).sort()).toEqual(
@@ -1185,17 +1258,15 @@ describe('Ledger seams of a sale (e2e)', () => {
       await http()
         .get('/api/batches')
         .query({ species: 'AVICOLE' })
-        .set(commercial)
+        .set(accountant)
         .expect(403);
-      await http().get('/api/animals').set(commercial).expect(403);
-      await http().get('/api/stock').set(commercial).expect(403);
+      await http().get('/api/animals').set(accountant).expect(403);
+      await http().get('/api/stock').set(accountant).expect(403);
     });
 
     it('answers the Commercial', async () => {
-      const commercial = await world.actor('COMMERCIAL');
-      expect(
-        (await list('LOT', daysAgo(0), commercial)).length,
-      ).toBeGreaterThan(0);
+      const seller = await world.actor('COMMERCIAL');
+      expect((await list('LOT', daysAgo(0), seller)).length).toBeGreaterThan(0);
     });
 
     it('answers 403 to a role without ventes, and the roles that read ventes', async () => {
@@ -1235,6 +1306,325 @@ describe('Ledger seams of a sale (e2e)', () => {
         date: formatDay(addDays(today(), 1)),
       }).expect(400);
       expect(message(future)).toBe('La date ne peut pas être dans le futur');
+    });
+  });
+
+  describe('availability on the date asked (later history counts)', () => {
+    let itemId: string;
+    const move = (over: Record<string, unknown>) =>
+      world.post(h, '/stock/movements', {
+        itemId,
+        type: 'ENTREE',
+        date: daysAgo(40),
+        quantity: 1000,
+        unitCost: 320,
+        reason: 'ACHAT',
+        ...over,
+      });
+    const list = async (kind: string, date: string) =>
+      (
+        (
+          await http()
+            .get('/api/sales/sellables')
+            .query({ kind, date })
+            .set(h)
+            .expect(200)
+        ).body as { items: Sellable[] }
+      ).items;
+
+    beforeEach(async () => {
+      itemId = (
+        await world.post<Id>(h, '/stock-items', {
+          name: 'Aliment ponte',
+          category: 'ALIMENT',
+          unit: 'kg',
+        })
+      ).id;
+    });
+
+    it('a lot of 40 with 30 sold since has 10 available on an earlier date', async () => {
+      const lot = await world.lot(h, { initialCount: 40 });
+      await world.post(h, `/batches/${lot.id}/events`, {
+        type: 'VENTE',
+        date: daysAgo(1),
+        quantity: 30,
+      });
+      const earlier = (await list('LOT', daysAgo(5))).find(
+        (i) => i.id === lot.id,
+      );
+      expect(earlier).toMatchObject({ available: 10 });
+      expect(earlier?.label).toContain('(10 vivants)');
+      expect(
+        (await list('LOT', daysAgo(0))).find((i) => i.id === lot.id),
+      ).toMatchObject({ available: 10 });
+      // A later entry does not lend what a dip in between needs.
+      await world.post(h, `/batches/${lot.id}/events`, {
+        type: 'ENTREE',
+        date: daysAgo(0),
+        quantity: 100,
+      });
+      expect(
+        (await list('LOT', daysAgo(5))).find((i) => i.id === lot.id),
+      ).toMatchObject({ available: 10 });
+      expect(
+        (await list('LOT', daysAgo(0))).find((i) => i.id === lot.id),
+      ).toMatchObject({ available: 110 });
+    });
+
+    it('stock that arrives after the date is not counted, and an article with only later stock says Aucun stock', async () => {
+      await move({ date: daysAgo(40), quantity: 1000 });
+      await move({ date: daysAgo(1), quantity: 500 });
+      const early = (await list('ARTICLE', daysAgo(5))).find(
+        (i) => i.id === itemId,
+      );
+      expect(early).toMatchObject({ available: 1000, sellable: true });
+      expect(
+        (await list('ARTICLE', daysAgo(0))).find((i) => i.id === itemId),
+      ).toMatchObject({ available: 1500 });
+      const later = (
+        await world.post<Id>(h, '/stock-items', {
+          name: 'Sel',
+          category: 'ALIMENT',
+          unit: 'kg',
+        })
+      ).id;
+      await world.post(h, '/stock/movements', {
+        itemId: later,
+        type: 'ENTREE',
+        date: daysAgo(1),
+        quantity: 20,
+        unitCost: 1,
+        reason: 'ACHAT',
+      });
+      expect(
+        (await list('ARTICLE', daysAgo(5))).find((i) => i.id === later),
+      ).toMatchObject({
+        available: 0,
+        sellable: false,
+        reason: 'Aucun stock',
+      });
+    });
+
+    it('a later exit lowers what an earlier date can sell, and a later entry does not lend what the dip needs', async () => {
+      await move({ date: daysAgo(40), quantity: 1000 });
+      await world.post(h, '/stock/movements', {
+        itemId,
+        type: 'SORTIE',
+        date: daysAgo(2),
+        quantity: 300,
+        reason: 'CONSOMMATION',
+      });
+      await move({ date: daysAgo(1), quantity: 800 });
+      const at = async (date: string) =>
+        (await list('ARTICLE', date)).find((i) => i.id === itemId)?.available;
+      expect(await at(daysAgo(5))).toBe(700);
+      expect(await at(daysAgo(2))).toBe(700);
+      expect(await at(daysAgo(0))).toBe(1500);
+    });
+
+    it('does not offer what was already expired on the date, counted at that date', async () => {
+      await move({
+        date: daysAgo(40),
+        quantity: 10,
+        lotNumber: 'L1',
+        expiryDate: daysAgo(5),
+      });
+      await move({
+        date: daysAgo(30),
+        quantity: 4,
+        lotNumber: 'L2',
+        expiryDate: '2099-01-01',
+      });
+      const at = async (date: string) =>
+        (await list('ARTICLE', date)).find((i) => i.id === itemId)?.available;
+      expect(await at(daysAgo(0))).toBe(4);
+      expect(await at(daysAgo(10))).toBe(14);
+    });
+  });
+
+  describe('closed lots and returns (eggs)', () => {
+    it('assertSale and assertReturn refuse a closed lot, 409 Ce lot est clôturé', async () => {
+      const layer = await world.lot(h, { type: 'PONDEUSE', initialCount: 10 });
+      await world.post(h, '/egg-production', {
+        batchId: layer.id,
+        date: daysAgo(3),
+        collected: 100,
+      });
+      await world.post(h, `/batches/${layer.id}/events`, {
+        type: 'VENTE',
+        date: daysAgo(1),
+        quantity: 10,
+      });
+      await http().post(`/api/batches/${layer.id}/close`).set(h).expect(200);
+      const eggs = app.get(EggStockService);
+      await expect(
+        inTx((tx) =>
+          eggs.assertSale(tx, { id: layer.id, code: layer.code }, [
+            { date: day(daysAgo(1)), eggs: 10 },
+          ]),
+        ),
+      ).rejects.toMatchObject({ status: 409, message: 'Ce lot est clôturé' });
+      await expect(
+        inTx((tx) => eggs.assertReturn(tx, layer.id)),
+      ).rejects.toMatchObject({ status: 409, message: 'Ce lot est clôturé' });
+    });
+  });
+
+  describe('isolation between farms', () => {
+    let farmB: string;
+    let otherAnimal: string;
+    let otherLayer: string;
+    let otherItem: string;
+
+    beforeEach(async () => {
+      const farm = await prisma.farm.create({
+        data: { organizationId: world.orgId, name: 'Ferme B' },
+      });
+      farmB = farm.id;
+      const site = await prisma.site.create({
+        data: { farmId: farmB, name: 'Site B' },
+      });
+      const building = (name: string, type: 'AVICOLE' | 'PORCIN') =>
+        prisma.building.create({
+          data: { farmId: farmB, siteId: site.id, name, type, capacity: 1000 },
+        });
+      const pigs = await building('Porcherie B', 'PORCIN');
+      const poultry = await building('Poulailler B', 'AVICOLE');
+      otherAnimal = (
+        await prisma.animal.create({
+          data: {
+            farmId: farmB,
+            tag: 'TR-B01',
+            category: 'TRUIE',
+            sex: 'F',
+            buildingId: pigs.id,
+          },
+        })
+      ).id;
+      otherLayer = (
+        await prisma.animalBatch.create({
+          data: {
+            farmId: farmB,
+            code: 'LP-B-01',
+            species: 'AVICOLE',
+            type: 'PONDEUSE',
+            buildingId: poultry.id,
+            entryDate: day(daysAgo(30)),
+            initialCount: 50,
+          },
+        })
+      ).id;
+      await prisma.eggProduction.create({
+        data: {
+          farmId: farmB,
+          batchId: otherLayer,
+          date: day(daysAgo(2)),
+          collected: 500,
+        },
+      });
+      otherItem = (
+        await world.post<Id>(h, '/stock-items', {
+          name: 'Article B',
+          category: 'ALIMENT',
+          unit: 'kg',
+        })
+      ).id;
+      const user = await prisma.user.findFirstOrThrow();
+      await inTx((tx) =>
+        app.get(StockLedgerService).record(tx, {
+          farmId: farmB,
+          stockItemId: otherItem,
+          date: day(daysAgo(10)),
+          type: 'ENTREE',
+          quantity: 50,
+          unitCost: 10,
+          reason: 'ACHAT',
+          userId: user.id,
+        }),
+      );
+    });
+
+    it("sell refuses another farm's animal when given the caller's farms: 400 Animal invalide, nothing written", async () => {
+      await expect(
+        inTx((tx) =>
+          app.get(AnimalSales).sell(tx, otherAnimal, today(), SOURCE, {
+            farmIds: [world.farmId],
+          }),
+        ),
+      ).rejects.toMatchObject({ status: 400, message: 'Animal invalide' });
+      expect(
+        (await prisma.animal.findUniqueOrThrow({ where: { id: otherAnimal } }))
+          .status,
+      ).toBe('ACTIF');
+    });
+
+    it("sellables of the active farm never list another farm's animals, laying lots or articles", async () => {
+      const get = async (kind: string) =>
+        (
+          (
+            await http()
+              .get('/api/sales/sellables')
+              .query({ kind, date: daysAgo(0) })
+              .set(h)
+              .expect(200)
+          ).body as { items: Sellable[] }
+        ).items;
+      await world.animal(h, { tag: 'TR-A01' });
+      const layerA = await world.lot(h, { type: 'PONDEUSE', initialCount: 10 });
+      await world.post(h, '/egg-production', {
+        batchId: layerA.id,
+        date: daysAgo(2),
+        collected: 100,
+      });
+      const itemA = await world.post<Id>(h, '/stock-items', {
+        name: 'Article A',
+        category: 'ALIMENT',
+        unit: 'kg',
+      });
+      await world.post(h, '/stock/movements', {
+        itemId: itemA.id,
+        type: 'ENTREE',
+        date: daysAgo(10),
+        quantity: 5,
+        unitCost: 1,
+        reason: 'ACHAT',
+      });
+      expect((await get('ANIMAL')).map((i) => i.label)).toEqual([
+        expect.stringContaining('TR-A01') as string,
+      ]);
+      expect((await get('OEUFS')).map((i) => i.id)).toEqual([layerA.id]);
+      const articles = await get('ARTICLE');
+      expect(articles.map((i) => i.id)).toEqual([itemA.id]);
+      expect(articles.some((i) => i.id === otherItem)).toBe(false);
+    });
+  });
+
+  describe('an issued invoice goes through the guard (real route)', () => {
+    it('POST /sales/issued on a lot under withdrawal is refused with the exact message and writes nothing', async () => {
+      const admin = await world.actor('SUPER_ADMIN');
+      const lot = await world.lot(h, { initialCount: 50 });
+      await treat({ batchId: lot.id }, 12);
+      const customer = await world.post<Id>(admin, '/customers', {
+        name: 'Restaurant Le Palmier',
+        type: 'RESTAURANT',
+      });
+      const res = await http()
+        .post('/api/sales/issued')
+        .set(admin)
+        .send({
+          customerId: customer.id,
+          date: daysAgo(0),
+          lines: [
+            { kind: 'LOT', batchId: lot.id, quantity: 5, unitPrice: 3500 },
+          ],
+        })
+        .expect(400);
+      expect(message(res)).toBe(
+        `Le lot ${lot.code} est en délai d'attente jusqu'au ${formatDay(today())} : vente impossible`,
+      );
+      expect(
+        await prisma.batchEvent.count({ where: { batchId: lot.id } }),
+      ).toBe(0);
     });
   });
 });

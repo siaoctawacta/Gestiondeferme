@@ -18,6 +18,8 @@ import {
   type BatchHistorySource,
 } from '../herd/batch-history';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
+import { canLay } from '../herd/species';
+import type { BatchType, Species } from '../generated/prisma/enums';
 import { EggStockService } from './egg-stock';
 import { breakageRate, layingRate } from '../indicators/indicators';
 import type { ExportColumn } from '../listing/export';
@@ -184,8 +186,8 @@ export class EggProductionService implements BatchHistorySource {
     return batch;
   }
 
-  private assertLays(batch: { type: string }): void {
-    if (batch.type !== 'PONDEUSE' && batch.type !== 'REPRODUCTEUR') {
+  private assertLays(batch: { species: Species; type: BatchType }): void {
+    if (!canLay(batch)) {
       throw new BadRequestException(NO_EGGS);
     }
   }

@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { lockRow } from '../common/lock-row';
+import { HerdLedgerService } from '../herd/herd-ledger.service';
 import { SourceRegistry } from '../common/source-registry';
 import type { Prisma } from '../generated/prisma/client';
 import {
@@ -61,6 +62,12 @@ export class EggOutflowRegistry extends SourceRegistry<EggOutflowSource> {
  * never negative on any day of its history. Owned by `eggs`; it takes the
  * caller's transaction and, when it writes nothing, the lot lock:
  *
+ * - The withdrawal period is NOT checked here: the caller must call
+ *   `WithdrawalRegistry.assertClear` for the lot first (the sales module's
+ *   `sale-effects` does).
+ * - Eggs that leave for incubation are the ones recorded as `toIncubation` on
+ *   the egg production records (they are not marketable); an incubation's own
+ *   `eggsSet` is NOT deducted again.
  * - LOCKS: the lot row (`AnimalBatch`, the same lock every herd, egg and sale
  *   write takes). A caller locks its lots first, ascending id
  *   (`HerdLedgerService.lockBatches`); `assertSale` / `assertProduction`
@@ -70,7 +77,10 @@ export class EggOutflowRegistry extends SourceRegistry<EggOutflowSource> {
  */
 @Injectable()
 export class EggStockService {
-  constructor(private readonly outflowRegistry: EggOutflowRegistry) {}
+  constructor(
+    private readonly outflowRegistry: EggOutflowRegistry,
+    private readonly ledger: HerdLedgerService,
+  ) {}
 
   private async history(
     tx: Tx,
@@ -127,7 +137,7 @@ export class EggStockService {
   }
 
   /**
-   * 400 `Œufs disponibles insuffisants pour {code} ({n} disponibles)` when
+   * 409 `Ce lot est clôturé` on a closed lot; 400 `Œufs disponibles insuffisants pour {code} ({n} disponibles)` when
    * selling `sales` (ALL the egg lines of the lot of one document) would
    * leave the lot's balance negative on any day. `excludeSourceId`: the
    * document being re-checked, whose own outflows are already registered.
@@ -139,7 +149,7 @@ export class EggStockService {
     opts?: { excludeSourceId?: string },
   ): Promise<void> {
     if (sales.length === 0) return;
-    await lockRow(tx, 'AnimalBatch', batch.id);
+    this.ledger.assertOpen(await this.ledger.lockBatch(tx, batch.id));
     const { production, outflows } = await this.history(tx, [batch.id], opts);
     const registered = outflows.get(batch.id) ?? [];
     const lot = production.get(batch.id) ?? [];
@@ -148,6 +158,15 @@ export class EggStockService {
     throw new BadRequestException(
       notEnoughEggs(batch.code, eggAvailable(lot, registered, first)),
     );
+  }
+
+  /**
+   * A return of eggs to the balance (a negative outflow of a credit note):
+   * the lot is locked and must still be open (409 `Ce lot est clôturé`), like
+   * every other change to a lot. Nothing else to check: a return only adds.
+   */
+  async assertReturn(tx: Tx, batchId: string): Promise<void> {
+    this.ledger.assertOpen(await this.ledger.lockBatch(tx, batchId));
   }
 
   /**

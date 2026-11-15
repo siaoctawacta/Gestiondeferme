@@ -13,6 +13,7 @@ import {
   type BatchHistorySource,
 } from '../herd/batch-history';
 import { BatchesService } from '../herd/batches.service';
+import { LAYING_TYPES } from '../herd/species';
 import {
   addDays,
   assertNotBeforeEntry,
@@ -193,7 +194,7 @@ export class IncubationsService implements BatchHistorySource {
     startDate: Date,
   ) {
     const batch = await tx.animalBatch.findFirst({
-      where: { id, farmId, type: { in: ['PONDEUSE', 'REPRODUCTEUR'] } },
+      where: { id, farmId, species: 'AVICOLE', type: { in: LAYING_TYPES } },
       select: { id: true, entryDate: true },
     });
     if (!batch) throw new BadRequestException('Lot source invalide');

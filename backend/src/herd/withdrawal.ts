@@ -44,7 +44,7 @@ export const animalUnderWithdrawal = (tag: string, until: Date): string =>
 @Injectable()
 export class WithdrawalRegistry extends SourceRegistry<WithdrawalSource> {
   constructor() {
-    super('délais d’attente');
+    super('délais d’attente', { mandatory: true });
   }
 
   /** Latest end over the registered sources, or null (also when none is registered). */

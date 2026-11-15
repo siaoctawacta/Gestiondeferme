@@ -323,33 +323,52 @@ describe('Sale seams under concurrency (real pool)', () => {
     ).toBe(4);
   });
 
-  it('a treatment racing a sale of the same lot is either seen by the guard or waits for the sale', async () => {
+  it('a treatment racing a sale of the same lot waits for the lot lock: the guard sees none, the treatment comes after', async () => {
     const lot = await world.lot(h, { initialCount: 100 });
-    const act = (date: string) =>
-      world.http().post('/api/health-acts').set(h).send({
+    let locked!: () => void;
+    let release!: () => void;
+    const hasLock = new Promise<void>((r) => (locked = r));
+    const gate = new Promise<void>((r) => (release = r));
+    const sale = prisma.$transaction(
+      async (tx) => {
+        await app
+          .get(HerdLedgerService)
+          .lockBatches(tx, [lot.id], [world.farmId]);
+        locked();
+        await gate;
+        await app
+          .get(WithdrawalRegistry)
+          .assertClear({ batchId: lot.id, code: lot.code }, today(), tx);
+        return 'clear';
+      },
+      { timeout: 20000 },
+    );
+    await hasLock;
+    const treatment = world
+      .http()
+      .post('/api/health-acts')
+      .set(h)
+      .send({
         type: 'TRAITEMENT',
         status: 'REALISE',
-        date,
+        date: daysAgo(0),
         productName: 'Amox',
         withdrawalDays: 5,
         batchId: lot.id,
-      });
-    const guarded = prisma.$transaction(async (tx) => {
-      await app
-        .get(HerdLedgerService)
-        .lockBatches(tx, [lot.id], [world.farmId]);
-      await sleep(200);
-      await app
-        .get(WithdrawalRegistry)
-        .assertClear({ batchId: lot.id, code: lot.code }, today(), tx);
-      return 'clear';
-    });
-    await sleep(50);
-    const treated = act(daysAgo(0));
-    const [sale, treatment] = await Promise.all([guarded, treated]);
-    // The guard ran while the treatment was waiting for the lot lock: the sale saw no withdrawal, the treatment came after it.
-    expect(sale).toBe('clear');
-    expect(treatment.status).toBe(201);
+      })
+      .then((r) => r);
+    // Not a sleep: wait until the database reports a session blocked on a lock.
+    for (let i = 0; i < 400; i++) {
+      const [{ waiting }] = await prisma.$queryRaw<{ waiting: bigint }[]>`
+        SELECT count(*) AS waiting FROM pg_stat_activity
+        WHERE datname = current_database() AND wait_event_type = 'Lock'`;
+      if (waiting > 0n) break;
+      await new Promise((r) => setImmediate(r));
+    }
+    release();
+    const [guarded, done] = await Promise.all([sale, treatment]);
+    expect(guarded).toBe('clear');
+    expect(done.status).toBe(201);
     await expect(
       prisma.$transaction(async (tx) => {
         await app

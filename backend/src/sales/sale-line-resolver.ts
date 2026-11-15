@@ -12,8 +12,8 @@ import type {
 } from '../generated/prisma/enums';
 import type { SaleLineDto } from './dto/sale-line.dto';
 import { documentTotal } from './sale-money';
+import { canLay } from '../herd/species';
 import {
-  canLay,
   defaultDesignation,
   lineActivity,
   lineCategory,

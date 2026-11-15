@@ -13,6 +13,7 @@ describe('the application registries', () => {
     ['performance des lots', () => new BatchPerformanceRegistry()],
     ['coûts des lots', () => new LotCostRegistry()],
     ['animaux ciblés', () => new AnimalTargetRegistry()],
+    ['délais d’attente', () => new WithdrawalRegistry()],
   ])('refuses to boot without a source for "%s"', (name, make) => {
     expect(() => make().onApplicationBootstrap()).toThrow(name);
   });
@@ -20,7 +21,6 @@ describe('the application registries', () => {
   it.each([
     ['historique des lots', () => new BatchHistoryRegistry()],
     ['alertes', () => new AlertsRegistry()],
-    ['délais d’attente', () => new WithdrawalRegistry()],
     ['sevrage des portées', () => new LitterWeaningRegistry()],
   ])('boots without a source for "%s"', (_name, make) => {
     expect(() => make().onApplicationBootstrap()).not.toThrow();

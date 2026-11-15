@@ -37,25 +37,12 @@ export class HealthHistory
     target: { batchId: string } | { animalId: string },
     tx?: Prisma.TransactionClient,
   ): Promise<Date | null> {
-    const acts = await (tx ?? this.prisma).healthAct.findMany({
-      where: {
-        ...target,
-        status: 'REALISE',
-        withdrawalDays: { not: null },
-      },
-      select: {
-        status: true,
-        doneDate: true,
-        durationDays: true,
-        withdrawalDays: true,
-      },
-    });
-    let latest: Date | null = null;
-    for (const act of acts) {
-      const end = withdrawalEnd(act);
-      if (end && (!latest || end > latest)) latest = end;
-    }
-    return latest;
+    const id = 'batchId' in target ? target.batchId : target.animalId;
+    const ends = await this.withdrawalUntilMany(
+      'batchId' in target ? { batchIds: [id] } : { animalIds: [id] },
+      tx,
+    );
+    return ends.get(id) ?? null;
   }
 
   /** `withdrawalUntil` of many lots and animals: one query. */

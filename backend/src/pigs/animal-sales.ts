@@ -9,8 +9,8 @@ import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
 import type { AnimalCategory } from '../generated/prisma/enums';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
-import { assertBuildingFits } from '../herd/species';
 import {
+  AnimalsService,
   assertAfterLastRecord,
   hasRecordAfter,
   PREGNANT_OR_NURSING,
@@ -18,6 +18,8 @@ import {
 } from './animals.service';
 
 type Tx = Prisma.TransactionClient;
+
+export const NO_LONGER_SOLD = "Cet animal n'est plus vendu par ce document";
 
 /** What sold the animal: a document of the sales module (its id, and its number for the messages). */
 export interface SaleSource {
@@ -40,7 +42,10 @@ export interface SaleSource {
  */
 @Injectable()
 export class AnimalSales {
-  constructor(private readonly ledger: HerdLedgerService) {}
+  constructor(
+    private readonly ledger: HerdLedgerService,
+    private readonly animals: AnimalsService,
+  ) {}
 
   /**
    * Sells one animal on `date`. Only a plain live animal (`ACTIF`) is sold:
@@ -48,7 +53,11 @@ export class AnimalSales {
    * out is 409 `EXITED`. The dates are those of a manual exit (not in the
    * future, not before the birth, not before its last breeding step, weighing
    * or heat). Pass `farmIds` to refuse an animal outside the caller's farms
-   * (400). Returns what the document line is named from.
+   * (400 `Animal invalide`). Returns what the document line is named from.
+   *
+   * It does NOT check the withdrawal period: the caller must call
+   * `WithdrawalRegistry.assertClear` for the animal first (the sales module's
+   * `sale-effects` does, and a test goes through the real route).
    */
   async sell(
     tx: Tx,
@@ -112,19 +121,12 @@ export class AnimalSales {
         animal.exitSourceType !== source.type ||
         animal.exitSourceId !== source.id
       ) {
-        throw new ConflictException(RECORDED_AFTER_EXIT);
+        throw new ConflictException(NO_LONGER_SOLD);
       }
       if (animal.exitDate && (await hasRecordAfter(tx, id, animal.exitDate))) {
         throw new ConflictException(RECORDED_AFTER_EXIT);
       }
-      const building = await tx.building.findFirst({
-        where: { id: animal.buildingId, farmId: animal.farmId },
-        select: { id: true, type: true },
-      });
-      if (!building) {
-        throw new BadRequestException('Bâtiment invalide pour cette ferme');
-      }
-      assertBuildingFits(building, 'PORCIN');
+      await this.animals.assertBuilding(tx, animal.farmId, animal.buildingId);
       await tx.animal.update({
         where: { id },
         data: {

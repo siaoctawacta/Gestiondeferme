@@ -9,6 +9,7 @@ import {
 } from '../common/days';
 import { formatCount } from '../common/format-number';
 import { EggStockService } from '../eggs/egg-stock';
+import { canLay, LAYING_TYPES } from '../herd/species';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import { WithdrawalRegistry } from '../herd/withdrawal';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,7 +18,7 @@ import type {
   SellableKind,
   SellablesQueryDto,
 } from './dto/sellables-query.dto';
-import { ANIMAL_LABEL, canLay, defaultDesignation } from './sale-lines';
+import { ANIMAL_LABEL, defaultDesignation } from './sale-lines';
 
 /** One source that can be put on a sale line. */
 export interface Sellable {
@@ -101,7 +102,8 @@ export class SellablesService {
       select: { id: true, code: true, type: true },
       orderBy: [{ code: 'asc' }, { id: 'asc' }],
     });
-    const alive = await this.herd.liveCounts(
+    // What a sale on `date` can take, later events included (see `availableAt`).
+    const alive = await this.herd.availableAt(
       batches.map((b) => b.id),
       date,
     );
@@ -184,7 +186,7 @@ export class SellablesService {
           status: 'EN_COURS',
           entryDate: { lte: date },
           species: 'AVICOLE',
-          type: { in: ['PONDEUSE', 'REPRODUCTEUR'] },
+          type: { in: LAYING_TYPES },
         },
         select: { id: true, code: true, species: true, type: true },
         orderBy: [{ code: 'asc' }, { id: 'asc' }],
@@ -226,50 +228,32 @@ export class SellablesService {
     farmId: string,
     date: Date,
   ): Promise<Sellable[]> {
-    const levels = await this.stock.levels([farmId]);
-    const held = [...levels]
-      .filter(([, level]) => level.quantity.gt(0))
-      .map(([key]) => key.slice(farmId.length + 1));
-    if (held.length === 0) return [];
-    const items = await this.prisma.stockItem.findMany({
+    // Every active article that holds stock now; what is sellable on `date` is asked of the ledger.
+    const held = await this.prisma.farmStockItem.findMany({
       where: {
-        id: { in: held },
-        organizationId: ctx.user.organizationId,
-        active: true,
+        farmId,
+        quantity: { gt: 0 },
+        stockItem: { active: true, organizationId: ctx.user.organizationId },
       },
-      select: { id: true, name: true, unit: true },
-      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      select: {
+        stockItemId: true,
+        stockItem: { select: { name: true, unit: true } },
+      },
+      orderBy: [{ stockItem: { name: 'asc' } }, { stockItemId: 'asc' }],
     });
-    // What is held in lots that are past their expiry on the date cannot be sold.
-    const batches = await this.stock.batchLevels(
-      [farmId],
-      items.map((i) => i.id),
+    const sellable = await this.stock.sellableAt(
+      farmId,
+      held.map((h) => h.stockItemId),
+      date,
     );
-    const expired = new Map<string, number>();
-    for (const { batch, quantity } of batches) {
-      if (
-        batch.expiryDate &&
-        batch.expiryDate.getTime() < date.getTime() &&
-        quantity.gt(0)
-      ) {
-        expired.set(
-          batch.stockItemId,
-          (expired.get(batch.stockItemId) ?? 0) + quantity.toNumber(),
-        );
-      }
-    }
-    return items.map((i) => {
-      const level = levels.get(`${farmId}:${i.id}`)?.quantity.toNumber() ?? 0;
-      const available = Math.max(
-        0,
-        Math.round((level - (expired.get(i.id) ?? 0)) * 100) / 100,
-      );
+    return held.map((h) => {
+      const available = sellable.get(h.stockItemId)?.toNumber() ?? 0;
       return {
-        id: i.id,
+        id: h.stockItemId,
         kind: 'ARTICLE',
-        label: `${i.name} — ${formatCount(available)} ${i.unit}`,
-        designation: defaultDesignation('ARTICLE', { name: i.name }),
-        unit: i.unit,
+        label: `${h.stockItem.name} — ${formatCount(available)} ${h.stockItem.unit}`,
+        designation: defaultDesignation('ARTICLE', { name: h.stockItem.name }),
+        unit: h.stockItem.unit,
         available,
         withdrawalUntil: null,
         sellable: available > 0,

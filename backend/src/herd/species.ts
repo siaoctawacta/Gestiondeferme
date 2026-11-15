@@ -22,3 +22,9 @@ export function assertBuildingFits(
     throw new BadRequestException(WRONG_BUILDING);
   }
 }
+
+/** The batch types that lay eggs (poultry layers and breeders): the one rule behind egg records, incubations and egg sales. */
+export const LAYING_TYPES: BatchType[] = ['PONDEUSE', 'REPRODUCTEUR'];
+
+export const canLay = (batch: { species: Species; type: BatchType }): boolean =>
+  batch.species === 'AVICOLE' && LAYING_TYPES.includes(batch.type);

@@ -18,6 +18,7 @@ import { toEventItem } from './batch-event-item';
 import { auditHerd } from './herd-audit';
 import { assertBuildingFits } from './species';
 import { assertNotFuture, BEFORE_ENTRY, formatDay } from '../common/days';
+import { lowestBalance } from '../common/balance';
 import { LitterWeaningRegistry } from './litter-weaning';
 import { OccupationRegistry, OccupationSource } from './occupation';
 
@@ -270,6 +271,11 @@ export class HerdLedgerService implements OccupationSource {
     }
   }
 
+  /**
+   * Records one event. A SALE (`VENTE`, source `SALE`) does not check the
+   * withdrawal period: the caller must call `WithdrawalRegistry.assertClear`
+   * for the lot first (the sales module's `sale-effects` does).
+   */
   async record(tx: Tx, input: RecordInput): Promise<BatchEvent> {
     const batch = await this.lockBatch(tx, input.batchId, [input.farmId]);
     this.assertOpen(batch);
@@ -523,6 +529,53 @@ export class HerdLedgerService implements OccupationSource {
         s.batchId,
         (result.get(s.batchId) ?? 0) +
           EVENT_SIGN[s.type] * (s._sum.quantity ?? 0),
+      );
+    }
+    return result;
+  }
+
+  /**
+   * What a sale dated `date` may take from each batch: the live count on that
+   * date, and no more than any later day can spare (a sale on `date` lowers
+   * every later count too, in (date, createdAt) order: a lot of 40 with 30 sold
+   * since has 10). Never negative; a fixed number of queries.
+   */
+  async availableAt(
+    batchIds: string[],
+    date: Date,
+    client: Tx = this.prisma,
+  ): Promise<Map<string, number>> {
+    const alive = await this.liveCounts(batchIds, date, client);
+    const later = batchIds.length
+      ? await client.batchEvent.findMany({
+          where: { batchId: { in: batchIds }, date: { gt: date } },
+          select: {
+            id: true,
+            batchId: true,
+            date: true,
+            createdAt: true,
+            type: true,
+            quantity: true,
+          },
+        })
+      : [];
+    const byBatch = new Map<string, typeof later>();
+    for (const e of later) {
+      byBatch.set(e.batchId, [...(byBatch.get(e.batchId) ?? []), e]);
+    }
+    const result = new Map<string, number>();
+    for (const id of batchIds) {
+      const deltas = (byBatch.get(id) ?? [])
+        .sort(
+          (a, b) =>
+            a.date.getTime() - b.date.getTime() ||
+            a.createdAt.getTime() - b.createdAt.getTime() ||
+            a.id.localeCompare(b.id),
+        )
+        .map((e) => EVENT_SIGN[e.type] * e.quantity);
+      result.set(
+        id,
+        Math.max(0, lowestBalance(alive.get(id) ?? 0, deltas).toNumber()),
       );
     }
     return result;
