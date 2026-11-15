@@ -1654,6 +1654,53 @@ describe('StockLedgerService (test database)', () => {
       ).toBe(12);
     });
 
+    it('answers 400, not a foreign-key 500, when the article is deleted between the ledger reading it and locking it', async () => {
+      for (let round = 0; round < 3; round++) {
+        const doomed = (
+          await prisma.stockItem.create({
+            data: {
+              organizationId: orgId,
+              name: `Éphémère ${round}`,
+              category: 'MATERIEL',
+              unit: 'kg',
+            },
+          })
+        ).id;
+        let release!: () => void;
+        const held = new Promise<void>((r) => (release = r));
+        let locked!: () => void;
+        const lockTaken = new Promise<void>((r) => (locked = r));
+        const deleter = prisma.$transaction(async (tx) => {
+          await tx.$queryRaw`SELECT id FROM "StockItem" WHERE id = ${doomed} FOR UPDATE`;
+          locked();
+          await held;
+          await tx.farmStockItem.deleteMany({ where: { stockItemId: doomed } });
+          await tx.stockItem.delete({ where: { id: doomed } });
+        });
+        await lockTaken;
+        // Reads the article (not blocked), then waits on the FOR KEY SHARE.
+        const writer = record({
+          type: 'ENTREE',
+          date: day('2026-01-01'),
+          quantity: 5,
+          unitCost: 1,
+          stockItemId: doomed,
+        });
+        const outcome = writer.then(
+          () => 'ok',
+          (e: unknown) => e,
+        );
+        await new Promise((r) => setTimeout(r, 300));
+        release();
+        await deleter;
+        const result = await outcome;
+        expect(result).toBeInstanceOf(BadRequestException);
+        expect((result as BadRequestException).message).toBe(
+          'Article invalide pour cette ferme',
+        );
+      }
+    });
+
     it('refuses a new movement dated before the count (a back-dated reception, a late distribution)', async () => {
       await counted();
       await expect(entry('2026-01-03', 50, 10)).rejects.toThrow(LOCKED);

@@ -2,9 +2,14 @@ import { Injectable } from '@nestjs/common';
 import { SourceRegistry } from '../common/source-registry';
 import type { Prisma } from '../generated/prisma/client';
 
-/** A weaning recorded against a litter batch: `count` piglets were weaned on `date`. */
+/**
+ * A weaning recorded against a litter batch: `count` piglets were weaned on
+ * `date`, the weaning being recorded at the moment `at` (its position in the
+ * day: events of that day created before `at` count, later ones do not).
+ */
 export interface LitterWeaning {
   date: Date;
+  at: Date;
   count: number;
 }
 

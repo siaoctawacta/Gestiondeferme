@@ -741,7 +741,11 @@ export class StockLedgerService {
     if (!item) throw new BadRequestException(INVALID_ITEM);
     // Held to the end of the transaction: the article cannot be deleted, nor
     // retyped (`FOR UPDATE`), under a write in flight.
-    await tx.$queryRaw`SELECT id FROM "StockItem" WHERE id = ${stockItemId} FOR KEY SHARE`;
+    const held = await tx.$queryRaw<
+      { id: string }[]
+    >`SELECT id FROM "StockItem" WHERE id = ${stockItemId} FOR KEY SHARE`;
+    // Deleted between the read and the lock: the insert would fail on the FK.
+    if (held.length === 0) throw new BadRequestException(INVALID_ITEM);
     return item;
   }
 

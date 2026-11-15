@@ -95,10 +95,10 @@ export class BreedingService implements LitterWeaningSource {
   async weaningOf(tx: Prisma.TransactionClient, batchId: string) {
     const row = await tx.breedingRecord.findFirst({
       where: { litterBatchId: batchId, status: 'SEVRAGE' },
-      select: { weaningDate: true, weanedCount: true },
+      select: { weaningDate: true, weanedAt: true, weanedCount: true },
     });
-    return row?.weaningDate && row.weanedCount !== null
-      ? { date: row.weaningDate, count: row.weanedCount }
+    return row?.weaningDate && row.weanedAt && row.weanedCount !== null
+      ? { date: row.weaningDate, at: row.weanedAt, count: row.weanedCount }
       : null;
   }
 
@@ -525,6 +525,7 @@ export class BreedingService implements LitterWeaningSource {
         data: {
           status: 'SEVRAGE',
           weaningDate: date,
+          weanedAt: new Date(),
           weanedCount: dto.weanedCount,
         },
       });

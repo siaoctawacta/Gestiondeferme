@@ -1,6 +1,7 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
+import { LitterWeaningRegistry } from '../src/herd/litter-weaning';
 import { PrismaService } from '../src/prisma/prisma.service';
 import type { Role } from '../src/generated/prisma/enums';
 import {
@@ -1176,23 +1177,95 @@ describe('Breeding (e2e)', () => {
       await wean(headers, rec.id, 11).expect(200);
     });
 
-    it('a death dated on or before the weaning is refused once the litter is weaned, a later one is not', async () => {
+    it('a death dated the day before the weaning is refused once the litter is weaned; one dated after is not', async () => {
       const { headers, rec } = await freshLitter();
       await wean(headers, rec.id, 12).expect(200);
-      for (const date of [daysAgo(2), daysAgo(1)]) {
-        const refused = await death(headers, rec.litterBatchId, date).expect(
-          400,
-        );
-        expect((refused.body as { message: string }).message).toBe(WEANED(12));
-      }
+      const refused = await death(
+        headers,
+        rec.litterBatchId,
+        daysAgo(2),
+      ).expect(400);
+      expect((refused.body as { message: string }).message).toBe(WEANED(12));
       await death(headers, rec.litterBatchId, daysAgo(0)).expect(201);
-      const batch = (
+    });
+
+    it('the weaning has a position in its day: a sale or death dated that day but recorded after it is accepted, and the lot can be closed', async () => {
+      const { headers, rec } = await freshLitter();
+      await wean(headers, rec.id, 12).expect(200);
+      // Same-day events created after the weaning follow it. (One entered
+      // late for that day cannot be told apart by its date: allowed too.)
+      await death(headers, rec.litterBatchId, daysAgo(1)).expect(201);
+      await http()
+        .post(`/api/batches/${rec.litterBatchId}/events`)
+        .set(headers)
+        .send({ type: 'VENTE', date: daysAgo(1), quantity: 11 })
+        .expect(201);
+      await http()
+        .post(`/api/batches/${rec.litterBatchId}/close`)
+        .set(headers)
+        .expect(200);
+    });
+
+    it('a pre-weaning event can go down in quantity, not up', async () => {
+      const { headers, rec } = await freshLitter();
+      const early = (await death(
+        headers,
+        rec.litterBatchId,
+        daysAgo(4),
+        2,
+      ).expect(201)) as { body: { id: string } };
+      await wean(headers, rec.id, 10).expect(200);
+      const url = `/api/batches/${rec.litterBatchId}/events/${early.body.id}`;
+      await http().patch(url).set(headers).send({ quantity: 1 }).expect(200);
+      await http().patch(url).set(headers).send({ quantity: 3 }).expect(400);
+    });
+
+    it('a litter already out of step (written before the rule) is not frozen: only a change that makes it worse is refused', async () => {
+      const { headers, rec } = await freshLitter();
+      const early = (await death(headers, rec.litterBatchId, daysAgo(3)).expect(
+        201,
+      )) as { body: { id: string } };
+      // Weaned 12 although only 11 were alive: what the old code allowed.
+      await prisma.breedingRecord.update({
+        where: { id: rec.id },
+        data: {
+          status: 'SEVRAGE',
+          weaningDate: new Date(daysAgo(1)),
+          weanedAt: new Date(),
+          weanedCount: 12,
+        },
+      });
+      await http()
+        .patch(`/api/batches/${rec.litterBatchId}/events/${early.body.id}`)
+        .set(headers)
+        .send({ note: 'précision' })
+        .expect(200);
+      await death(headers, rec.litterBatchId, daysAgo(0)).expect(201);
+      await death(headers, rec.litterBatchId, daysAgo(2)).expect(400);
+    });
+
+    it('a herd write on a lot that is not a litter never asks for a weaning', async () => {
+      const { headers } = await freshLitter();
+      const lot = (
         await http()
-          .get(`/api/batches/${rec.litterBatchId}`)
+          .post('/api/batches')
           .set(headers)
-          .expect(200)
-      ).body as BatchItem;
-      expect(batch.alive).toBe(11);
+          .send({
+            species: 'PORCIN',
+            type: 'ENGRAISSEMENT',
+            buildingId: bldA,
+            entryDate: daysAgo(10),
+            initialCount: 20,
+          })
+          .expect(201)
+      ).body as { id: string };
+      const spy = jest.spyOn(app.get(LitterWeaningRegistry), 'weaningOf');
+      try {
+        await death(headers, lot.id, daysAgo(1)).expect(201);
+        expect(spy).not.toHaveBeenCalled();
+      } finally {
+        spy.mockRestore();
+      }
     });
 
     it('a weaning that wrote off 2 piglets keeps its 10: an earlier death is refused', async () => {
@@ -1224,12 +1297,15 @@ describe('Breeding (e2e)', () => {
         .expect(200);
       // Removing it is an increase of the count: allowed too.
       await http().delete(url).set(headers).expect(200);
-      // A lower opening count is refused the same way.
-      await http()
+      // A litter follows its farrowing: its opening count cannot be edited.
+      const linked = await http()
         .patch(`/api/batches/${rec.litterBatchId}`)
         .set(headers)
         .send({ initialCount: 10 })
         .expect(400);
+      expect((linked.body as { message: string }).message).toMatch(
+        /provient d'une mise bas/,
+      );
     });
 
     it('weaning racing a death on the litter: one wins, whatever the order, never out of step', async () => {

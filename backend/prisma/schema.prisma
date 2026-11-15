@@ -609,6 +609,8 @@ model BreedingRecord {
   litterBatchId         String?        @unique
   litterBatch           AnimalBatch?   @relation("BreedingLitter", fields: [litterBatchId], references: [id], onDelete: Restrict)
   weaningDate           DateTime?      @db.Date
+  /// The moment the weaning was recorded: it has a position in its day, like a ledger operation.
+  weanedAt              DateTime?
   weanedCount           Int?
   failureDate           DateTime?      @db.Date
   note                  String?
