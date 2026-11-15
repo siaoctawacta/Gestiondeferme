@@ -4,6 +4,9 @@ import type { ModuleKey } from '../../access/permissions';
 export const ALERT_LEVEL_ORDER = ['URGENT', 'A_VOIR'] as const;
 export type AlertLevel = (typeof ALERT_LEVEL_ORDER)[number];
 
+/** At least one module: an alert nobody can be said to read is shown to no one. */
+export type AlertModules = [ModuleKey, ...ModuleKey[]];
+
 export interface AlertItem {
   /** Stable across requests for the same condition. */
   key: string;
@@ -16,7 +19,7 @@ export interface AlertItem {
    * Every module the role must be able to read to see the alert: the primary
    * one, plus the species module when the alert names a lot of that species.
    */
-  modules: ModuleKey[];
+  modules: AlertModules;
 }
 
 /**

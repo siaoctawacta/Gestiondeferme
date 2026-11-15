@@ -20,7 +20,7 @@ const item = (key: string, level: AlertItem['level']): AlertItem => ({
 });
 
 describe('AlertsRegistry', () => {
-  it('orders URGENT first, then by rule registration order, then by key', async () => {
+  it("orders URGENT first, then by rule registration order, then in each rule's own order", async () => {
     const registry = new AlertsRegistry();
     registry.register(() =>
       Promise.resolve([item('a:2', 'A_VOIR'), item('a:1', 'A_VOIR')]),
@@ -30,7 +30,7 @@ describe('AlertsRegistry', () => {
     );
     registry.register(() => Promise.resolve([item('c:1', 'URGENT')]));
     const keys = (await registry.run(ctx, SETTINGS)).map((i) => i.key);
-    expect(keys).toEqual(['b:1', 'c:1', 'a:1', 'a:2', 'b:0']);
+    expect(keys).toEqual(['b:1', 'c:1', 'a:2', 'a:1', 'b:0']);
   });
 
   it('keeps only the alerts of modules the role can read, and counts them', async () => {
@@ -51,9 +51,9 @@ describe('AlertsRegistry', () => {
       registry.run({ user: { role } } as RequestContext, SETTINGS);
     expect((await as('COMMERCIAL')).map((i) => i.key)).toEqual(['m:1']);
     expect((await as('DIRECTEUR_FERME')).map((i) => i.key)).toEqual([
-      'c:1',
-      'f:1',
       'm:1',
+      'f:1',
+      'c:1',
     ]);
     expect(await as('COMPTABLE')).toEqual([]);
   });
@@ -80,6 +80,29 @@ describe('AlertsRegistry', () => {
       'c:both',
       'c:building',
     ]);
+  });
+
+  it('shows an alert without any module to no one', async () => {
+    const registry = new AlertsRegistry();
+    registry.register(() =>
+      Promise.resolve([
+        {
+          ...item('none:1', 'URGENT'),
+          modules: [] as unknown as AlertItem['modules'],
+        },
+        item('some:1', 'A_VOIR'),
+      ]),
+    );
+    for (const role of [
+      'SUPER_ADMIN',
+      'DIRECTEUR_FERME',
+      'COMMERCIAL',
+    ] as Role[]) {
+      const keys = (
+        await registry.run({ user: { role } } as RequestContext, SETTINGS)
+      ).map((i) => i.key);
+      expect(keys).not.toContain('none:1');
+    }
   });
 
   it('is empty without rules', async () => {

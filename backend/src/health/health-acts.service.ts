@@ -23,13 +23,15 @@ import {
   ACT_STATUSES,
   actInclude,
   actTypeLabel,
+  OPEN_TARGET,
+  overdueActWhere,
   toActItem,
   type ActRow,
   type ActStatus,
   type HealthActItem,
 } from './health-act-view';
 import { HealthStock } from './health-stock';
-import { HealthTargets, OPEN_TARGET } from './health-targets';
+import { HealthTargets } from './health-targets';
 
 type Tx = Prisma.TransactionClient;
 
@@ -100,7 +102,7 @@ export class HealthActsService {
       };
     }
     if (status === 'EN_RETARD') {
-      return { status: 'PLANIFIE', date: { lt: now }, ...OPEN_TARGET };
+      return overdueActWhere(now);
     }
     return { status };
   }

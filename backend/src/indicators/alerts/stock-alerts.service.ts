@@ -1,0 +1,88 @@
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import type { RequestContext } from '../../access/decorators';
+import { formatDay } from '../../common/days';
+import { PrismaService } from '../../prisma/prisma.service';
+import { levelKey, StockLedgerService } from '../../stock/stock-ledger.service';
+import { AlertsRegistry } from './alerts-registry';
+import {
+  stockAlertRules,
+  type ExpiringBatch,
+  type StockAlertData,
+  type StockLevelRow,
+} from './stock-alerts';
+
+/**
+ * Reads the stock tables for the stock and expiry alert rules and registers
+ * them. A fixed number of queries whatever the number of articles and lots:
+ * the thresholds, the movements (one replay for every level), the lots with
+ * their quantities, and the names of the articles of those lots.
+ */
+@Injectable()
+export class StockAlertsService implements StockAlertData, OnModuleInit {
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly ledger: StockLedgerService,
+    private readonly registry: AlertsRegistry,
+  ) {}
+
+  onModuleInit(): void {
+    for (const rule of stockAlertRules(this)) this.registry.register(rule);
+  }
+
+  /** Every active article with a minimum in the request's farms, with its quantity there (none yet is 0). */
+  async levels(ctx: RequestContext): Promise<StockLevelRow[]> {
+    const limits = await this.prisma.farmStockItem.findMany({
+      where: {
+        farmId: { in: ctx.farmIds },
+        minQty: { gt: 0 },
+        stockItem: { active: true },
+      },
+      select: {
+        farmId: true,
+        stockItemId: true,
+        minQty: true,
+        stockItem: { select: { name: true, unit: true } },
+      },
+      relationLoadStrategy: 'join',
+    });
+    if (limits.length === 0) return [];
+    const levels = await this.ledger.levels(ctx.farmIds, [
+      ...new Set(limits.map((l) => l.stockItemId)),
+    ]);
+    return limits.map((l) => ({
+      farmId: l.farmId,
+      itemId: l.stockItemId,
+      name: l.stockItem.name,
+      unit: l.stockItem.unit,
+      quantity:
+        levels.get(levelKey(l.farmId, l.stockItemId))?.quantity.toNumber() ?? 0,
+      minQty: l.minQty.toNumber(),
+    }));
+  }
+
+  /** The lots with an expiry date and something left in them. */
+  async batches(ctx: RequestContext): Promise<ExpiringBatch[]> {
+    const held = (await this.ledger.batchLevels(ctx.farmIds)).filter(
+      (b) => b.batch.expiryDate && b.quantity.gt(0),
+    );
+    if (held.length === 0) return [];
+    const items = await this.prisma.stockItem.findMany({
+      where: { id: { in: [...new Set(held.map((b) => b.batch.stockItemId))] } },
+      select: { id: true, name: true },
+    });
+    const names = new Map(items.map((i) => [i.id, i.name]));
+    return held.flatMap(({ batch, quantity }) =>
+      batch.expiryDate
+        ? [
+            {
+              id: batch.id,
+              itemName: names.get(batch.stockItemId) ?? '',
+              lotNumber: batch.lotNumber,
+              expiryDate: formatDay(batch.expiryDate),
+              quantity: quantity.toNumber(),
+            },
+          ]
+        : [],
+    );
+  }
+}

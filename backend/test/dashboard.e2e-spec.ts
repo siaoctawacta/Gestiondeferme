@@ -651,4 +651,456 @@ describe('Dashboard (e2e)', () => {
       );
     });
   });
+  describe('stock, expiry, vaccination and health alerts', () => {
+    const ahead = (n: number) => day(-n);
+    const aheadStr = (n: number) => dayStr(-n);
+    let siteId: string;
+    let porcherie: string;
+
+    beforeEach(async () => {
+      siteId = (
+        await prisma.site.findFirstOrThrow({ where: { farmId: farmA } })
+      ).id;
+      porcherie = (
+        await prisma.building.create({
+          data: {
+            farmId: farmA,
+            siteId,
+            name: 'Porcherie 2',
+            type: 'PORCIN',
+            capacity: 50,
+          },
+        })
+      ).id;
+    });
+
+    async function item(name: string, unit = 'kg', category = 'ALIMENT') {
+      return (
+        await prisma.stockItem.create({
+          data: {
+            organizationId: orgId,
+            name,
+            unit,
+            category: category as 'ALIMENT',
+          },
+        })
+      ).id;
+    }
+
+    /** One entry movement of `quantity`, on a lot (of `expiry` days from today) when given. */
+    async function stockIn(
+      farmId: string,
+      stockItemId: string,
+      quantity: number,
+      lot?: { number: string; expiry: number },
+    ) {
+      const batch = lot
+        ? await prisma.stockBatch.create({
+            data: {
+              farmId,
+              stockItemId,
+              lotNumber: lot.number,
+              expiryDate: ahead(lot.expiry),
+              receivedDate: day(60),
+            },
+          })
+        : null;
+      await prisma.stockMovement.create({
+        data: {
+          farmId,
+          stockItemId,
+          stockBatchId: batch?.id ?? null,
+          date: day(40),
+          type: 'ENTREE',
+          quantity,
+          unitCost: 100,
+          reason: 'ACHAT',
+          operationId: `op-${Math.random()}`,
+          createdById: userId,
+        },
+      });
+      return batch?.id;
+    }
+
+    const threshold = (farmId: string, stockItemId: string, minQty: number) =>
+      prisma.farmStockItem.create({ data: { farmId, stockItemId, minQty } });
+
+    async function poultryLot(
+      code: string,
+      over: Record<string, unknown> = {},
+    ) {
+      return (
+        await prisma.animalBatch.create({
+          data: {
+            farmId: farmA,
+            buildingId: buildingA,
+            code,
+            species: 'AVICOLE',
+            type: 'PONDEUSE',
+            entryDate: day(60),
+            initialCount: 100,
+            ...over,
+          },
+        })
+      ).id;
+    }
+
+    function act(over: Record<string, unknown>) {
+      return prisma.healthAct.create({
+        data: {
+          farmId: farmA,
+          date: day(1),
+          type: 'VACCINATION',
+          productName: 'Gumboro',
+          createdById: userId,
+          ...over,
+        } as never,
+      });
+    }
+
+    const alerts = async (farm: string, headers = headersFor(farm)) =>
+      (await http().get('/api/alerts').set(headers).expect(200))
+        .body as AlertsBody;
+    const rows = (a: AlertsBody) =>
+      a.items.map((i) => [i.title, i.detail, i.level]);
+    const as = async (
+      role:
+        | 'MAGASINIER'
+        | 'AGENT_ELEVAGE'
+        | 'RESP_AVICOLE'
+        | 'COMPTABLE'
+        | 'RESP_STOCK',
+      farm = farmA,
+    ) => {
+      const user = await createUser({
+        organizationId: orgId,
+        role,
+        farmIds: [farmA, farmB],
+      });
+      return {
+        Authorization: `Bearer ${await tokenFor(user.id)}`,
+        'X-Farm-Id': farm,
+      };
+    };
+
+    async function seedReference() {
+      const ponte = await item('Aliment ponte');
+      const porc = await item('Aliment engraissement porc');
+      await stockIn(farmA, ponte, 900);
+      await stockIn(farmA, porc, 600);
+      await threshold(farmA, ponte, 1500);
+      await threshold(farmA, porc, 1500);
+      const lot = await poultryLot('LC-2026-15');
+      await act({ batchId: lot, date: day(2) });
+      await act({
+        buildingId: porcherie,
+        type: 'DESINFECTION',
+        productName: 'Virkon S',
+        date: day(3),
+      });
+    }
+
+    it('raises the reference alerts with their exact texts, URGENT before A_VOIR, by rule', async () => {
+      await seedReference();
+      expect(rows(await alerts(farmA))).toEqual([
+        [
+          'Stock critique : Aliment engraissement porc',
+          '600 kg (seuil 1500)',
+          'URGENT',
+        ],
+        ['Vaccination en retard', 'LC-2026-15 — Gumboro', 'URGENT'],
+        ['Stock faible : Aliment ponte', '900 kg (seuil 1500)', 'A_VOIR'],
+        ['Désinfection en retard', 'Porcherie 2 — Virkon S', 'A_VOIR'],
+      ]);
+    });
+
+    it('draws the stock level boundaries from the level function', async () => {
+      const at = async (quantity: number) => {
+        const id = await item(`Article ${quantity}`);
+        await stockIn(farmA, id, quantity);
+        await threshold(farmA, id, 1500);
+      };
+      await at(1500);
+      await at(1499);
+      await at(750);
+      await at(749);
+      const noMin = await item('Sans seuil');
+      await stockIn(farmA, noMin, 1);
+      await threshold(farmA, noMin, 0);
+      await item('Jamais stocké').then((id) => threshold(farmA, id, 10));
+      expect((await alerts(farmA)).items.map((i) => i.title)).toEqual([
+        'Stock critique : Article 749',
+        'Stock critique : Jamais stocké',
+        'Stock faible : Article 1499',
+        'Stock faible : Article 750',
+      ]);
+    });
+
+    it('warns of an expiry at exactly expiryWarningDays and not one day later', async () => {
+      const vaccin = await item('Vaccin', 'dose', 'VACCIN');
+      await stockIn(farmA, vaccin, 10, { number: 'L-30', expiry: 30 });
+      await stockIn(farmA, vaccin, 10, { number: 'L-31', expiry: 31 });
+      const soon = await stockIn(farmA, vaccin, 5, {
+        number: 'L-0',
+        expiry: 0,
+      });
+      const past = await stockIn(farmA, vaccin, 5, {
+        number: 'L-P',
+        expiry: -2,
+      });
+      const emptied = await stockIn(farmA, vaccin, 5, {
+        number: 'L-E',
+        expiry: -5,
+      });
+      await prisma.stockMovement.create({
+        data: {
+          farmId: farmA,
+          stockItemId: vaccin,
+          stockBatchId: emptied,
+          date: day(1),
+          type: 'SORTIE',
+          quantity: -5,
+          unitCost: 100,
+          reason: 'TRAITEMENT',
+          operationId: 'op-out',
+          createdById: userId,
+        },
+      });
+      const body = await alerts(farmA);
+      expect(rows(body)).toEqual([
+        [
+          'Produit périmé : Vaccin',
+          `Lot L-P — expiré le ${aheadStr(-2)}`,
+          'URGENT',
+        ],
+        [
+          'Produit bientôt périmé : Vaccin',
+          `Lot L-0 — expire le ${aheadStr(0)}`,
+          'A_VOIR',
+        ],
+        [
+          'Produit bientôt périmé : Vaccin',
+          `Lot L-30 — expire le ${aheadStr(30)}`,
+          'A_VOIR',
+        ],
+      ]);
+      expect(body.items.map((i) => i.key)).toEqual(
+        expect.arrayContaining([`expiry:${past}`, `expiry:${soon}`]),
+      );
+    });
+
+    it('follows the expiryWarningDays and vaccinationWarningDays settings', async () => {
+      const vaccin = await item('Vaccin', 'dose', 'VACCIN');
+      await stockIn(farmA, vaccin, 10, { number: 'L-30', expiry: 30 });
+      const lot = await poultryLot('LC-1');
+      await act({ batchId: lot, date: ahead(4) });
+      expect((await alerts(farmA)).total).toBe(1);
+      await prisma.setting.createMany({
+        data: [
+          { organizationId: orgId, key: 'expiryWarningDays', value: 29 },
+          { organizationId: orgId, key: 'vaccinationWarningDays', value: 4 },
+        ],
+      });
+      expect((await alerts(farmA)).items.map((i) => i.title)).toEqual([
+        'Vaccination à venir',
+      ]);
+    });
+
+    it('raises Vaccination à venir from today up to and including 3 days, planned acts only', async () => {
+      const lot = await poultryLot('LC-1');
+      await act({ batchId: lot, date: ahead(0), productName: 'A' });
+      await act({ batchId: lot, date: ahead(3), productName: 'B' });
+      await act({ batchId: lot, date: ahead(4), productName: 'C' });
+      await act({
+        batchId: lot,
+        date: ahead(1),
+        productName: 'D',
+        status: 'ANNULE',
+      });
+      await act({
+        batchId: lot,
+        date: ahead(1),
+        productName: 'E',
+        status: 'REALISE',
+        doneDate: day(0),
+      });
+      expect(rows(await alerts(farmA))).toEqual([
+        ['Vaccination à venir', `LC-1 — A (${aheadStr(0)})`, 'A_VOIR'],
+        ['Vaccination à venir', `LC-1 — B (${aheadStr(3)})`, 'A_VOIR'],
+      ]);
+    });
+
+    it('agrees with the health list: closed lots and exited animals raise nothing', async () => {
+      const open = await poultryLot('LC-OPEN');
+      const closed = await poultryLot('LC-CLOS', { status: 'CLOTURE' });
+      const sow = await prisma.animal.create({
+        data: {
+          farmId: farmA,
+          tag: 'TR-9',
+          category: 'TRUIE',
+          sex: 'F',
+          buildingId: porcherie,
+          status: 'VENDU',
+        },
+      });
+      const late = await act({ batchId: open });
+      await act({ batchId: closed });
+      await act({ animalId: sow.id });
+      await act({ batchId: open, type: 'TRAITEMENT', productName: 'Amox' });
+      const list = (
+        await http()
+          .get('/api/health-acts')
+          .query({ status: 'EN_RETARD' })
+          .set(headersFor(farmA))
+          .expect(200)
+      ).body as { items: { id: string; type: string }[] };
+      const body = await alerts(farmA);
+      expect(body.items.map((i) => i.key).sort()).toEqual(
+        list.items
+          .map((a) =>
+            a.type === 'VACCINATION' ? `vaccination:${a.id}` : `health:${a.id}`,
+          )
+          .sort(),
+      );
+      expect(body.items).toHaveLength(2);
+      expect(body.items.map((i) => i.key)).toContain(`vaccination:${late.id}`);
+      expect(rows(body)).toEqual([
+        ['Vaccination en retard', 'LC-OPEN — Gumboro', 'URGENT'],
+        ['Traitement en retard', 'LC-OPEN — Amox', 'A_VOIR'],
+      ]);
+    });
+
+    it('tolerates biosecurityWarningDays for a disinfection', async () => {
+      await act({
+        buildingId: porcherie,
+        type: 'DESINFECTION',
+        productName: 'Virkon S',
+        date: day(2),
+      });
+      expect((await alerts(farmA)).total).toBe(1);
+      await prisma.setting.create({
+        data: {
+          organizationId: orgId,
+          key: 'biosecurityWarningDays',
+          value: 2,
+        },
+      });
+      expect((await alerts(farmA)).total).toBe(0);
+    });
+
+    it('shows each role only the stock and health alerts of the modules it reads', async () => {
+      await seedReference();
+      const pigLot = await poultryLot('PE-1', {
+        species: 'PORCIN',
+        type: 'ENGRAISSEMENT',
+      });
+      await act({ batchId: pigLot, productName: 'Circo' });
+      const titles = async (role: Parameters<typeof as>[0]) =>
+        rows(await alerts(farmA, await as(role)));
+      expect((await alerts(farmA)).total).toBe(5);
+      // stocks only
+      expect(await titles('MAGASINIER')).toEqual([
+        [
+          'Stock critique : Aliment engraissement porc',
+          '600 kg (seuil 1500)',
+          'URGENT',
+        ],
+        ['Stock faible : Aliment ponte', '900 kg (seuil 1500)', 'A_VOIR'],
+      ]);
+      // sante + species, no stocks: lot vaccination of both species, building
+      const agent = await titles('AGENT_ELEVAGE');
+      expect(agent.map((r) => r[0])).toEqual([
+        'Vaccination en retard',
+        'Vaccination en retard',
+        'Désinfection en retard',
+      ]);
+      // sante + lots, not porcs: no pig lot
+      const avicole = await titles('RESP_AVICOLE');
+      expect(avicole.map((r) => r[1])).toEqual([
+        '600 kg (seuil 1500)',
+        'LC-2026-15 — Gumboro',
+        '900 kg (seuil 1500)',
+        'Porcherie 2 — Virkon S',
+      ]);
+      expect(await titles('RESP_STOCK')).toHaveLength(2);
+      expect(await titles('COMPTABLE')).toEqual([]);
+    });
+
+    it('keeps farms apart and sums them under all', async () => {
+      await seedReference();
+      const other = await item('Aliment B');
+      await stockIn(farmB, other, 10);
+      await threshold(farmB, other, 100);
+      const a = await alerts(farmA);
+      const b = await alerts(farmB);
+      const all = await alerts('all');
+      expect(b.items.map((i) => i.title)).toEqual([
+        'Stock critique : Aliment B',
+      ]);
+      expect(a.items.map((i) => i.title)).not.toContain(
+        'Stock critique : Aliment B',
+      );
+      expect(all.items.map((i) => i.key).sort()).toEqual(
+        [...a.items, ...b.items].map((i) => i.key).sort(),
+      );
+    });
+
+    it('runs a fixed number of queries whatever the number of articles, lots and acts', async () => {
+      const queries = () => {
+        // The app's own client, not the test's.
+        const served = app.get(PrismaService);
+        const counts = { n: 0 };
+        const spies = [
+          ...(['findMany', 'groupBy', 'count', 'findFirst'] as const).flatMap(
+            (method) =>
+              [
+                served.stockMovement,
+                served.stockBatch,
+                served.stockItem,
+                served.farmStockItem,
+                served.healthAct,
+              ].map((delegate) => {
+                const original = delegate[method].bind(delegate) as (
+                  ...a: unknown[]
+                ) => unknown;
+                return jest
+                  .spyOn(delegate, method as never)
+                  .mockImplementation(((...a: unknown[]) => {
+                    counts.n += 1;
+                    return original(...a);
+                  }) as never);
+              }),
+          ),
+        ];
+        return { counts, restore: () => spies.forEach((s) => s.mockRestore()) };
+      };
+      const measure = async () => {
+        const { counts, restore } = queries();
+        try {
+          await alerts(farmA);
+        } finally {
+          restore();
+        }
+        return counts.n;
+      };
+      const populate = async (n: number, tag: string) => {
+        const lot = await poultryLot(`LC-${tag}`);
+        for (let i = 0; i < n; i++) {
+          const id = await item(`Article ${tag}${i}`);
+          await stockIn(farmA, id, 10, { number: `L${i}`, expiry: i });
+          await threshold(farmA, id, 100);
+          await act({ batchId: lot, date: day(i + 1) });
+          await act({ batchId: lot, type: 'TRAITEMENT', date: day(i + 1) });
+        }
+      };
+      await populate(1, 'a');
+      const small = await measure();
+      await populate(6, 'b');
+      expect((await alerts(farmA)).total).toBeGreaterThan(20);
+      const large = await measure();
+      // thresholds, movements, lots, their sums, article names, 2 health reads
+      expect(small).toBe(7);
+      expect(large).toBe(small);
+    });
+  });
 });

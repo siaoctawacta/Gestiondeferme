@@ -1,21 +1,26 @@
 import { Module } from '@nestjs/common';
 import { HerdModule } from '../herd/herd.module';
+import { StockModule } from '../stock/stock.module';
 import { AlertsRegistry } from './alerts/alerts-registry';
+import { HealthAlertsService } from './alerts/health-alerts.service';
 import { ProductionAlertsService } from './alerts/production-alerts.service';
+import { StockAlertsService } from './alerts/stock-alerts.service';
 import { IndicatorsService } from './indicators.service';
 import { LotCostRegistry } from './lot-cost';
 
 /**
- * Imports `herd` (never the reverse); the feed module imports this one to register a `LotCostSource`.
- * Production alert rules live here and read the tables through `PrismaService`; other modules may add rules to `AlertsRegistry`.
+ * Imports `herd` and `stock` (never the reverse); the feed module imports this one to register a `LotCostSource`.
+ * Production, stock, expiry and health alert rules live here and read the tables through `PrismaService` (and the stock ledger for levels); other modules may add rules to `AlertsRegistry`.
  */
 @Module({
-  imports: [HerdModule],
+  imports: [HerdModule, StockModule],
   providers: [
     LotCostRegistry,
     AlertsRegistry,
     IndicatorsService,
     ProductionAlertsService,
+    StockAlertsService,
+    HealthAlertsService,
   ],
   exports: [LotCostRegistry, AlertsRegistry, IndicatorsService],
 })

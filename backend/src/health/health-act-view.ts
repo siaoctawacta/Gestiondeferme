@@ -24,6 +24,26 @@ export type ActRow = Prisma.HealthActGetPayload<{
  */
 export const LIVE_ANIMAL: AnimalStatus[] = ['ACTIF', 'GESTANTE', 'ALLAITANTE'];
 
+/** Rows whose lot is open and whose animal is still on the farm (a building is always open). */
+export const OPEN_TARGET = {
+  AND: [
+    { OR: [{ batchId: null }, { batch: { status: 'EN_COURS' as const } }] },
+    {
+      OR: [{ animalId: null }, { animal: { status: { in: LIVE_ANIMAL } } }],
+    },
+  ],
+};
+
+/**
+ * Planned acts dated before `now` on an open target: the one definition of
+ * `EN_RETARD`, used by the health list and by the alerts.
+ */
+export const overdueActWhere = (now: Date) => ({
+  status: 'PLANIFIE' as const,
+  date: { lt: now },
+  ...OPEN_TARGET,
+});
+
 /** The stored statuses plus `EN_RETARD`, derived: planned and dated before today. */
 export type ActStatus = HealthActStatus | 'EN_RETARD';
 

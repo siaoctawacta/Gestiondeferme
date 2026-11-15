@@ -12,21 +12,10 @@ import {
 import { AnimalTargetRegistry } from '../herd/animal-target';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import { speciesModule } from '../herd/species';
-import { LIVE_ANIMAL } from './health-act-view';
 
 type Tx = Prisma.TransactionClient;
 
 const SANTE = { module: 'sante' } as const;
-
-/** Rows whose lot is open and whose animal is still on the farm (a building is always open). */
-export const OPEN_TARGET = {
-  AND: [
-    { OR: [{ batchId: null }, { batch: { status: 'EN_COURS' as const } }] },
-    {
-      OR: [{ animalId: null }, { animal: { status: { in: LIVE_ANIMAL } } }],
-    },
-  ],
-};
 
 /**
  * Health records point at a lot, an animal or a building through

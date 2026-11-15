@@ -19,7 +19,9 @@ export class AlertsRegistry extends SourceRegistry<AlertRule> {
   /**
    * Only the alerts whose modules the caller's role can all read (an alert
    * names sow tags, lot mortality, feed anomalies: data a role without the
-   * module may not see), URGENT first, then by rule registration order, then by key.
+   * module may not see) and that name at least one module (an alert with none
+   * is shown to no one). URGENT first, then by rule registration order, then
+   * in the order the rule returned them: each rule ranks its own alerts.
    */
   async run(
     ctx: RequestContext,
@@ -30,10 +32,11 @@ export class AlertsRegistry extends SourceRegistry<AlertRule> {
     );
     const flat = perRule.flatMap((items, order) =>
       items
-        .filter((item) =>
-          item.modules.every((m) => can(ctx.user.role, m, 'read')),
+        .filter(
+          (item) =>
+            item.modules.length > 0 &&
+            item.modules.every((m) => can(ctx.user.role, m, 'read')),
         )
-        .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
         .map((item) => ({ item, order })),
     );
     return flat

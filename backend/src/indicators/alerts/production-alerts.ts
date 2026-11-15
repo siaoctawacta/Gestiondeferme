@@ -1,10 +1,14 @@
 import type { RequestContext } from '../../access/decorators';
-import type { ModuleKey } from '../../access/permissions';
 import type { Species } from '../../generated/prisma/enums';
 import { speciesModule } from '../../herd/species';
 import { signedDaysBetween, today } from '../../common/days';
 import { mortalityRate, ratio } from '../indicators';
-import type { AlertItem, AlertRule, AlertSettings } from './alert.types';
+import type {
+  AlertItem,
+  AlertModules,
+  AlertRule,
+  AlertSettings,
+} from './alert.types';
 
 /** Consumption needs this many earlier days with records before it can be judged. */
 export const MIN_PRIOR_DAYS = 3;
@@ -172,7 +176,7 @@ export function consumptionAlerts(
     }
     const [x, y] = [ratio(s.value, 1), ratio(average, 1)];
     // A lot's consumption is only visible to roles that also read its species.
-    const modules: ModuleKey[] =
+    const modules: AlertModules =
       s.target === 'LOT' && s.species
         ? ['alimentation', speciesModule(s.species)]
         : ['alimentation'];
@@ -191,17 +195,20 @@ export function consumptionAlerts(
   return alerts;
 }
 
-/** The rules, in the order they rank: mortality, farrowing, consumption. */
+const byKey = (items: AlertItem[]): AlertItem[] =>
+  items.sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
+
+/** The rules, in the order they rank: mortality, farrowing, consumption; each returns its alerts by key. */
 export function productionAlertRules(
   data: AlertData,
   now: () => Date = () => new Date(),
 ): AlertRule[] {
   return [
     async (ctx, settings) =>
-      mortalityAlerts(await data.mortalityLots(ctx, now()), settings),
+      byKey(mortalityAlerts(await data.mortalityLots(ctx, now()), settings)),
     async (ctx, settings) =>
-      farrowingAlerts(await data.gestations(ctx), settings, now()),
+      byKey(farrowingAlerts(await data.gestations(ctx), settings, now())),
     async (ctx, settings) =>
-      consumptionAlerts(await data.consumption(ctx, now()), settings),
+      byKey(consumptionAlerts(await data.consumption(ctx, now()), settings)),
   ];
 }
