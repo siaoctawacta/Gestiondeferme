@@ -249,6 +249,7 @@ export class QuotesService {
           ctx,
           farmId,
           dto.lines,
+          'le devis',
         );
         const reference = await nextDocumentNumber(tx, organizationId, 'DV');
         const created = await tx.quote.create({
@@ -314,7 +315,13 @@ export class QuotesService {
           await assertSaleCustomer(tx, ctx, dto.customerId as string);
         }
         const resolved = dto.lines
-          ? await this.resolver.resolve(tx, ctx, before.farmId, dto.lines)
+          ? await this.resolver.resolve(
+              tx,
+              ctx,
+              before.farmId,
+              dto.lines,
+              'le devis',
+            )
           : undefined;
         // Only what really changes is written: a no-op PATCH leaves the quote
         // and the audit log alone.
@@ -418,13 +425,10 @@ export class QuotesService {
       this.prisma.$transaction(async (tx) => {
         const before = await this.lock(tx, ctx, id);
         this.allow(before, 'convert');
-        const invoiceId = await this.invoices.createFromQuote(tx, ctx, before);
+        await this.invoices.createFromQuote(tx, ctx, before);
         await tx.quote.update({
           where: { id },
-          data: {
-            status: quoteStatusAfter('convert') ?? before.status,
-            invoiceId,
-          },
+          data: { status: quoteStatusAfter('convert') ?? before.status },
         });
         return this.saved(tx, ctx, before);
       }),

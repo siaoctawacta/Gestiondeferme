@@ -297,7 +297,7 @@ describe('Invoices under concurrency (real pool)', () => {
     expect(await alive(lot.id)).toBe(100);
   });
 
-  it('an edit and an issue of the same draft: one wins, the invoice stays coherent', async () => {
+  it('an edit and an issue of the same draft: asserts coherence only (the winner depends on the interleaving)', async () => {
     const lot = await world.lot(director, { initialCount: 100 });
     const d = await draft([lotLine(lot.id, 30)]);
     const rs = await Promise.all([
@@ -315,5 +315,63 @@ describe('Invoices under concurrency (real pool)', () => {
     expect(sold).toBe(
       stored.status === 'BROUILLON' ? 0 : stored.lines[0].quantity,
     );
+  });
+
+  it('the same draft issued twice at once: one 201, one 409, one FA number', async () => {
+    const lot = await world.lot(director, { initialCount: 100 });
+    const d = await draft([lotLine(lot.id, 30)]);
+    const rs = await Promise.all([issue(d.id), issue(d.id)]);
+    noServerError(rs);
+    expect(rs.map((r) => r.status).sort()).toEqual([201, 409]);
+    expect(message(rs.find((r) => r.status === 409) as Res)).toBe(
+      'Cette facture est déjà émise',
+    );
+    expect(await counter()).toBe(1);
+    expect(await alive(lot.id)).toBe(70);
+  });
+
+  it('an issue racing the deletion of its draft: one wins, the state is coherent', async () => {
+    for (let round = 0; round < 3; round++) {
+      const lot = await world.lot(director, { initialCount: 100 });
+      const d = await draft([lotLine(lot.id, 30)]);
+      const rs = await Promise.all([
+        issue(d.id),
+        http()
+          .delete(`/api/sales/${d.id}`)
+          .set(seller)
+          .then((r) => ({ status: r.status, body: r.body as Res['body'] })),
+      ]);
+      noServerError(rs);
+      const [issued, deleted] = rs;
+      if (issued.status === 201) {
+        expect(deleted.status).toBe(409);
+        expect(await alive(lot.id)).toBe(70);
+        await http().get(`/api/sales/${d.id}`).set(seller).expect(200);
+      } else {
+        expect(issued.status).toBe(404);
+        expect(deleted.status).toBe(200);
+        expect(await alive(lot.id)).toBe(100);
+        await http().get(`/api/sales/${d.id}`).set(seller).expect(404);
+      }
+    }
+  });
+
+  it('a quote converted twice at once gives one draft, the other call is a 409 (not a 500)', async () => {
+    const lot = await world.lot(director, { initialCount: 100 });
+    const q = await world.post<Id>(seller, '/quotes', {
+      customerId,
+      date: daysAgo(1),
+      lines: [lotLine(lot.id, 5)],
+    });
+    await send('post', `/quotes/${q.id}/send`, seller);
+    const rs = await Promise.all([
+      send('post', `/quotes/${q.id}/convert`, seller),
+      send('post', `/quotes/${q.id}/convert`, seller),
+    ]);
+    noServerError(rs);
+    expect(rs.map((r) => r.status).sort()).toEqual([201, 409]);
+    const [{ n }] = await prisma.$queryRaw<{ n: bigint }[]>`
+      SELECT COUNT(*) AS n FROM "Invoice" WHERE "quoteId" = ${q.id}`;
+    expect(Number(n)).toBe(1);
   });
 });

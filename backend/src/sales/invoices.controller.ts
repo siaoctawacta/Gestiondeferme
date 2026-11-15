@@ -22,6 +22,7 @@ import {
   IssueInvoiceDto,
   UpdateInvoiceDto,
 } from './dto/invoice.dto';
+import { InvoiceReads } from './invoice-reads.service';
 import { InvoicesService } from './invoices.service';
 import { INVOICE_COLUMNS } from './sale-view';
 
@@ -36,7 +37,10 @@ import { INVOICE_COLUMNS } from './sale-view';
 @ApiTags('sales')
 @Controller('sales')
 export class InvoicesController {
-  constructor(private readonly invoices: InvoicesService) {}
+  constructor(
+    private readonly reads: InvoiceReads,
+    private readonly invoices: InvoicesService,
+  ) {}
 
   @Get()
   @RequirePermission('ventes', 'read')
@@ -45,7 +49,7 @@ export class InvoicesController {
     @Query() q: InvoiceQueryDto,
     @Res() res: Response,
   ): Promise<void> {
-    const { find, count, statusCounts } = this.invoices.listArgs(ctx, q);
+    const { find, count, statusCounts } = this.reads.listArgs(ctx, q);
     await sendList(
       res,
       q,
@@ -60,7 +64,7 @@ export class InvoicesController {
   @Get(':id')
   @RequirePermission('ventes', 'read')
   get(@Ctx() ctx: RequestContext, @Param('id') id: string) {
-    return this.invoices.get(ctx, id);
+    return this.reads.get(ctx, id);
   }
 
   @Post()

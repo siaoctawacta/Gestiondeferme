@@ -36,6 +36,7 @@ export const quoteInclude = {
   decidedBy: { select: { name: true } },
   invoice: {
     select: {
+      id: true,
       number: true,
       createdAt: true,
       createdBy: { select: { name: true } },
@@ -152,7 +153,7 @@ export function quoteRow(q: QuoteFull, today: string): QuoteRow {
     unit: first?.unit ?? null,
     total: toMoney(q.total),
     status: displayQuoteStatus(q.status, formatDayOrNull(q.validUntil), today),
-    invoiceId: q.invoiceId,
+    invoiceId: q.invoice?.id ?? null,
     invoiceNumber: q.invoice?.number ?? null,
   };
 }

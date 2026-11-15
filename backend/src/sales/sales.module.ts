@@ -5,6 +5,7 @@ import { HerdModule } from '../herd/herd.module';
 import { PigsModule } from '../pigs/pigs.module';
 import { StockModule } from '../stock/stock.module';
 import { SaleEggOutflows } from './egg-outflows';
+import { InvoiceReads } from './invoice-reads.service';
 import { InvoicesController } from './invoices.controller';
 import { InvoicesService } from './invoices.service';
 import { QuotesController } from './quotes.controller';
@@ -21,6 +22,7 @@ import { SellablesService } from './sellables.service';
   controllers: [QuotesController, SellablesController, InvoicesController],
   providers: [
     QuotesService,
+    InvoiceReads,
     InvoicesService,
     SaleEffects,
     SaleEggOutflows,

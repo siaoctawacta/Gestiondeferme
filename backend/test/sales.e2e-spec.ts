@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { HerdLedgerService } from '../src/herd/herd-ledger.service';
+import { exitCostsByItem } from '../src/stock/operation-costs';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { daysAgo, Headers, Id, Msg, World } from './fixtures';
 import {
@@ -232,10 +233,10 @@ describe('Invoices (e2e)', () => {
     unitPrice: 450,
     ...over,
   });
-  async function layerWithEggs(eggs: number) {
+  async function layerWithEggs(eggs: number, initialCount = 3000) {
     const layer = await world.lot(director, {
       type: 'PONDEUSE',
-      initialCount: 3000,
+      initialCount,
     });
     await world.post(director, '/egg-production', {
       batchId: layer.id,
@@ -757,7 +758,7 @@ describe('Invoices (e2e)', () => {
       await issue(again.id, accountant, 409);
     });
 
-    it('sells 100 kg of Aliment ponte at the average cost and snapshots the exit cost on the line', async () => {
+    it('sells 100 kg of Aliment ponte at the average cost; the ledger is the only truth of the cost (no snapshot column)', async () => {
       const item = await article();
       const inv = await issued({ lines: [itemLine(item)] });
       expect(await level(item)).toMatchObject({
@@ -779,9 +780,10 @@ describe('Invoices (e2e)', () => {
         category: 'VENTE_ARTICLES',
         activity: 'GENERAL',
       });
-      const rows = await prisma.$queryRaw<{ exitUnitCost: string | null }[]>`
-        SELECT "exitUnitCost" FROM "InvoiceLine" WHERE "invoiceId" = ${inv.id}`;
-      expect(Number(rows[0].exitUnitCost)).toBe(320);
+      const cols = await prisma.$queryRaw<{ column_name: string }[]>`
+        SELECT column_name FROM information_schema.columns
+        WHERE table_name = 'InvoiceLine' AND column_name = 'exitUnitCost'`;
+      expect(cols).toHaveLength(0);
     });
 
     it('refuses an article line dated before a validated inventory (409)', async () => {
@@ -920,6 +922,127 @@ describe('Invoices (e2e)', () => {
     });
   });
 
+  describe('more rules of the issue', () => {
+    const entry = (
+      itemId: string,
+      quantity: number,
+      unitCost: number,
+      date: string,
+      over: Record<string, unknown> = {},
+    ) =>
+      world.post(stockMgr, '/stock/movements', {
+        itemId,
+        type: 'ENTREE',
+        date,
+        quantity,
+        unitCost,
+        reason: 'ACHAT',
+        ...over,
+      });
+    const newItem = (name: string) =>
+      world.post<Id>(stockMgr, '/stock-items', {
+        name,
+        category: 'ALIMENT',
+        unit: 'kg',
+      });
+
+    it('refuses an article that was deactivated since the draft (Article inactif), like an inactive customer', async () => {
+      const item = await article();
+      const d = await draft({ lines: [itemLine(item)] });
+      await http()
+        .patch(`/api/stock-items/${item}`)
+        .set(stockMgr)
+        .send({ active: false })
+        .expect(200);
+      expect(msg(await issue(d.id, accountant, 400))).toBe('Article inactif');
+      expect((await get(d.id)).status).toBe('BROUILLON');
+      expect((await level(item)).quantity).toBe(1000);
+    });
+
+    it('refuses the same animal on two lines of one invoice, at draft time', async () => {
+      const sow = await world.animal(director, { tag: 'TR-027' });
+      const line = {
+        kind: 'ANIMAL',
+        animalId: sow.id,
+        quantity: 1,
+        unitPrice: 1,
+      };
+      const res = await http()
+        .post('/api/sales')
+        .set(seller)
+        .send(body({ lines: [line, line] }))
+        .expect(400);
+      expect(msg(res)).toBe('Cet animal figure déjà sur la facture');
+      const quoteRes = await http()
+        .post('/api/quotes')
+        .set(seller)
+        .send(body({ lines: [line, line] }))
+        .expect(400);
+      expect(msg(quoteRes)).toBe('Cet animal figure déjà sur le devis');
+    });
+
+    it('takes two LOT lines of one lot as two VENTE events and gives them back together', async () => {
+      const inv = await issued({
+        lines: [lotLine({ quantity: 100 }), lotLine({ quantity: 50 })],
+      });
+      expect(await alive(lotId)).toBe(250);
+      const ev = await events(lotId);
+      expect(ev.map((e) => e.quantity).sort()).toEqual([100, 50]);
+      await issue(inv.id, accountant, 409);
+      await cancel(inv.id);
+      expect(await alive(lotId)).toBe(400);
+      expect(await events(lotId)).toHaveLength(0);
+    });
+
+    it('checks a LOT line and an OEUFS line of the same laying lot together', async () => {
+      const layer = await layerWithEggs(3000);
+      const inv = await issued({
+        lines: [
+          lotLine({ batchId: layer.id, quantity: 20, unitPrice: 2000 }),
+          { kind: 'OEUFS', batchId: layer.id, quantity: 100, unitPrice: 2500 },
+        ],
+      });
+      expect(await alive(layer.id)).toBe(2980);
+      expect(await events(layer.id)).toHaveLength(1);
+      // 100 plateaux = 3 000 eggs: nothing left
+      expect(
+        await refusedIssued({
+          lines: [
+            { kind: 'OEUFS', batchId: layer.id, quantity: 1, unitPrice: 1 },
+          ],
+        }),
+      ).toContain('Œufs disponibles insuffisants');
+      await cancel(inv.id);
+      expect(await alive(layer.id)).toBe(3000);
+    });
+
+    it('refuses to sell from an expired stock lot (Lot périmé) and writes nothing', async () => {
+      const item = (await newItem('Vaccin périmé')).id;
+      await entry(item, 10, 100, daysAgo(40), {
+        lotNumber: 'P1',
+        expiryDate: daysAgo(5),
+      });
+      expect(
+        await refusedIssued({
+          lines: [lotLine({ quantity: 5 }), itemLine(item, { quantity: 5 })],
+        }),
+      ).toBe('Lot périmé');
+      expect(await alive(lotId)).toBe(400);
+      expect(await counter()).toBeNull();
+    });
+
+    it('writes no herd audit row for the VENTE event: the invoice audit row carries the lines', async () => {
+      const others = () =>
+        prisma.auditLog.count({ where: { NOT: { module: 'ventes' } } });
+      const before = await others();
+      const inv = await issued({ lines: [lotLine({ quantity: 10 })] });
+      await cancel(inv.id);
+      expect(await others()).toBe(before);
+      const rows = await audits(inv.id);
+      expect(rows.map((r) => r.module)).toEqual(['ventes', 'ventes']);
+    });
+  });
+
   describe('cancel', () => {
     it('restores the lot, the animal and the stock, keeps the number and shows Annulée', async () => {
       const sow = await world.animal(director, { tag: 'TR-027' });
@@ -1052,6 +1175,174 @@ describe('Invoices (e2e)', () => {
       await cancel(inv.id, accountant, 409);
       expect(await alive(lotId)).toBe(390);
       expect((await get(inv.id)).status).toBe('EMISE');
+    });
+    it('gives back the exact average cost: a sale in the past, an entry after it, then the cancellation', async () => {
+      const item = (
+        await world.post<Id>(stockMgr, '/stock-items', {
+          name: 'Aliment chair',
+          category: 'ALIMENT',
+          unit: 'kg',
+        })
+      ).id;
+      const entry = (quantity: number, unitCost: number, date: string) =>
+        world.post(stockMgr, '/stock/movements', {
+          itemId: item,
+          type: 'ENTREE',
+          date,
+          quantity,
+          unitCost,
+          reason: 'ACHAT',
+        });
+      await entry(1000, 320, daysAgo(10));
+      const inv = await issued({
+        date: daysAgo(5),
+        lines: [itemLine(item, { quantity: 100 })],
+      });
+      await entry(500, 380, daysAgo(2));
+      const during = await level(item);
+      expect(during.quantity).toBe(1400);
+      // (900 x 320 + 500 x 380) / 1 400
+      expect(during.averageCost).toBe(341.43);
+      await cancel(inv.id);
+      const after = await level(item);
+      expect(after.quantity).toBe(1500);
+      // (1 000 x 320 + 500 x 380) / 1 500
+      expect(after.averageCost).toBe(340);
+      expect(after.averageCost).not.toBe(during.averageCost);
+      expect(
+        (await stockMoves(item)).filter((m) => m.sourceType === 'SALE'),
+      ).toHaveLength(0);
+    });
+
+    it('restores both lots of an exit that FEFO split across lots received at different costs', async () => {
+      const item = (
+        await world.post<Id>(stockMgr, '/stock-items', {
+          name: 'Vaccin',
+          category: 'ALIMENT',
+          unit: 'kg',
+        })
+      ).id;
+      const entry = (
+        quantity: number,
+        unitCost: number,
+        lotNumber: string,
+        expiryDate: string,
+      ) =>
+        world.post(stockMgr, '/stock/movements', {
+          itemId: item,
+          type: 'ENTREE',
+          date: daysAgo(20),
+          quantity,
+          unitCost,
+          reason: 'ACHAT',
+          lotNumber,
+          expiryDate,
+        });
+      await entry(40, 300, 'SOON', '2090-01-01');
+      await entry(100, 400, 'LATE', '2099-01-01');
+      const lots = async () =>
+        Object.fromEntries(
+          (
+            (await http().get(`/api/stock/${item}`).set(director).expect(200))
+              .body as { batches: { lotNumber: string; quantity: number }[] }
+          ).batches.map((b) => [b.lotNumber, b.quantity]),
+        );
+      expect(await lots()).toEqual({ SOON: 40, LATE: 100 });
+      const inv = await issued({
+        lines: [itemLine(item, { quantity: 100 })],
+      });
+      const exits = (await stockMoves(item)).filter((m) => m.type === 'SORTIE');
+      expect(exits).toHaveLength(2);
+      const after = await lots();
+      expect(after.SOON ?? 0).toBe(0);
+      expect(after.LATE).toBe(40);
+      await cancel(inv.id);
+      expect(await lots()).toEqual({ SOON: 40, LATE: 100 });
+      expect(await level(item)).toMatchObject({ quantity: 140 });
+    });
+
+    it('is refused whole when the egg lot of a sale was closed (409), nothing reversed', async () => {
+      const layer = await layerWithEggs(3000, 10);
+      const inv = await issued({
+        lines: [
+          { kind: 'OEUFS', batchId: layer.id, quantity: 10, unitPrice: 2500 },
+          lotLine({ batchId: layer.id, quantity: 10 }),
+          lotLine({ quantity: 5 }),
+        ],
+      });
+      await http()
+        .post(`/api/batches/${layer.id}/close`)
+        .set(director)
+        .send({})
+        .expect(200);
+      const res = await cancel(inv.id, accountant, 409);
+      expect(msg(res)).toBe('Ce lot est clôturé');
+      expect((await get(inv.id)).status).toBe('EMISE');
+      expect(await alive(lotId)).toBe(395);
+    });
+
+    it('cancelling an egg-only sale of a closed laying lot is refused too (the egg seam)', async () => {
+      const layer = await layerWithEggs(3000, 10);
+      const inv = await issued({
+        lines: [
+          { kind: 'OEUFS', batchId: layer.id, quantity: 10, unitPrice: 2500 },
+        ],
+      });
+      await issued({ lines: [lotLine({ batchId: layer.id, quantity: 10 })] });
+      await http()
+        .post(`/api/batches/${layer.id}/close`)
+        .set(director)
+        .send({})
+        .expect(200);
+      expect(msg(await cancel(inv.id, accountant, 409))).toBe(
+        'Ce lot est clôturé',
+      );
+      expect((await get(inv.id)).status).toBe('EMISE');
+    });
+
+    it('refuses an egg sale on a closed laying lot, and cancelling a sale that would overfill the building (400) leaves everything in place', async () => {
+      const closed = await layerWithEggs(3000, 10);
+      await issued({ lines: [lotLine({ batchId: closed.id, quantity: 10 })] });
+      await http()
+        .post(`/api/batches/${closed.id}/close`)
+        .set(director)
+        .send({})
+        .expect(200);
+      expect(
+        await refusedIssued(
+          {
+            lines: [
+              { kind: 'OEUFS', batchId: closed.id, quantity: 1, unitPrice: 1 },
+            ],
+          },
+          409,
+        ),
+      ).toBe('Ce lot est clôturé');
+      const site = await prisma.site.findFirstOrThrow();
+      const small = await prisma.building.create({
+        data: {
+          farmId: world.farmId,
+          siteId: site.id,
+          name: 'Petit poulailler',
+          type: 'AVICOLE',
+          capacity: 10,
+        },
+      });
+      const lot = await world.lot(director, {
+        initialCount: 10,
+        buildingId: small.id,
+      });
+      const item = await article();
+      const inv = await issued({
+        lines: [lotLine({ batchId: lot.id, quantity: 10 }), itemLine(item)],
+      });
+      await world.lot(director, { initialCount: 10, buildingId: small.id });
+      const res = await cancel(inv.id, accountant, 400);
+      expect(msg(res)).toContain('Capacité du bâtiment dépassée');
+      expect((await get(inv.id)).status).toBe('EMISE');
+      expect(await alive(lot.id)).toBe(0);
+      expect((await level(item)).quantity).toBe(900);
+      expect(await events(lot.id)).toHaveLength(1);
     });
   });
 
@@ -1383,6 +1674,76 @@ describe('Invoices (e2e)', () => {
     });
   });
 
+  describe('exitCostsByItem (what the exits of an invoice cost, from the ledger)', () => {
+    const entry = (
+      itemId: string,
+      quantity: number,
+      unitCost: number,
+      date: string,
+      over: Record<string, unknown> = {},
+    ) =>
+      world.post(stockMgr, '/stock/movements', {
+        itemId,
+        type: 'ENTREE',
+        date,
+        quantity,
+        unitCost,
+        reason: 'ACHAT',
+        ...over,
+      });
+    const newItem = async (name: string) =>
+      (
+        await world.post<Id>(stockMgr, '/stock-items', {
+          name,
+          category: 'ALIMENT',
+          unit: 'kg',
+        })
+      ).id;
+    const costs = (invoiceId: string) =>
+      exitCostsByItem(prisma, { sourceType: 'SALE', sourceId: invoiceId });
+
+    it('sums quantity and cost per article, over a FEFO split and two lines of one article, and follows a re-costing', async () => {
+      const a = await newItem('Aliment A');
+      const b = await newItem('Aliment B');
+      await entry(a, 40, 300, daysAgo(20), {
+        lotNumber: 'SOON',
+        expiryDate: '2090-01-01',
+      });
+      await entry(a, 100, 400, daysAgo(20), {
+        lotNumber: 'LATE',
+        expiryDate: '2099-01-01',
+      });
+      await entry(b, 50, 200, daysAgo(20));
+      const inv = await issued({
+        lines: [
+          itemLine(a, { quantity: 50 }),
+          itemLine(b, { quantity: 10 }),
+          itemLine(a, { quantity: 10 }),
+        ],
+      });
+      const first = await costs(inv.id);
+      expect([...first.keys()].sort()).toEqual([a, b].sort());
+      // A: average (40 x 300 + 100 x 400) / 140 = 371.43; 60 kg out
+      expect(first.get(a)?.quantity.toNumber()).toBe(60);
+      expect(first.get(a)?.cost.toNumber()).toBeCloseTo(
+        Math.round(50 * 371.43 * 100) / 100 +
+          Math.round(10 * 371.43 * 100) / 100,
+        2,
+      );
+      expect(first.get(b)?.quantity.toNumber()).toBe(10);
+      expect(first.get(b)?.cost.toNumber()).toBe(2000);
+      // An entry dated before the sale re-costs the exit: the read follows the ledger.
+      await entry(a, 100, 500, daysAgo(8));
+      const second = await costs(inv.id);
+      expect(second.get(a)?.cost.toNumber()).not.toBe(
+        first.get(a)?.cost.toNumber(),
+      );
+      expect(second.get(a)?.quantity.toNumber()).toBe(60);
+      // a source with nothing sold
+      expect((await costs('unknown')).size).toBe(0);
+    });
+  });
+
   describe('database constraints', () => {
     it('keeps number and status together, the due date after the date, and the lines coherent', async () => {
       const inv = await issued();
@@ -1394,7 +1755,7 @@ describe('Invoices (e2e)', () => {
         sql(
           `UPDATE "Invoice" SET "status" = 'BROUILLON' WHERE id = '${inv.id}'`,
         ),
-      ).rejects.toThrow(/Invoice_number_status_check/);
+      ).rejects.toThrow(/Invoice_(number_status|issued)_check/);
       await expect(
         sql(
           `UPDATE "Invoice" SET "dueDate" = "date" - 1 WHERE id = '${inv.id}'`,
@@ -1424,10 +1785,19 @@ describe('Invoices (e2e)', () => {
         ),
       ).rejects.toThrow(/InvoiceLine_activity_check/);
       await expect(
+        sql(`UPDATE "Invoice" SET "issuedAt" = NULL WHERE id = '${inv.id}'`),
+      ).rejects.toThrow(/Invoice_issued_check/);
+      await expect(
         sql(
-          `UPDATE "InvoiceLine" SET "exitUnitCost" = -1 WHERE "invoiceId" = '${inv.id}'`,
+          `UPDATE "Invoice" SET "cancelledAt" = now() WHERE id = '${inv.id}'`,
         ),
-      ).rejects.toThrow(/InvoiceLine_exitUnitCost_check/);
+      ).rejects.toThrow(/Invoice_cancelled_check/);
+      const d = await draft();
+      await expect(
+        sql(
+          `UPDATE "Invoice" SET "issuedById" = "createdById" WHERE id = '${d.id}'`,
+        ),
+      ).rejects.toThrow(/Invoice_issued_check/);
     });
   });
 });

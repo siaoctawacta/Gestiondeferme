@@ -40,9 +40,9 @@ export interface EffectInvoice {
 
 const SOURCE = 'SALE';
 
-const ascending = (ids: (string | null)[]): string[] => [
-  ...new Set(ids.filter((id): id is string => !!id)),
-];
+/** The distinct ids in ascending order: the order every lock is taken in. */
+const ascending = (ids: (string | null)[]): string[] =>
+  [...new Set(ids.filter((id): id is string => !!id))].sort();
 
 /**
  * THE only file of `sales` that calls a ledger or a seam: it turns the lines
@@ -69,14 +69,14 @@ export class SaleEffects {
   ) {}
 
   /**
-   * Issues the effects of the invoice. Returns the cost per unit of each
-   * ARTICLE line's stock exit as the ledger valued it (by line id).
+   * Issues the effects of the invoice. What an exit costs is the ledger's to
+   * say (read it back with `exitCostsByItem`): nothing is kept here.
    */
   async apply(
     tx: Tx,
     ctx: RequestContext,
     invoice: EffectInvoice,
-  ): Promise<Map<string, Decimal>> {
+  ): Promise<void> {
     const farmIds = [invoice.farmId];
     const lotLines = invoice.lines.filter((l) => l.kind === 'LOT');
     const eggLines = invoice.lines.filter((l) => l.kind === 'OEUFS');
@@ -90,14 +90,9 @@ export class SaleEffects {
       farmIds,
     );
     // 2. animals, ascending id
-    for (const id of ascending(animalLines.map((l) => l.animalId)).sort()) {
+    for (const id of ascending(animalLines.map((l) => l.animalId))) {
       const animal = await this.targets.single().lockAnimal(tx, id, farmIds);
       if (!animal) throw new BadRequestException(ANIMAL_INVALID);
-    }
-    for (const batch of batches) {
-      if (eggLines.some((l) => l.batchId === batch.id)) {
-        this.herd.assertOpen(batch);
-      }
     }
     // 3. the withdrawal guard on every lot, egg lot and animal, before any effect
     for (const batch of batches) {
@@ -152,7 +147,6 @@ export class SaleEffects {
       );
     }
     // 7. ONE stock-ledger call
-    const costs = new Map<string, Decimal>();
     if (itemLines.length > 0) {
       const inputs: RecordInput[] = itemLines.map((l) => ({
         farmId: invoice.farmId,
@@ -165,24 +159,42 @@ export class SaleEffects {
         sourceId: invoice.id,
         userId: ctx.user.id,
       }));
-      const results = await this.stock.recordMany(tx, inputs);
-      itemLines.forEach((l, i) => costs.set(l.id, results[i].unitCost));
+      await this.stock.recordMany(tx, inputs);
     }
-    return costs;
   }
 
   /**
-   * Takes back what `apply` wrote, in the same order of locks: the herd events
-   * (lots ascending), the animals (ascending), then ONE stock reversal.
-   * Eggs need nothing: their balance reads the invoices that count. A refusal
-   * (closed lot, an animal no longer as it was left, a validated inventory, a
-   * later exit that would go negative) aborts the whole cancellation.
+   * Takes back what `apply` wrote, in the same order of locks: ALL the lots of
+   * the invoice (LOT and OEUFS lines, ascending), a closed egg lot refused by
+   * the egg seam (`assertReturn`), the herd events, the animals (ascending),
+   * then ONE stock reversal. Eggs need no write: their balance reads the
+   * invoices that count. A refusal (closed lot, an animal no longer as it was
+   * left, a building that is full, a validated inventory, a later exit that
+   * would go negative) aborts the whole cancellation.
    */
   async reverse(
     tx: Tx,
-    invoice: Pick<EffectInvoice, 'id' | 'farmId' | 'number'>,
+    invoice: Pick<EffectInvoice, 'id' | 'farmId' | 'number'> & {
+      lines: Pick<EffectInvoice['lines'][number], 'kind' | 'batchId'>[];
+    },
   ): Promise<void> {
     const farmIds = [invoice.farmId];
+    const batches = await this.herd.lockBatches(
+      tx,
+      ascending(
+        invoice.lines
+          .filter((l) => l.kind === 'LOT' || l.kind === 'OEUFS')
+          .map((l) => l.batchId),
+      ),
+      farmIds,
+    );
+    for (const batch of batches) {
+      if (
+        invoice.lines.some((l) => l.kind === 'OEUFS' && l.batchId === batch.id)
+      ) {
+        await this.eggs.assertReturn(tx, batch.id);
+      }
+    }
     await this.herd.removeBySource(tx, SOURCE, invoice.id, farmIds);
     await this.animals.unsell(tx, {
       type: SOURCE,

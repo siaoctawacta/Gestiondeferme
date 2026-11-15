@@ -59,7 +59,7 @@ export function quoteLineData(line: ResolvedLine) {
   return data as Omit<ResolvedLine, 'activity' | 'category'>;
 }
 
-/** The columns of an `InvoiceLine` (`exitUnitCost` is written at issue). */
+/** The columns of an `InvoiceLine`. */
 export const invoiceLineData = ({ category, ...line }: ResolvedLine) => ({
   ...line,
   revenueCategory: category,
@@ -129,15 +129,21 @@ export class SaleLineResolver {
     const [batches, animals, items] = await Promise.all([
       tx.animalBatch.count({ where: { id: { in: batchIds }, farmId } }),
       tx.animal.count({ where: { id: { in: animalIds }, farmId } }),
-      tx.stockItem.count({
+      tx.stockItem.findMany({
         where: { id: { in: itemIds }, organizationId: ctx.user.organizationId },
+        select: { active: true },
       }),
     ]);
     if (batches !== batchIds.length) throw new BadRequestException(LOT_INVALID);
     if (animals !== animalIds.length) {
       throw new BadRequestException(ANIMAL_INVALID);
     }
-    if (items !== itemIds.length) throw new BadRequestException(ITEM_INVALID);
+    if (items.length !== itemIds.length) {
+      throw new BadRequestException(ITEM_INVALID);
+    }
+    if (items.some((i) => !i.active)) {
+      throw new BadRequestException(ITEM_INACTIVE);
+    }
   }
 
   async resolve(
@@ -145,10 +151,16 @@ export class SaleLineResolver {
     ctx: RequestContext,
     farmId: string,
     lines: SaleLineDto[],
+    document = 'la facture',
   ): Promise<{ lines: ResolvedLine[]; total: Decimal }> {
     for (const line of lines) {
       const error = lineShapeError(line);
       if (error) throw new BadRequestException(error);
+    }
+    // An animal is sold once: two lines of one document naming it can never both be issued.
+    const named = lines.flatMap((l) => (l.animalId ? [l.animalId] : []));
+    if (new Set(named).size !== named.length) {
+      throw new BadRequestException(`Cet animal figure déjà sur ${document}`);
     }
     const organizationId = ctx.user.organizationId;
     const ids = (pick: (l: SaleLineDto) => string | null | undefined) => [

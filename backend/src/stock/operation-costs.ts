@@ -66,3 +66,60 @@ export async function operationCosts(
   }
   return result;
 }
+
+/** What the exits of ONE source took of one article: the quantity (Σ |quantity|, every piece) and the cost (per-operation rounding, then summed). */
+export interface ItemExitCost {
+  quantity: DecimalType;
+  cost: DecimalType;
+}
+
+/**
+ * What the exits of ONE source (a sale) took of each article, read from the
+ * ledger as it is NOW (a back-dated entry or an edit re-costs the exits, so
+ * nothing is snapshotted): same rules as `operationCosts` (exits only, each
+ * operation rounded to the cent, then summed). One query. An article the
+ * source did not take is absent. A credit-note return divides `cost` by
+ * `quantity` to get the average unit cost of the sale's exits of that article.
+ */
+export async function exitCostsByItem(
+  client: Prisma.TransactionClient | PrismaService,
+  of: { sourceType: StockSourceType; sourceId: string },
+): Promise<Map<string, ItemExitCost>> {
+  const exits = await client.stockMovement.findMany({
+    where: {
+      sourceType: of.sourceType,
+      sourceId: of.sourceId,
+      quantity: { lt: 0 },
+    },
+    select: {
+      stockItemId: true,
+      operationId: true,
+      quantity: true,
+      unitCost: true,
+    },
+  });
+  const operations = new Map<string, Map<string, ExitPiece[]>>();
+  for (const e of exits) {
+    const byOperation =
+      operations.get(e.stockItemId) ?? new Map<string, ExitPiece[]>();
+    byOperation.set(e.operationId, [
+      ...(byOperation.get(e.operationId) ?? []),
+      e,
+    ]);
+    operations.set(e.stockItemId, byOperation);
+  }
+  const result = new Map<string, ItemExitCost>();
+  for (const [itemId, ops] of operations) {
+    const pieces = [...ops.values()];
+    result.set(itemId, {
+      quantity: pieces
+        .flat()
+        .reduce((sum, p) => sum.add(p.quantity.abs()), new Decimal(0)),
+      cost: pieces.reduce(
+        (sum, p) => sum.add(operationCost(p)),
+        new Decimal(0),
+      ),
+    });
+  }
+  return result;
+}
