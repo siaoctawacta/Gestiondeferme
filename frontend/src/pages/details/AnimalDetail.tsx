@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { ActionDialog } from '../../components/module/ActionDialog';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
@@ -83,8 +83,6 @@ export function AnimalDetail({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const [exiting, setExiting] = useState(false);
   const query = useFarmQuery<AnimalDetailData>(['/animals', 'detail', id], () => api.get<AnimalDetailData>(`/animals/${id}`));
-  const weighings = useMemo(() => animalWeighings(id), [id]);
-  const heats = useMemo(() => animalHeats(id), [id]);
 
   if (query.isPending) return <div aria-busy className="h-40 animate-pulse rounded-3xl bg-muted" />;
   if (query.isError) {
@@ -99,6 +97,8 @@ export function AnimalDetail({ id }: { id: string }) {
   const breeding = animal.sex === 'F' && can('reproduction', 'read');
   const left = animal.exitDate !== null || hasLeft(animal.status);
   const canManage = can('porcs', 'update') && farmId !== 'all';
+  const weighings = animalWeighings(id, left);
+  const heats = animalHeats(id, left);
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
 
   return (
@@ -115,9 +115,9 @@ export function AnimalDetail({ id }: { id: string }) {
           { label: 'Statut', value: status.label },
         ]}
         tabs={[
-          { key: 'weighings', label: 'Pesées', content: <ModuleList config={weighings} readOnly={left} /> },
+          { key: 'weighings', label: 'Pesées', content: <ModuleList config={weighings} noCreate={left} /> },
           ...(breeding ? [{ key: 'breeding', label: 'Reproduction', content: <BreedingTab animalId={id} /> }] : []),
-          ...(breeding ? [{ key: 'heats', label: 'Chaleurs', content: <ModuleList config={heats} readOnly={left} /> }] : []),
+          ...(breeding ? [{ key: 'heats', label: 'Chaleurs', content: <ModuleList config={heats} noCreate={left} /> }] : []),
         ]}
       />
       {exiting && <ExitDialog animal={animal} onClose={() => setExiting(false)} onDone={() => { setExiting(false); refresh(); }} />}

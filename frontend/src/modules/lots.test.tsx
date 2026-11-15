@@ -279,9 +279,10 @@ describe('row icons follow the kind of list', () => {
 
   it('keeps the row gates on top: a closed lot has no editable movement for the daily role either', async () => {
     mountDetail('l2', { perms: ['read', 'create'] });
-    // The closed lot's movements are listed read-only through the detail page (no icons without an editable lot).
-    await screen.findByText('Chaleur');
-    expect(screen.queryAllByRole('button', { name: 'Modifier' }).filter((b) => b.closest('tr'))).toHaveLength(0);
+    // The movement rows are rendered, and carry no icon: closed lots are read-only.
+    const movement = (await screen.findByText('Chaleur')).closest('tr')!;
+    expect(rowIcons(movement)).toEqual([false, false]);
+    expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
   });
 });
 

@@ -131,7 +131,10 @@ export function ageLabel(birthDate: string | null | undefined, now: Date = new D
 }
 
 /** Weighings of one animal. */
-export function animalWeighings(animalId: string): ModuleConfig<AnimalWeighing> {
+export const ANIMAL_LEFT = 'Animal sorti du cheptel';
+
+/** `left`: the animal left the herd, so its rows keep disabled icons with the reason. */
+export function animalWeighings(animalId: string, left = false): ModuleConfig<AnimalWeighing> {
   return {
     slug: 'porcs',
     exportable: false,
@@ -150,14 +153,14 @@ export function animalWeighings(animalId: string): ModuleConfig<AnimalWeighing> 
     rowLabel: (w) => `Pesée du ${w.date}`,
     editPermission: 'create',
     deletePermission: 'create',
-    canEdit: () => false,
-    canDelete: () => false,
+    canEdit: () => (left ? ANIMAL_LEFT : true),
+    canDelete: () => (left ? ANIMAL_LEFT : true),
     toPayload: (v) => ({ date: v.date, weightKg: num(v.weightKg) }),
   };
 }
 
 /** Heats of one sow. */
-export function animalHeats(animalId: string): ModuleConfig<Heat> {
+export function animalHeats(animalId: string, left = false): ModuleConfig<Heat> {
   return {
     // The API serves heats and breeding history under the `reproduction` module.
     slug: 'reproduction',
@@ -177,8 +180,8 @@ export function animalHeats(animalId: string): ModuleConfig<Heat> {
     rowLabel: (h) => `Chaleurs du ${h.date}`,
     editPermission: 'create',
     deletePermission: 'create',
-    canEdit: () => false,
-    canDelete: () => false,
+    canEdit: () => (left ? ANIMAL_LEFT : true),
+    canDelete: () => (left ? ANIMAL_LEFT : true),
     toPayload: (v) => ({ date: v.date, note: text(v.note) }),
   };
 }

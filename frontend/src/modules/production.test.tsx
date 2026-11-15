@@ -487,6 +487,75 @@ describe('animal detail', () => {
     expect(screen.getByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
   });
 
+  describe('correcting daily entries of an animal', () => {
+    const rowOf = async (text: string) => (await screen.findByText(text)).closest('tr')!;
+
+    it('lets a read+create role edit and delete a weighing, sending only the changed field', async () => {
+      mountDetail('a1', { perms: ['read', 'create'], modules: { reproduction: ['read', 'create'] } });
+      const row = await rowOf('205.5');
+      expect(within(row).getByRole('button', { name: 'Modifier' })).not.toHaveAttribute('aria-disabled');
+      expect(within(row).getByRole('button', { name: 'Supprimer' })).not.toHaveAttribute('aria-disabled');
+      const user = userEvent.setup();
+      await user.click(within(row).getByRole('button', { name: 'Modifier' }));
+      const dialog = await screen.findByRole('dialog');
+      await user.clear(within(dialog).getByLabelText('Poids (kg)'));
+      await user.type(within(dialog).getByLabelText('Poids (kg)'), '207');
+      await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/animals/a1/weighings/w1', body: { weightKg: 207 } });
+      expect(writes()[0].body).not.toHaveProperty('date');
+      await user.click(within(await rowOf('205.5')).getByRole('button', { name: 'Supprimer' }));
+      await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Supprimer' }));
+      await waitFor(() => expect(writes()).toHaveLength(2));
+      expect(writes()[1]).toMatchObject({ method: 'DELETE', url: '/api/animals/a1/weighings/w1' });
+    });
+
+    it('lets a read+create role edit and delete a heat (reproduction read + create)', async () => {
+      mountDetail('a1', { perms: ['read', 'create'], modules: { reproduction: ['read', 'create'] } });
+      await screen.findByRole('heading', { name: 'TR-014' });
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('tab', { name: 'Chaleurs' }));
+      const row = await rowOf('Nette');
+      await user.click(within(row).getByRole('button', { name: 'Modifier' }));
+      const dialog = await screen.findByRole('dialog');
+      await user.clear(within(dialog).getByLabelText('Note'));
+      await user.type(within(dialog).getByLabelText('Note'), 'Très nette');
+      await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+      await waitFor(() => expect(writes()).toHaveLength(1));
+      expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/animals/a1/heats/h1', body: { note: 'Très nette' } });
+      expect(writes()[0].body).not.toHaveProperty('date');
+      await user.click(within(await rowOf('Nette')).getByRole('button', { name: 'Supprimer' }));
+      await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Supprimer' }));
+      await waitFor(() => expect(writes()).toHaveLength(2));
+      expect(writes()[1]).toMatchObject({ method: 'DELETE', url: '/api/animals/a1/heats/h1' });
+    });
+
+    it('shows no icon without create permission', async () => {
+      mountDetail('a1', { perms: ['read'], modules: { reproduction: ['read'] } });
+      const row = await rowOf('205.5');
+      expect(within(row).queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
+    });
+
+    it('keeps the icons of an animal that left the herd, disabled with the reason, and offers no Ajouter', async () => {
+      mountDetail('a1', { perms: ['read', 'create'], modules: { reproduction: ['read', 'create'] } });
+      handler = (c) =>
+        /^\/api\/animals\/a1(\?|$)/.test(c.url)
+          ? json(200, { ...animalOf(HERD[0], 'F', 'TRUIE'), status: 'VENDU', exitDate: '2026-10-05', exitReason: 'VENDU' })
+          : undefined;
+      const row = await rowOf('205.5');
+      for (const name of ['Modifier', 'Supprimer']) {
+        const icon = within(row).getByRole('button', { name });
+        expect(icon).toHaveAttribute('aria-disabled', 'true');
+        expect(icon).toHaveAttribute('title', 'Animal sorti du cheptel');
+      }
+      expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('tab', { name: 'Chaleurs' }));
+      const heat = await rowOf('Nette');
+      expect(within(heat).getByRole('button', { name: 'Modifier' })).toHaveAttribute('title', 'Animal sorti du cheptel');
+    });
+  });
+
   it('has no breeding tabs for a boar', async () => {
     mountDetail('a2');
     await screen.findByRole('heading', { name: 'VR-002' });

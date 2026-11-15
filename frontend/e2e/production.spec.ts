@@ -475,7 +475,11 @@ describe('production : lots, ponte, porcs, reproduction et alimentation de bout 
     await mine.waitFor();
     await mine.getByRole('button', { name: 'Supprimer' }).waitFor();
     // The lot itself is master data: no Modifier / Clôturer header buttons for this role.
-    assert.equal(await agent.getByRole('button', { name: 'Modifier' }).filter({ hasText: 'Modifier' }).count(), 0);
+    // By role and accessible name: every Modifier button of the page must be a row icon, none in the page header.
+    assert.equal(
+      await agent.getByRole('button', { name: 'Modifier' }).count(),
+      await agent.getByRole('row').getByRole('button', { name: 'Modifier' }).count(),
+    );
     assert.equal(await agent.getByRole('button', { name: 'Clôturer' }).count(), 0);
 
     await mine.getByRole('button', { name: 'Modifier' }).click();

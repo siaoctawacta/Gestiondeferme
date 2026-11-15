@@ -53,22 +53,24 @@ export interface ModuleListProps<T extends { id: string }> {
   scope?: Record<string, string>;
   /** Hides the add, edit and delete controls (e.g. the embedded lists of a closed lot). */
   readOnly?: boolean;
+  /** Hides `Ajouter` only: the rows keep their icons (disabled by `canEdit` / `canDelete` when the config says so). */
+  noCreate?: boolean;
 }
 
 /**
  * The list of a module without its page header, tiles and tabs, for embedding in a detail page: search, filters,
  * table, pagination, and the export / add buttons at the top right of the card.
  */
-export function ModuleList<T extends { id: string }>({ config, scope, readOnly }: ModuleListProps<T>) {
-  return <ModuleView config={config} layout="list" scope={scope} readOnly={readOnly} />;
+export function ModuleList<T extends { id: string }>({ config, scope, readOnly, noCreate }: ModuleListProps<T>) {
+  return <ModuleView config={config} layout="list" scope={scope} readOnly={readOnly} noCreate={noCreate} />;
 }
 
 /** `page`: header, tiles and tabs; `tab`: a further tab of a page (buttons above the card); `list`: card only. */
 type Layout = 'page' | 'tab' | 'list';
 
 function ModuleView<T extends { id: string }>({
-  config, layout, scope: scopeProp, readOnly = false,
-}: { config: ModuleConfig<T>; layout: Layout; scope?: Record<string, string>; readOnly?: boolean }) {
+  config, layout, scope: scopeProp, readOnly = false, noCreate = false,
+}: { config: ModuleConfig<T>; layout: Layout; scope?: Record<string, string>; readOnly?: boolean; noCreate?: boolean }) {
   const embedded = layout !== 'page';
   const scope = config.scope || scopeProp ? { ...config.scope, ...scopeProp } : undefined;
   const { can, farmId, reload } = useAuth();
@@ -122,7 +124,7 @@ function ModuleView<T extends { id: string }>({
 
   const scoped = config.farmScoped !== false;
   const writable = !scoped || farmId !== 'all';
-  const canCreate = !readOnly && can(config.slug, config.createPermission ?? 'create') && writable;
+  const canCreate = !readOnly && !noCreate && can(config.slug, config.createPermission ?? 'create') && writable;
   const canEditRows = !readOnly && can(config.slug, config.editPermission ?? 'update') && writable;
   const canDeleteRows = !readOnly && can(config.slug, config.deletePermission ?? 'delete') && writable;
   const readOnlyBecauseAllFarms =
