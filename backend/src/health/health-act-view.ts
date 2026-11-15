@@ -115,6 +115,13 @@ export function withdrawalEnd(act: {
   return addDays(act.doneDate, (act.durationDays ?? 0) + act.withdrawalDays);
 }
 
+/** What an act row calls its target: lot code, animal tag or building name. */
+export const targetLabel = (row: {
+  batch: { code: string } | null;
+  animal: { tag: string } | null;
+  building: { name: string } | null;
+}): string => row.batch?.code ?? row.animal?.tag ?? row.building?.name ?? '';
+
 export function toActItem(row: ActRow, now: Date = today()): HealthActItem {
   // A planned act on a closed lot or an exited animal can no longer be done:
   // it is not late, it waits to be cancelled.
@@ -127,7 +134,7 @@ export function toActItem(row: ActRow, now: Date = today()): HealthActItem {
     id: row.id,
     date: formatDay(row.date),
     doneDate: formatDayOrNull(row.doneDate),
-    target: row.batch?.code ?? row.animal?.tag ?? row.building?.name ?? '',
+    target: targetLabel(row),
     targetKind: row.batchId ? 'LOT' : row.animalId ? 'ANIMAL' : 'BATIMENT',
     batchId: row.batchId,
     animalId: row.animalId,

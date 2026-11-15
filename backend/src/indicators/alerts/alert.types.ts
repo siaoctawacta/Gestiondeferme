@@ -29,6 +29,11 @@ export interface AlertItem {
  */
 export type AlertSettings = Record<string, number>;
 
+/**
+ * A rule returns its alerts in a total, deterministic order (level, then its
+ * own sort keys ending on the key or id): the registry keeps that order, so
+ * the response never depends on the order the database returned rows in.
+ */
 export type AlertRule = (
   ctx: RequestContext,
   settings: AlertSettings,

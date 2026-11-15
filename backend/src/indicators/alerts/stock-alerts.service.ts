@@ -25,8 +25,12 @@ export class StockAlertsService implements StockAlertData, OnModuleInit {
     private readonly registry: AlertsRegistry,
   ) {}
 
+  /** The clock the rules read; a test replaces it. */
+  now: () => Date = () => new Date();
+
   onModuleInit(): void {
-    for (const rule of stockAlertRules(this)) this.registry.register(rule);
+    for (const rule of stockAlertRules(this, () => this.now()))
+      this.registry.register(rule);
   }
 
   /** Every active article with a minimum in the request's farms, with its quantity there (none yet is 0). */
@@ -41,6 +45,7 @@ export class StockAlertsService implements StockAlertData, OnModuleInit {
         farmId: true,
         stockItemId: true,
         minQty: true,
+        farm: { select: { name: true } },
         stockItem: { select: { name: true, unit: true } },
       },
       relationLoadStrategy: 'join',
@@ -57,6 +62,7 @@ export class StockAlertsService implements StockAlertData, OnModuleInit {
       quantity:
         levels.get(levelKey(l.farmId, l.stockItemId))?.quantity.toNumber() ?? 0,
       minQty: l.minQty.toNumber(),
+      ...(ctx.farmIds.length > 1 ? { farmName: l.farm.name } : {}),
     }));
   }
 
@@ -66,11 +72,21 @@ export class StockAlertsService implements StockAlertData, OnModuleInit {
       (b) => b.batch.expiryDate && b.quantity.gt(0),
     );
     if (held.length === 0) return [];
-    const items = await this.prisma.stockItem.findMany({
-      where: { id: { in: [...new Set(held.map((b) => b.batch.stockItemId))] } },
-      select: { id: true, name: true },
-    });
+    const [items, farms] = await Promise.all([
+      this.prisma.stockItem.findMany({
+        where: {
+          id: { in: [...new Set(held.map((b) => b.batch.stockItemId))] },
+        },
+        select: { id: true, name: true },
+      }),
+      this.prisma.farm.findMany({
+        where: { id: { in: ctx.farmIds } },
+        select: { id: true, name: true },
+      }),
+    ]);
     const names = new Map(items.map((i) => [i.id, i.name]));
+    const farmNames = new Map(farms.map((f) => [f.id, f.name]));
+    const several = ctx.farmIds.length > 1;
     return held.flatMap(({ batch, quantity }) =>
       batch.expiryDate
         ? [
@@ -80,6 +96,7 @@ export class StockAlertsService implements StockAlertData, OnModuleInit {
               lotNumber: batch.lotNumber,
               expiryDate: formatDay(batch.expiryDate),
               quantity: quantity.toNumber(),
+              ...(several ? { farmName: farmNames.get(batch.farmId) } : {}),
             },
           ]
         : [],

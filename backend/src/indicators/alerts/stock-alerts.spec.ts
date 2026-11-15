@@ -92,6 +92,31 @@ describe('stockLevelAlerts', () => {
   });
 });
 
+describe('stock alert details', () => {
+  const detail = (quantity: number, minQty = 1500, unit = 'kg') =>
+    stockLevelAlerts([row({ quantity, minQty, unit })])[0].detail;
+
+  it('prints quantities with up to 2 decimals, no rounding to the unit, no trailing zeros', () => {
+    expect(detail(12.5)).toBe('12.5 kg (seuil 1500)');
+    expect(detail(749.96)).toBe('749.96 kg (seuil 1500)');
+    expect(detail(0.04, 1)).toBe('0.04 kg (seuil 1)');
+    expect(detail(900)).toBe('900 kg (seuil 1500)');
+    expect(detail(0.1 + 0.2, 1)).toBe('0.3 kg (seuil 1)');
+    expect(detail(10, 20.25)).toBe('10 kg (seuil 20.25)');
+  });
+
+  it('adds the farm name when the rows carry one, to tell farms apart', () => {
+    const [alert] = stockLevelAlerts([row({ farmName: 'Ferme Nord' })]);
+    expect(alert.detail).toBe('900 kg (seuil 1500) — Ferme Nord');
+    const [lot] = expiryAlerts(
+      [batch({ farmName: 'Ferme Nord' })],
+      SETTINGS,
+      NOW,
+    );
+    expect(lot.detail).toBe('Lot L-42 — expire le 2026-12-15 — Ferme Nord');
+  });
+});
+
 describe('expiryAlerts', () => {
   const alertsFor = (expiryDate: string, quantity = 10) =>
     expiryAlerts([batch({ expiryDate, quantity })], SETTINGS, NOW);

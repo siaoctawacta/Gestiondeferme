@@ -2,7 +2,11 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { RequestContext } from '../../access/decorators';
 import { addDays, formatDay, today } from '../../common/days';
 import type { Prisma } from '../../generated/prisma/client';
-import { OPEN_TARGET, overdueActWhere } from '../../health/health-act-view';
+import {
+  OPEN_TARGET,
+  overdueActWhere,
+  targetLabel,
+} from '../../health/health-act-view';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AlertsRegistry } from './alerts-registry';
 import {
@@ -28,7 +32,7 @@ function toAlertAct(row: Row): HealthActAlert {
     id: row.id,
     type: row.type as HealthActAlert['type'],
     date: formatDay(row.date),
-    target: row.batch?.code ?? row.animal?.tag ?? row.building?.name ?? '',
+    target: targetLabel(row),
     // An animal is a pig; a building has no species.
     species: row.batch ? row.batch.species : row.animal ? 'PORCIN' : undefined,
     productName: row.productName,
@@ -48,8 +52,12 @@ export class HealthAlertsService implements HealthAlertData, OnModuleInit {
     private readonly registry: AlertsRegistry,
   ) {}
 
+  /** The clock the rules read; a test replaces it. */
+  now: () => Date = () => new Date();
+
   onModuleInit(): void {
-    for (const rule of healthAlertRules(this)) this.registry.register(rule);
+    for (const rule of healthAlertRules(this, () => this.now()))
+      this.registry.register(rule);
   }
 
   async vaccinations(

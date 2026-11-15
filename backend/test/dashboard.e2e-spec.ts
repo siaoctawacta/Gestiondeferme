@@ -1,6 +1,8 @@
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
 import type { App } from 'supertest/types';
+import { HealthAlertsService } from '../src/indicators/alerts/health-alerts.service';
+import { StockAlertsService } from '../src/indicators/alerts/stock-alerts.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import type { DashboardDto } from '../src/dashboard/dashboard.types';
 import {
@@ -652,12 +654,21 @@ describe('Dashboard (e2e)', () => {
     });
   });
   describe('stock, expiry, vaccination and health alerts', () => {
+    // Today is frozen for the rules and for the seeds, so a run across UTC midnight cannot shift a boundary.
+    let base = 0;
+    const day = (n: number) => new Date(base - n * DAY_MS);
+    const dayStr = (n: number) => day(n).toISOString().slice(0, 10);
     const ahead = (n: number) => day(-n);
     const aheadStr = (n: number) => dayStr(-n);
     let siteId: string;
     let porcherie: string;
 
     beforeEach(async () => {
+      const t = new Date();
+      base = Date.UTC(t.getUTCFullYear(), t.getUTCMonth(), t.getUTCDate());
+      const frozen = () => new Date(base + 12 * 3_600_000);
+      app.get(StockAlertsService).now = frozen;
+      app.get(HealthAlertsService).now = frozen;
       siteId = (
         await prisma.site.findFirstOrThrow({ where: { farmId: farmA } })
       ).id;
@@ -970,14 +981,7 @@ describe('Dashboard (e2e)', () => {
       ]);
     });
 
-    it('tolerates biosecurityWarningDays for a disinfection', async () => {
-      await act({
-        buildingId: porcherie,
-        type: 'DESINFECTION',
-        productName: 'Virkon S',
-        date: day(2),
-      });
-      expect((await alerts(farmA)).total).toBe(1);
+    it('ignores biosecurityWarningDays: a disinfection is late exactly when the list says EN_RETARD', async () => {
       await prisma.setting.create({
         data: {
           organizationId: orgId,
@@ -985,7 +989,61 @@ describe('Dashboard (e2e)', () => {
           value: 2,
         },
       });
-      expect((await alerts(farmA)).total).toBe(0);
+      const late = await act({
+        buildingId: porcherie,
+        type: 'DESINFECTION',
+        productName: 'Virkon S',
+        date: day(1),
+      });
+      const list = (
+        await http()
+          .get('/api/health-acts')
+          .query({ status: 'EN_RETARD' })
+          .set(headersFor(farmA))
+          .expect(200)
+      ).body as { items: { id: string }[] };
+      expect(list.items.map((a) => a.id)).toEqual([late.id]);
+      expect((await alerts(farmA)).items.map((i) => i.key)).toEqual([
+        `health:${late.id}`,
+      ]);
+    });
+
+    it('prints quantities with their decimals', async () => {
+      const id = await item('Vermifuge', 'L');
+      await stockIn(farmA, id, 749.96);
+      await threshold(farmA, id, 1500);
+      expect(rows(await alerts(farmA))).toEqual([
+        ['Stock critique : Vermifuge', '749.96 L (seuil 1500)', 'URGENT'],
+      ]);
+    });
+
+    it('names the farm in stock and expiry details only when several farms are in view', async () => {
+      const vaccin = await item('Vaccin', 'dose', 'VACCIN');
+      await stockIn(farmA, vaccin, 10, { number: 'L-1', expiry: 5 });
+      await threshold(farmA, vaccin, 100);
+      await stockIn(farmB, vaccin, 10, { number: 'L-2', expiry: 5 });
+      await threshold(farmB, vaccin, 100);
+      expect((await alerts(farmA)).items.map((i) => i.detail)).toEqual([
+        '10 dose (seuil 100)',
+        `Lot L-1 — expire le ${aheadStr(5)}`,
+      ]);
+      expect((await alerts('all')).items.map((i) => i.detail)).toEqual([
+        '10 dose (seuil 100) — Ferme Atakpamé',
+        '10 dose (seuil 100) — Ferme Kpalimé',
+        `Lot L-2 — expire le ${aheadStr(5)} — Ferme Atakpamé`,
+        `Lot L-1 — expire le ${aheadStr(5)} — Ferme Kpalimé`,
+      ]);
+    });
+
+    it('judges each farm on its own threshold: stock on A with a threshold only on B', async () => {
+      const id = await item('Maïs');
+      await stockIn(farmA, id, 50);
+      await threshold(farmB, id, 100);
+      expect((await alerts(farmA)).items).toEqual([]);
+      const b = await alerts(farmB);
+      expect(rows(b)).toEqual([
+        ['Stock critique : Maïs', '0 kg (seuil 100)', 'URGENT'],
+      ]);
     });
 
     it('shows each role only the stock and health alerts of the modules it reads', async () => {
@@ -1059,6 +1117,7 @@ describe('Dashboard (e2e)', () => {
                 served.stockItem,
                 served.farmStockItem,
                 served.healthAct,
+                served.farm,
               ].map((delegate) => {
                 const original = delegate[method].bind(delegate) as (
                   ...a: unknown[]
@@ -1074,10 +1133,10 @@ describe('Dashboard (e2e)', () => {
         ];
         return { counts, restore: () => spies.forEach((s) => s.mockRestore()) };
       };
-      const measure = async () => {
+      const measure = async (farm = farmA) => {
         const { counts, restore } = queries();
         try {
-          await alerts(farmA);
+          await alerts(farm);
         } finally {
           restore();
         }
@@ -1098,9 +1157,12 @@ describe('Dashboard (e2e)', () => {
       await populate(6, 'b');
       expect((await alerts(farmA)).total).toBeGreaterThan(20);
       const large = await measure();
-      // thresholds, movements, lots, their sums, article names, 2 health reads
-      expect(small).toBe(7);
+      // thresholds, movements, lots, their sums, article and farm names, 2 health reads, and the request's own farm scope lookup
+      expect(small).toBe(9);
       expect(large).toBe(small);
+      // Two farms in view cost the same.
+      await stockIn(farmB, await item('Article B'), 5);
+      expect(await measure('all')).toBe(small);
     });
   });
 });

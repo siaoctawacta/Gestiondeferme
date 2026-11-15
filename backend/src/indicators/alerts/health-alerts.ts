@@ -109,24 +109,16 @@ export function vaccinationAlerts(
   return ranked(items);
 }
 
-/**
- * `Désinfection en retard` and `Traitement en retard` (A_VOIR): planned and
- * dated before today. A disinfection tolerates `biosecurityWarningDays` days
- * of delay before it is reported (0 by default: late from the day after).
- */
+/** `Désinfection en retard` and `Traitement en retard` (A_VOIR): planned and dated before today, the health list's EN_RETARD. */
 export function otherHealthAlerts(
   acts: HealthActAlert[],
-  settings: AlertSettings,
   now: Date,
 ): AlertItem[] {
   const start = today(now);
   const items: { act: HealthActAlert; alert: AlertItem }[] = [];
   for (const act of acts) {
     if (act.type === 'VACCINATION') continue;
-    const late = -signedDaysBetween(start, new Date(act.date));
-    const tolerated =
-      act.type === 'DESINFECTION' ? settings.biosecurityWarningDays : 0;
-    if (late <= tolerated) continue;
+    if (signedDaysBetween(start, new Date(act.date)) >= 0) continue;
     items.push({
       act,
       alert: {
@@ -159,9 +151,9 @@ export function healthAlertRules(
         at,
       );
     },
-    async (ctx, settings) => {
+    async (ctx) => {
       const at = now();
-      return otherHealthAlerts(await data.lateActs(ctx, at), settings, at);
+      return otherHealthAlerts(await data.lateActs(ctx, at), at);
     },
   ];
 }

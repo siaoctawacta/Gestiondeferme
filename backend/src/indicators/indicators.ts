@@ -56,3 +56,6 @@ export const hatchRate = (chicks: Num, eggsSet: Num) =>
 /** Integer percentage. */
 export const occupationRate = (occupation: Num, capacity: Num) =>
   percent(occupation, capacity, 0);
+
+/** A stock quantity as text: up to 2 decimals (the stock precision), no float noise, no trailing zeros. */
+export const quantityText = (n: number): string => String(Number(n.toFixed(2)));

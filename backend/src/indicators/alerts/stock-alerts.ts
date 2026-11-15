@@ -1,7 +1,7 @@
 import type { RequestContext } from '../../access/decorators';
 import { signedDaysBetween, today } from '../../common/days';
 import { stockLevel } from '../../stock/stock-level';
-import { ratio } from '../indicators';
+import { quantityText } from '../indicators';
 import { ALERT_LEVEL_ORDER } from './alert.types';
 import type { AlertItem, AlertRule, AlertSettings } from './alert.types';
 
@@ -14,6 +14,8 @@ export interface StockLevelRow {
   quantity: number;
   /** The farm's minimum for the article; 0 or less means none. */
   minQty: number;
+  /** Set when the request spans several farms, to tell their alerts apart. */
+  farmName?: string;
 }
 
 /** A product lot with an expiry date and something left in it. */
@@ -24,6 +26,8 @@ export interface ExpiringBatch {
   /** `YYYY-MM-DD`. */
   expiryDate: string;
   quantity: number;
+  /** Set when the request spans several farms, to tell their alerts apart. */
+  farmName?: string;
 }
 
 /** What the rules read; the stock alerts service implements it over the database. */
@@ -35,6 +39,10 @@ export interface StockAlertData {
 const byLevel = (a: AlertItem, b: AlertItem): number =>
   ALERT_LEVEL_ORDER.indexOf(a.level) - ALERT_LEVEL_ORDER.indexOf(b.level);
 
+/** Under several farms the detail ends with the farm's name. */
+const withFarm = (detail: string, farmName?: string): string =>
+  farmName ? `${detail} — ${farmName}` : detail;
+
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
@@ -43,16 +51,20 @@ const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
  * URGENT first, then by article name.
  */
 export function stockLevelAlerts(rows: StockLevelRow[]): AlertItem[] {
-  const alerts: { alert: AlertItem; name: string }[] = [];
+  const alerts: { alert: AlertItem; name: string; farm: string }[] = [];
   for (const r of rows) {
     const level = stockLevel(r.quantity, r.minQty);
     if (level === 'ok') continue;
     alerts.push({
       name: r.name,
+      farm: r.farmName ?? '',
       alert: {
         key: `stock:${r.farmId}:${r.itemId}`,
         title: `${level === 'critique' ? 'Stock critique' : 'Stock faible'} : ${r.name}`,
-        detail: `${ratio(r.quantity, 1)} ${r.unit} (seuil ${ratio(r.minQty, 1)})`,
+        detail: withFarm(
+          `${quantityText(r.quantity)} ${r.unit} (seuil ${quantityText(r.minQty)})`,
+          r.farmName,
+        ),
         level: level === 'critique' ? 'URGENT' : 'A_VOIR',
         module: 'stocks',
         modules: ['stocks'],
@@ -64,6 +76,7 @@ export function stockLevelAlerts(rows: StockLevelRow[]): AlertItem[] {
       (a, b) =>
         byLevel(a.alert, b.alert) ||
         compare(a.name, b.name) ||
+        compare(a.farm, b.farm) ||
         compare(a.alert.key, b.alert.key),
     )
     .map((a) => a.alert);
@@ -96,7 +109,7 @@ export function expiryAlerts(
         alert: {
           ...base,
           title: `Produit périmé : ${b.itemName}`,
-          detail: `${lot} — expiré le ${b.expiryDate}`,
+          detail: withFarm(`${lot} — expiré le ${b.expiryDate}`, b.farmName),
           level: 'URGENT',
         },
       });
@@ -106,7 +119,7 @@ export function expiryAlerts(
         alert: {
           ...base,
           title: `Produit bientôt périmé : ${b.itemName}`,
-          detail: `${lot} — expire le ${b.expiryDate}`,
+          detail: withFarm(`${lot} — expire le ${b.expiryDate}`, b.farmName),
           level: 'A_VOIR',
         },
       });
@@ -118,6 +131,7 @@ export function expiryAlerts(
         byLevel(a.alert, b.alert) ||
         compare(a.batch.expiryDate, b.batch.expiryDate) ||
         compare(a.batch.itemName, b.batch.itemName) ||
+        compare(a.batch.farmName ?? '', b.batch.farmName ?? '') ||
         compare(a.batch.id, b.batch.id),
     )
     .map((a) => a.alert);

@@ -101,7 +101,6 @@ describe('otherHealthAlerts', () => {
             productName: 'Virkon S',
           }),
         ],
-        SETTINGS,
         NOW,
       ),
     ).toEqual([
@@ -120,7 +119,6 @@ describe('otherHealthAlerts', () => {
     expect(
       otherHealthAlerts(
         [act({ id: 't1', type: 'TRAITEMENT', productName: 'Amoxicilline' })],
-        SETTINGS,
         NOW,
       ),
     ).toEqual([
@@ -135,22 +133,16 @@ describe('otherHealthAlerts', () => {
     ]);
   });
 
-  it('tolerates biosecurityWarningDays of delay for a disinfection only', () => {
-    const settings = { ...SETTINGS, biosecurityWarningDays: 2 };
-    const at = (type: HealthActAlert['type'], date: string) =>
-      otherHealthAlerts([act({ type, date })], settings, NOW);
-    expect(at('DESINFECTION', '2026-11-13')).toEqual([]);
-    expect(at('DESINFECTION', '2026-11-12')).toHaveLength(1);
-    expect(at('TRAITEMENT', '2026-11-14')).toHaveLength(1);
+  it('ignores biosecurityWarningDays: late exactly when the health list says EN_RETARD', () => {
+    const at = (date: string) =>
+      otherHealthAlerts([act({ type: 'DESINFECTION', date })], NOW);
+    expect(at('2026-11-14')).toHaveLength(1);
+    expect(at('2026-11-15')).toEqual([]);
   });
 
   it('is not late today', () => {
     expect(
-      otherHealthAlerts(
-        [act({ type: 'TRAITEMENT', date: '2026-11-15' })],
-        SETTINGS,
-        NOW,
-      ),
+      otherHealthAlerts([act({ type: 'TRAITEMENT', date: '2026-11-15' })], NOW),
     ).toEqual([]);
   });
 });
