@@ -1,9 +1,9 @@
 import { api } from '../../lib/api';
 import { useFarmQuery } from '../../lib/query';
 import { allPages } from './allPages';
-import type { OptionsDef } from './types';
+import type { OptionItem, OptionsDef } from './types';
 
-export type Option = { value: string; label: string };
+export type Option = OptionItem;
 
 /**
  * The endpoint with its `{field}` placeholder replaced by the parent's (URL-encoded) value. A placeholder must name

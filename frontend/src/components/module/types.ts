@@ -18,15 +18,21 @@ export type EndpointOptions = {
   valueKey?: string;
   labelKey?: string;
   params?: Record<string, string>;
-  select?: (data: unknown) => { value: string; label: string }[];
+  select?: (data: unknown) => OptionItem[];
 };
+
+/**
+ * One choice of a select. `disabled` shows it greyed out and not pickable (a lot under withdrawal, with its reason in
+ * the label); `data` is whatever the loader keeps of the record, handed to a cell's `onPick`.
+ */
+export type OptionItem = { value: string; label: string; disabled?: boolean; data?: unknown };
 
 /**
  * Static `{value,label}` options, or options loaded from an endpoint. A select whose current value is not among them
  * (an incident on a lot since closed, an article since deactivated) keeps it as the disabled option `Valeur actuelle`
  * (`Valeur conservée` when the options cannot be read) and resends it unchanged, instead of falling back to `Sélectionner…`.
  */
-export type OptionsDef = { value: string; label: string }[] | EndpointOptions;
+export type OptionsDef = OptionItem[] | EndpointOptions;
 
 /**
  * The permission a select's endpoint options need (the options come from another module's route, e.g. stock
@@ -61,11 +67,28 @@ export type CellField =
   | (CellBase & { type: 'number'; min?: number; max?: number; step?: number })
   | (CellBase & {
       type: 'select';
-      options: OptionsDef;
+      /**
+       * The choices, or a function of the row (see `dependsOnCell`): `null` means this row has none: the cell shows
+       * `—`, is disabled, is not required and is left out of the payload.
+       */
+      options: OptionsDef | ((row: LineRow) => OptionsDef | null);
       /** An option already chosen in another row of the grid is not offered again. */
       unique?: boolean;
       /** See the select field: the endpoint options need this permission; without it `required` does not apply to the column. */
       optionsPermission?: OptionsPermission;
+      /**
+       * Name of another cell of the SAME row that this cell's options depend on (`options` is then a function of the
+       * row). The same mechanism as a select's `dependsOn` (`useDependentValues`): this cell is cleared whenever that
+       * cell changes in that row, other rows are untouched, a stored value nobody touched stays until then, and a
+       * value chosen under an earlier value of the parent never comes back. Options from an endpoint are fetched
+       * once per distinct path (the query is cached), however many rows ask for it.
+       */
+      dependsOnCell?: string;
+      /**
+       * Called when the user picks an option in this cell: the cells it returns are set in the same row (the
+       * designation and unit of a sellable). They count as chosen after the row's current parent value.
+       */
+      onPick?: (option: OptionItem, row: LineRow) => Partial<LineRow>;
     });
 
 interface CellBase {
@@ -139,6 +162,12 @@ export type Field =
       /** Shown under the grid with the rows as edited (a running total, a derived cost...). */
       footer?: (rows: LineRow[]) => ReactNode;
     });
+
+/**
+ * What a `lines` grid reports with its new rows, so the form engine can follow cells that depend on another cell of the
+ * row: `cells` of row `row` were set by the user (or by an `onPick`), or row `remove` was removed.
+ */
+export type LinesEdit = { row: number; cells: string[] } | { remove: number };
 
 export type Column<T> = {
   /** Row property shown by default, and the `sort` field when `sortable`. */

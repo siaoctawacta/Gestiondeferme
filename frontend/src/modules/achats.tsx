@@ -6,11 +6,12 @@ import type { Field, ModuleConfig, RowAction } from '../components/module/types'
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatMoney, formatNumber, todayIso } from '../lib/format';
+import { linesTotal } from '../lib/money';
 import { farmKey } from '../lib/query';
 import { PurchaseDetail } from '../pages/details/PurchaseDetail';
 import { PURCHASE_ACTIONS } from './purchaseActions';
 import { stockItemOptions } from './stocksShared';
-import { ACTIVITIES, PURCHASE_STATUSES, editableGate, linesTotal, type PurchaseData, type PurchaseRow } from './purchasingShared';
+import { ACTIVITIES, PURCHASE_STATUSES, editableGate, type PurchaseData, type PurchaseRow } from './purchasingShared';
 
 const fields = (suppliers: { value: string; label: string }[]): Field[] => [
   { name: 'supplierId', label: 'Fournisseur', type: 'select', required: true, options: suppliers },

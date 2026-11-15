@@ -89,4 +89,62 @@ describe('useDependentValues', () => {
     expect(result.current.parentOf(fields[1])).toEqual({ parentValue: 'a', waitingFor: undefined });
     expect(result.current.parentOf(fields[0])).toEqual({});
   });
+
+  describe('cells of a lines field', () => {
+    const lines: Field = {
+      name: 'lines', label: 'Lignes', type: 'lines',
+      columns: [
+        { name: 'kind', label: 'Type', type: 'select', options: OPTIONS },
+        { name: 'src', label: 'Source', type: 'select', dependsOnCell: 'kind', options: () => OPTIONS },
+        { name: 'sub', label: 'Sous-source', type: 'select', dependsOnCell: 'src', options: () => OPTIONS },
+        { name: 'note', label: 'Note', type: 'text' },
+      ],
+    };
+    const row = (o: Record<string, string> = {}) => ({ kind: 'a', src: 'a', sub: 'a', note: 'n', ...o });
+    const rowsOf = (r: ReturnType<typeof mount>['result']) => r.current.values.lines as Record<string, string>[];
+
+    it('clears the dependent cells of the changed row only, down the chain, and keeps the others', () => {
+      const { result, rerender } = mount([lines], { lines: [row(), row()] });
+      expect(rowsOf(result)).toEqual([row(), row()]);
+      const next = [row({ kind: 'b' }), row()];
+      act(() => result.current.changeRows('lines', next, { row: 0, cells: ['kind'] }));
+      rerender({ fields: [lines], values: { lines: next } });
+      expect(rowsOf(result)).toEqual([row({ kind: 'b', src: '', sub: '' }), row()]);
+      // Picked afterwards, live; the grandchild stays cleared until picked itself.
+      const picked = [row({ kind: 'b', src: 'b' }), row()];
+      act(() => result.current.changeRows('lines', picked, { row: 0, cells: ['src'] }));
+      rerender({ fields: [lines], values: { lines: picked } });
+      expect(rowsOf(result)[0]).toMatchObject({ kind: 'b', src: 'b', sub: '' });
+    });
+
+    it('counts the sibling cells set together with a pick as chosen under the current parent', () => {
+      const { result, rerender } = mount([lines], { lines: [row({ src: '', sub: '' })] });
+      const first = [row({ kind: 'b', src: '', sub: '' })];
+      act(() => result.current.changeRows('lines', first, { row: 0, cells: ['kind'] }));
+      rerender({ fields: [lines], values: { lines: first } });
+      const picked = [row({ kind: 'b', src: 'b', sub: 'b' })];
+      act(() => result.current.changeRows('lines', picked, { row: 0, cells: ['src', 'sub', 'note'] }));
+      rerender({ fields: [lines], values: { lines: picked } });
+      expect(rowsOf(result)).toEqual(picked);
+    });
+
+    it('moves the bookkeeping of the rows after a removed one up with them', () => {
+      const { result, rerender } = mount([lines], { lines: [row(), row()] });
+      const next = [row({ kind: 'b' }), row()];
+      act(() => result.current.changeRows('lines', next, { row: 0, cells: ['kind'] }));
+      rerender({ fields: [lines], values: { lines: next } });
+      const after = [row()];
+      act(() => result.current.changeRows('lines', after, { remove: 0 }));
+      rerender({ fields: [lines], values: { lines: after } });
+      expect(rowsOf(result)).toEqual([row()]);
+    });
+
+    it('never mutates the rows it is given', () => {
+      const given = { lines: [row()] };
+      const { result } = mount([lines], given);
+      const next = [row({ kind: 'b' })];
+      act(() => result.current.changeRows('lines', next, { row: 0, cells: ['kind'] }));
+      expect(given).toEqual({ lines: [row()] });
+    });
+  });
 });

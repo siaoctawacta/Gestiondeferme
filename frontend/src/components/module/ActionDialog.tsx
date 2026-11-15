@@ -7,7 +7,7 @@ import { Dialog, DialogActions } from '../ui/Dialog';
 import { changedFields } from './changedFields';
 import { errorMessage } from './errorMessage';
 import { FieldInput, defaultPayload, firstInvalid, initialValue, validateLines } from './formFields';
-import type { Field, FormMode, LineRow } from './types';
+import type { Field, FormMode, LineRow, LinesEdit } from './types';
 import { useDependentValues } from './useDependentValues';
 
 type Values = Record<string, unknown>;
@@ -88,9 +88,10 @@ export function ActionDialog({
   const values = dependent.values;
 
   /** Sets a field; selects depending on it (and theirs in turn) lose their value, shown or not. */
-  const setField = (name: string, v: unknown) => {
+  const setField = (name: string, v: unknown, edit?: LinesEdit) => {
     setLineErrors((e) => (e?.name === name ? null : e));
-    dependent.change(name, v);
+    if (edit) dependent.changeRows(name, v as LineRow[], edit);
+    else dependent.change(name, v);
     setEdited((s) => ({ ...s, [name]: v }));
   };
 
@@ -136,7 +137,7 @@ export function ActionDialog({
               key={f.name}
               field={f}
               value={values[f.name]}
-              onChange={(v) => setField(f.name, v)}
+              onChange={(v, edit) => setField(f.name, v, edit)}
               parentValue={parentValue}
               waitingFor={waitingFor}
               errors={lineErrors?.name === f.name ? lineErrors.messages : undefined}

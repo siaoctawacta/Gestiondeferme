@@ -1,6 +1,7 @@
 import { achats } from './achats';
 import { alimentation } from './alimentation';
 import { batiments } from './batiments';
+import { clients } from './clients';
 import { fournisseurs } from './fournisseurs';
 import { lots } from './lots';
 import { ponte } from './ponte';
@@ -21,5 +22,6 @@ registerModule(stocks);
 registerModule(fournisseurs);
 registerModule(achats);
 registerModule(sante);
+registerModule(clients);
 
 export { MODULES };

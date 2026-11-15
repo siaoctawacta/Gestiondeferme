@@ -4,6 +4,7 @@ import { Printer, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { formatDate, formatMoney, formatNumber } from '../../lib/format';
+import { lineAmount } from '../../lib/money';
 import { farmKey, useFarmQuery } from '../../lib/query';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ActionButton } from '../../components/module/DataTable';
@@ -17,7 +18,7 @@ import { Pill } from '../../components/ui/Pill';
 import { Table, TD, TH, THead, TR } from '../../components/ui/Table';
 import { PURCHASE_ACTIONS, type PurchaseActionDef } from '../../modules/purchaseActions';
 import {
-  ORDERED, activityLabel, lineAmount, methodLabel, statusDef, type PurchaseData, type PurchasePayment,
+  ORDERED, activityLabel, methodLabel, statusDef, type PurchaseData, type PurchasePayment,
 } from '../../modules/purchasingShared';
 import NotFound from '../NotFound';
 import { DetailLayout } from './DetailLayout';

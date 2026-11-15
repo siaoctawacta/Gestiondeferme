@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BrowserRouter, Route, Routes, useLocation } from 'react-router';
+import { BrowserRouter, Route, Routes, useLocation, useParams } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAlerts } from './lib/alerts';
 import { AuthProvider, useAuth } from './lib/auth';
@@ -15,6 +15,7 @@ import Reports from './pages/Reports';
 import Login from './pages/Login';
 import NotFound from './pages/NotFound';
 import { ModuleRoute } from './pages/ModuleRoute';
+import { QuoteDetail } from './pages/details/QuoteDetail';
 import Farms from './pages/admin/Farms';
 import Settings from './pages/admin/Settings';
 import Users from './pages/admin/Users';
@@ -42,6 +43,12 @@ export function Shell({ children }: { children: ReactNode }) {
   );
 }
 
+/** `/m/ventes/devis/:id`: the quote's detail screen (a quote has no page of its own in the module registry). */
+function QuoteRoute() {
+  const { id } = useParams();
+  return <QuoteDetail key={id} id={id!} />;
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -60,6 +67,7 @@ export default function App() {
                       <Route path="/alertes" element={<RequirePermission module="alertes"><Alerts /></RequirePermission>} />
                       <Route path="/rapports" element={<RequirePermission module="rapports"><Reports /></RequirePermission>} />
                       <Route path="/audit" element={<RequirePermission module="audit"><Audit /></RequirePermission>} />
+                      <Route path="/m/ventes/devis/:id" element={<RequirePermission module="ventes"><QuoteRoute /></RequirePermission>} />
                       <Route path="/m/:module" element={<ModuleRoute />} />
                       <Route path="/m/:module/:id" element={<ModuleRoute />} />
                       <Route path="/admin/fermes" element={<RequirePermission module="fermes"><Farms /></RequirePermission>} />

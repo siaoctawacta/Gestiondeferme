@@ -1,8 +1,9 @@
 import { useId } from 'react';
 import { Segmented } from '../ui/Segmented';
 import { CellControl } from './CellControl';
+import { cellIsOff } from './cellOptions';
 import { LinesField } from './LinesField';
-import type { CellField, Field, FormMode, LineRow } from './types';
+import type { CellField, Field, FormMode, LineRow, LinesEdit } from './types';
 import { useEndpointOptions, type Option } from './useEndpointOptions';
 
 type Values = Record<string, unknown>;
@@ -42,7 +43,8 @@ function linePayload(columns: CellField[], row: LineRow): Values {
   const out: Values = {};
   for (const c of columns) {
     const v = row[c.name] ?? '';
-    if (c.computed || v === '') continue;
+    // A cell with no options for this row (a source for a service) is not part of the line.
+    if (c.computed || v === '' || cellIsOff(c, row)) continue;
     out[c.name] = c.type === 'number' ? Number(v) : c.type === 'text' ? v.trim() : v;
   }
   return out;
@@ -78,7 +80,7 @@ export function validateLines(field: Extract<Field, { type: 'lines' }>, rows: Li
   if (filled.length < (field.minRows ?? 0)) out.push('Ajoutez au moins une ligne');
   for (const { row, i } of filled) {
     for (const c of field.columns) {
-      if (c.computed) continue;
+      if (c.computed || cellIsOff(c, row)) continue;
       const v = (row[c.name] ?? '').trim();
       const at = `Ligne ${i + 1} : le champ « ${c.label} »`;
       if (c.required && v === '') out.push(`${at} est requis`);
@@ -120,7 +122,8 @@ export function firstInvalid(fields: Field[], values: Values, mode: FormMode): {
 export interface FieldInputProps {
   field: Field;
   value: unknown;
-  onChange: (v: unknown) => void;
+  /** `edit` accompanies the rows of a `lines` field (see `LinesEdit`). */
+  onChange: (v: unknown, edit?: LinesEdit) => void;
   /** Label of the `dependsOn` parent field while it is still empty. */
   waitingFor?: string;
   /** Value of the `dependsOn` parent field. */
@@ -169,7 +172,7 @@ function LabelledControl({ field, value, onChange, parentValue, waitingFor }: Fi
           onChange={(e) => onChange(e.target.value)}
         />
       ) : (
-        <CellControl id={id} field={field} value={value} onChange={onChange} parentValue={parentValue} waitingFor={waitingFor} />
+        <CellControl id={id} field={field} value={value} onChange={(v) => onChange(v)} parentValue={parentValue} waitingFor={waitingFor} />
       )}
     </div>
   );
@@ -178,7 +181,7 @@ function LabelledControl({ field, value, onChange, parentValue, waitingFor }: Fi
 export function FieldInput(props: FieldInputProps) {
   const { field, value, onChange } = props;
   if (field.type === 'multiselect') return <MultiSelectInput {...props} field={field} />;
-  if (field.type === 'lines') return <LinesField field={field} value={value as LineRow[]} onChange={onChange} errors={props.errors} />;
+  if (field.type === 'lines') return <LinesField field={field} value={value as LineRow[]} onChange={(rows, edit) => onChange(rows, edit)} errors={props.errors} />;
   if (field.type === 'segmented') {
     return (
       <div className="space-y-1.5">

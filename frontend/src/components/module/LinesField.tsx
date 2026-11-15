@@ -3,14 +3,15 @@ import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { formatNumber } from '../../lib/format';
 import { CellControl } from './CellControl';
-import type { CellField, Field, LineRow } from './types';
+import type { CellField, Field, LineRow, LinesEdit, OptionItem } from './types';
 
 export type LinesFieldDef = Extract<Field, { type: 'lines' }>;
 
 export interface LinesFieldProps {
   field: LinesFieldDef;
   value: LineRow[];
-  onChange: (rows: LineRow[]) => void;
+  /** `edit` says which cells of which row the user set (or which row was removed), for cells that depend on another cell of their row. */
+  onChange: (rows: LineRow[], edit?: LinesEdit) => void;
   /** Validation messages, shown under the grid. */
   errors?: string[];
   /** Nothing can be edited. */
@@ -30,8 +31,14 @@ function shown(column: CellField, value: string): string {
  */
 export function LinesField({ field, value: rows, onChange, errors = [], disabled = false }: LinesFieldProps) {
   const id = useId();
-  const setCell = (at: number, name: string, v: string) =>
-    onChange(rows.map((r, i) => (i === at ? { ...r, [name]: v } : r)));
+  const setCell = (at: number, column: CellField, v: string, option?: OptionItem) => {
+    // A picked option may prefill other cells of its row (`onPick`); they count as set by the user too.
+    const picked = (column.type === 'select' && option ? column.onPick?.(option, { ...rows[at], [column.name]: v }) ?? {} : {}) as LineRow;
+    onChange(
+      rows.map((r, i) => (i === at ? { ...r, [column.name]: v, ...picked } : r)),
+      { row: at, cells: [column.name, ...Object.keys(picked)] },
+    );
+  };
   const taken = (column: CellField, at: number) =>
     column.type === 'select' && column.unique ? rows.filter((_, i) => i !== at).map((r) => r[column.name]).filter(Boolean) : undefined;
   const editable = !field.fixed && !disabled;
@@ -69,7 +76,8 @@ export function LinesField({ field, value: rows, onChange, errors = [], disabled
                   aria-label={name(c, i)}
                   disabled={disabled}
                   excluded={taken(c, i)}
-                  onChange={(v) => setCell(i, c.name, String(v))}
+                  row={row}
+                  onChange={(v, option) => setCell(i, c, String(v), option)}
                 />
               )}
             </div>
@@ -80,7 +88,7 @@ export function LinesField({ field, value: rows, onChange, errors = [], disabled
               size="sm"
               aria-label={`Retirer la ligne ${i + 1}`}
               disabled={rows.length <= (field.minRows ?? 0)}
-              onClick={() => onChange(rows.filter((_, at) => at !== i))}
+              onClick={() => onChange(rows.filter((_, at) => at !== i), { remove: i })}
             >
               <Trash2 aria-hidden className="size-4" />
             </Button>
