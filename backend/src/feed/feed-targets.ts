@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import type { Prisma } from '../generated/prisma/client';
-import { assertNotBeforeEntry, assertNotFuture } from '../herd/days';
+import { assertNotBeforeEntry, assertNotFuture } from '../common/days';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 
 type Tx = Prisma.TransactionClient;

@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { SettingsService } from '../admin/settings/settings.service';
 import { BuildingStatus } from '../generated/prisma/enums';
-import { formatDay } from '../herd/days';
+import { formatDay } from '../common/days';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import {
   ALERT_SETTING_KEYS,

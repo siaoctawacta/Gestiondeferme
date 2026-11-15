@@ -1,24 +1,14 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
-import { BatchPerformanceRegistry } from '../herd/batch-performance';
+import {
+  BatchPerformanceRegistry,
+  type BatchPerformance,
+} from '../herd/batch-performance';
 import { BatchesService } from '../herd/batches.service';
-import { daysBetween } from '../herd/days';
+import { daysBetween } from '../common/days';
 import { PrismaService } from '../prisma/prisma.service';
 import { FeedRegistry } from './feed-source';
 import { dailyGain, feedConversion } from './indicators';
-
-export interface BatchPerformance {
-  ageDays: number;
-  alive: number;
-  deaths: number;
-  mortalityRate: number | null;
-  firstWeightG: number | null;
-  lastWeightG: number | null;
-  dailyGainG: number | null;
-  feedKg: number;
-  feedConversion: number | null;
-  feedCost: number;
-}
 
 @Injectable()
 export class IndicatorsService implements OnModuleInit {

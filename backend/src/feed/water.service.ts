@@ -3,7 +3,8 @@ import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
 import type { AuditAction } from '../generated/prisma/enums';
-import { formatDay, requireDay } from '../herd/days';
+import { formatDay, requireDay } from '../common/days';
+import { DUPLICATE } from '../common/messages';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
@@ -30,7 +31,6 @@ export interface WaterItem {
   liters: number;
 }
 
-export const WATER_DUPLICATE = 'Un enregistrement existe déjà pour cette date';
 const NOT_FOUND = 'Enregistrement introuvable';
 const SORTABLE = ['date', 'liters'];
 
@@ -161,7 +161,7 @@ export class WaterService {
           },
           include,
         }),
-      WATER_DUPLICATE,
+      DUPLICATE,
     );
     await this.log(tx, ctx, 'CREATE', created);
   }
@@ -184,7 +184,7 @@ export class WaterService {
             include,
             relationLoadStrategy: 'join',
           }),
-        WATER_DUPLICATE,
+        DUPLICATE,
       );
       await this.log(tx, ctx, 'CREATE', created);
       return toItem(created);
@@ -210,7 +210,7 @@ export class WaterService {
             include,
             relationLoadStrategy: 'join',
           }),
-        WATER_DUPLICATE,
+        DUPLICATE,
       );
       await this.log(tx, ctx, 'UPDATE', updated, toItem(before));
       return toItem(updated);

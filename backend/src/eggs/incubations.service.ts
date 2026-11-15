@@ -9,8 +9,16 @@ import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
 import type { IncubationStatus } from '../generated/prisma/enums';
 import { BatchesService } from '../herd/batches.service';
-import { assertNotFuture, formatDay, requireDay } from '../herd/days';
-import { hatchRate, ratio } from '../indicators/indicators';
+import {
+  addDays,
+  assertNotFuture,
+  formatDay,
+  formatDayOrNull,
+  requireDay,
+} from '../common/days';
+import { lockRow } from '../common/lock-row';
+import { nextNumberedCode } from '../common/next-code';
+import { fertilityRate, hatchRate } from '../indicators/indicators';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -27,7 +35,6 @@ type Tx = Prisma.TransactionClient;
 type Row = Prisma.IncubationGetPayload<object>;
 
 const INCUBATION_DAYS = 21;
-const MS_PER_DAY = 86_400_000;
 const NOT_FOUND = 'Incubation introuvable';
 export const FINISHED = 'Cette incubation est terminée';
 const BEFORE_START = "La date est antérieure au début de l'incubation";
@@ -61,12 +68,6 @@ const include = {
 } satisfies Prisma.IncubationInclude;
 type RowWithSource = Prisma.IncubationGetPayload<{ include: typeof include }>;
 
-/** fertile eggs / eggs set × 100 (indicators has no dedicated function; `ratio` is its shared rounding). */
-const fertilityRate = (fertile: number | null, eggsSet: number) =>
-  fertile === null ? null : ratio(fertile * 100, eggsSet);
-
-const day = (d: Date | null) => (d ? formatDay(d) : null);
-
 function toItem(r: RowWithSource): IncubationItem {
   return {
     id: r.id,
@@ -76,11 +77,11 @@ function toItem(r: RowWithSource): IncubationItem {
     incubator: r.incubator,
     startDate: formatDay(r.startDate),
     eggsSet: r.eggsSet,
-    candlingDate: day(r.candlingDate),
+    candlingDate: formatDayOrNull(r.candlingDate),
     fertileEggs: r.fertileEggs,
     expectedHatchDate: formatDay(r.expectedHatchDate),
     status: r.status,
-    hatchDate: day(r.hatchDate),
+    hatchDate: formatDayOrNull(r.hatchDate),
     chicksHatched: r.chicksHatched,
     chickBatchId: r.chickBatchId,
     fertilityRate: fertilityRate(r.fertileEggs, r.eggsSet),
@@ -89,8 +90,7 @@ function toItem(r: RowWithSource): IncubationItem {
   };
 }
 
-const expectedHatch = (start: Date) =>
-  new Date(start.getTime() + INCUBATION_DAYS * MS_PER_DAY);
+const expectedHatch = (start: Date) => addDays(start, INCUBATION_DAYS);
 
 @Injectable()
 export class IncubationsService {
@@ -135,7 +135,7 @@ export class IncubationsService {
 
   /** Takes the row lock that serialises changes to one incubation; 404 outside the caller's farms. */
   private async lock(tx: Tx, ctx: RequestContext, id: string) {
-    await tx.$queryRaw`SELECT id FROM "Incubation" WHERE id = ${id} AND "farmId" = ANY(${ctx.farmIds}::text[]) FOR NO KEY UPDATE`;
+    await lockRow(tx, 'Incubation', id, ctx.farmIds);
     const row = await tx.incubation.findFirst({
       where: { id, farmId: { in: ctx.farmIds } },
       include,
@@ -156,19 +156,20 @@ export class IncubationsService {
     if (!batch) throw new BadRequestException('Lot source invalide');
   }
 
-  private async nextCode(tx: Tx, farmId: string, start: Date) {
+  private nextCode(tx: Tx, farmId: string, start: Date) {
     const prefix = `INC-${start.getUTCFullYear()}-`;
-    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`incubation-code:${farmId}:${prefix}`}, 0))`;
-    const rows = await tx.incubation.findMany({
-      where: { farmId, code: { startsWith: prefix } },
-      select: { code: true },
+    return nextNumberedCode(tx, {
+      lockKey: `incubation-code:${farmId}:${prefix}`,
+      prefix,
+      width: 2,
+      existing: async () =>
+        (
+          await tx.incubation.findMany({
+            where: { farmId, code: { startsWith: prefix } },
+            select: { code: true },
+          })
+        ).map((r) => r.code),
     });
-    let max = 0;
-    for (const { code } of rows) {
-      const rest = code.slice(prefix.length);
-      if (/^\d+$/.test(rest)) max = Math.max(max, Number(rest));
-    }
-    return `${prefix}${String(max + 1).padStart(2, '0')}`;
   }
 
   private log(

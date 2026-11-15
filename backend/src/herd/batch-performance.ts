@@ -1,7 +1,19 @@
 import { Injectable } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 
-export type PerformanceMetrics = object;
+/** The `performance` block of `GET /batches/:id`. */
+export interface BatchPerformance {
+  ageDays: number;
+  alive: number;
+  deaths: number;
+  mortalityRate: number | null;
+  firstWeightG: number | null;
+  lastWeightG: number | null;
+  dailyGainG: number | null;
+  feedKg: number;
+  feedConversion: number | null;
+  feedCost: number;
+}
 
 /**
  * Computes the `performance` block of `GET /batches/:id`. The indicators module
@@ -11,7 +23,7 @@ export interface BatchPerformanceProvider {
   batchPerformance(
     ctx: RequestContext,
     batchId: string,
-  ): Promise<PerformanceMetrics>;
+  ): Promise<BatchPerformance>;
 }
 
 @Injectable()
@@ -26,7 +38,7 @@ export class BatchPerformanceRegistry {
   async get(
     ctx: RequestContext,
     batchId: string,
-  ): Promise<PerformanceMetrics | null> {
+  ): Promise<BatchPerformance | null> {
     return this.provider ? this.provider.batchPerformance(ctx, batchId) : null;
   }
 }

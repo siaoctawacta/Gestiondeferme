@@ -1,3 +1,4 @@
+import { nextNumberedCode } from '../common/next-code';
 import type { Prisma } from '../generated/prisma/client';
 import type { BatchType } from '../generated/prisma/enums';
 
@@ -26,15 +27,16 @@ export async function nextBatchCode(
 ): Promise<string> {
   const { text, yearly } = PREFIX[type];
   const prefix = yearly ? `${text}-${entryDate.getUTCFullYear()}-` : `${text}-`;
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`batch-code:${farmId}:${prefix}`}, 0))`;
-  const rows = await tx.animalBatch.findMany({
-    where: { farmId, code: { startsWith: prefix } },
-    select: { code: true },
+  return nextNumberedCode(tx, {
+    lockKey: `batch-code:${farmId}:${prefix}`,
+    prefix,
+    width: 2,
+    existing: async () =>
+      (
+        await tx.animalBatch.findMany({
+          where: { farmId, code: { startsWith: prefix } },
+          select: { code: true },
+        })
+      ).map((r) => r.code),
   });
-  let max = 0;
-  for (const { code } of rows) {
-    const rest = code.slice(prefix.length);
-    if (/^\d+$/.test(rest)) max = Math.max(max, Number(rest));
-  }
-  return `${prefix}${String(max + 1).padStart(2, '0')}`;
 }

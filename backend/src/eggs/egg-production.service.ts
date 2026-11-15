@@ -11,7 +11,8 @@ import {
   assertNotFuture,
   formatDay,
   requireDay,
-} from '../herd/days';
+} from '../common/days';
+import { DUPLICATE } from '../common/messages';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import { breakageRate, layingRate } from '../indicators/indicators';
 import type { ExportColumn } from '../listing/export';
@@ -60,7 +61,6 @@ export const EGG_COLUMNS: ExportColumn<EggProductionItem>[] = [
 
 const SORTABLE = ['date', 'collected'];
 export const NO_EGGS = "Ce lot ne produit pas d'œufs";
-export const DUPLICATE = 'Un enregistrement existe déjà pour cette date';
 const OVER =
   'Les œufs cassés, déclassés et mis en incubation dépassent les œufs collectés';
 const NOT_FOUND = 'Enregistrement introuvable';

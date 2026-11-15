@@ -12,7 +12,9 @@ import type {
   AnimalSex,
   AnimalStatus,
 } from '../generated/prisma/enums';
-import { assertNotFuture, formatDay, requireDay } from '../herd/days';
+import { assertNotFuture, formatDay, requireDay } from '../common/days';
+import { lockRow } from '../common/lock-row';
+import { EXITED } from '../common/messages';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import { OccupationRegistry, OccupationSource } from '../herd/occupation';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
@@ -31,7 +33,6 @@ import type {
 type Tx = Prisma.TransactionClient;
 
 export const NOT_FOUND = 'Animal introuvable';
-export const EXITED = 'Cet animal est sorti du cheptel';
 export const PREGNANT_OR_NURSING = 'Cette truie est gestante ou allaitante';
 const BEFORE_BIRTH = "La date est antérieure à la naissance de l'animal";
 const HISTORY = 'Cet animal a un historique ; déclarez sa sortie plutôt';
@@ -231,7 +232,7 @@ export class AnimalsService implements OccupationSource {
 
   /** Row lock serialising every change to one animal; 404 outside the caller's farms. */
   private async lock(tx: Tx, ctx: RequestContext, id: string): Promise<Row> {
-    await tx.$queryRaw`SELECT id FROM "Animal" WHERE id = ${id} AND "farmId" = ANY(${ctx.farmIds}::text[]) FOR NO KEY UPDATE`;
+    await lockRow(tx, 'Animal', id, ctx.farmIds);
     return this.load(tx, ctx, id);
   }
 
@@ -467,7 +468,12 @@ export class AnimalsService implements OccupationSource {
       }
       const [before] = await this.toItems([row], tx);
       if (dto.reason === 'MORT') {
-        await tx.$queryRaw`SELECT id FROM "BreedingRecord" WHERE "sowId" = ${id} AND status = 'GESTATION' ORDER BY id FOR NO KEY UPDATE`;
+        const gestations = await tx.breedingRecord.findMany({
+          where: { sowId: id, status: 'GESTATION' },
+          select: { id: true },
+          orderBy: { id: 'asc' },
+        });
+        for (const g of gestations) await lockRow(tx, 'BreedingRecord', g.id);
         await tx.breedingRecord.updateMany({
           where: { sowId: id, status: 'GESTATION' },
           data: { status: 'ECHEC', failureDate: date },

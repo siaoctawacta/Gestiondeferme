@@ -1,7 +1,7 @@
 import type { RequestContext } from '../../access/decorators';
 import type { Species } from '../../generated/prisma/enums';
 import { speciesModule } from '../../herd/species';
-import { daysBetween, today } from '../../herd/days';
+import { signedDaysBetween, today } from '../../common/days';
 import { mortalityRate, ratio } from '../indicators';
 import type { AlertItem, AlertRule, AlertSettings } from './alert.types';
 
@@ -111,10 +111,7 @@ export function farrowingAlerts(
   const start = today(now);
   for (const r of records) {
     const due = new Date(r.expectedFarrowingDate);
-    const days =
-      due.getTime() < start.getTime()
-        ? -daysBetween(due, start)
-        : daysBetween(start, due);
+    const days = signedDaysBetween(start, due);
     const base = {
       key: `farrowing:${r.id}`,
       title: `Mise bas ${r.sowTag}`,

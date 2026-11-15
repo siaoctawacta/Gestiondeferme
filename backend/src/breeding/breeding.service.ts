@@ -9,10 +9,21 @@ import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
 import type { BreedingStatus } from '../generated/prisma/enums';
 import { BatchesService } from '../herd/batches.service';
-import { assertNotFuture, formatDay, requireDay, today } from '../herd/days';
+import {
+  addDays,
+  assertNotFuture,
+  formatDay,
+  formatDayOrNull,
+  requireDay,
+  signedDaysBetween,
+  today,
+} from '../common/days';
+import { lockRow } from '../common/lock-row';
+import { EXITED } from '../common/messages';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import type { ExportColumn } from '../listing/export';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
+import { ratio } from '../indicators/indicators';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
@@ -26,12 +37,10 @@ import type {
 
 type Tx = Prisma.TransactionClient;
 
-const MS_PER_DAY = 86_400_000;
 const DEFAULT_GESTATION_DAYS = 114;
 const NOT_FOUND = 'Saillie introuvable';
 export const STEP_DONE = 'Cette étape a déjà été enregistrée';
 const NOT_PREGNANT = "Cette saillie n'est plus en gestation";
-const EXITED = 'Cet animal est sorti du cheptel';
 const BEFORE_SERVICE = 'La date est antérieure à la saillie';
 const STATUSES: BreedingStatus[] = [
   'GESTATION',
@@ -94,8 +103,6 @@ export const BREEDING_COLUMNS: ExportColumn<BreedingItem>[] = [
   { header: 'Mise bas prévue', value: (b) => b.expectedFarrowingDate },
 ];
 
-const day = (d: Date | null) => (d ? formatDay(d) : null);
-
 export function toItem(r: Row): BreedingItem {
   return {
     id: r.id,
@@ -107,30 +114,28 @@ export function toItem(r: Row): BreedingItem {
     semenLabel: r.semenLabel,
     serviceDate: formatDay(r.serviceDate),
     expectedFarrowingDate: formatDay(r.expectedFarrowingDate),
-    farrowingDate: day(r.farrowingDate),
+    farrowingDate: formatDayOrNull(r.farrowingDate),
     bornTotal: r.bornTotal,
     bornAlive: r.bornAlive,
     stillborn: r.stillborn,
     litterBatchId: r.litterBatchId,
-    weaningDate: day(r.weaningDate),
+    weaningDate: formatDayOrNull(r.weaningDate),
     weanedCount: r.weanedCount,
-    failureDate: day(r.failureDate),
+    failureDate: formatDayOrNull(r.failureDate),
     note: r.note,
     status: r.status,
     daysToFarrowing:
       r.status === 'GESTATION'
-        ? Math.round(
-            (r.expectedFarrowingDate.getTime() - today().getTime()) /
-              MS_PER_DAY,
-          )
+        ? signedDaysBetween(today(), r.expectedFarrowingDate)
         : null,
   };
 }
 
 const average = (values: number[]): number | null =>
-  values.length === 0
-    ? null
-    : Math.round((values.reduce((a, b) => a + b, 0) / values.length) * 10) / 10;
+  ratio(
+    values.reduce((a, b) => a + b, 0),
+    values.length,
+  );
 
 @Injectable()
 export class BreedingService {
@@ -221,10 +226,6 @@ export class BreedingService {
       : DEFAULT_GESTATION_DAYS;
   }
 
-  private expected(serviceDate: Date, days: number): Date {
-    return new Date(serviceDate.getTime() + days * MS_PER_DAY);
-  }
-
   /** 400 unless the new service follows every step of the sow's other records. */
   private async assertCycleOrder(
     tx: Tx,
@@ -267,8 +268,8 @@ export class BreedingService {
       select: { sowId: true },
     });
     if (!pre) throw new NotFoundException(NOT_FOUND);
-    await tx.$queryRaw`SELECT id FROM "Animal" WHERE id = ${pre.sowId} FOR NO KEY UPDATE`;
-    await tx.$queryRaw`SELECT id FROM "BreedingRecord" WHERE id = ${id} FOR NO KEY UPDATE`;
+    await lockRow(tx, 'Animal', pre.sowId);
+    await lockRow(tx, 'BreedingRecord', id);
     const row = await tx.breedingRecord.findFirst({
       where: { id, farmId: { in: ctx.farmIds } },
       include,
@@ -343,7 +344,7 @@ export class BreedingService {
           );
         }
       }
-      await tx.$queryRaw`SELECT id FROM "Animal" WHERE id = ${dto.sowId} AND "farmId" = ${farmId} FOR NO KEY UPDATE`;
+      await lockRow(tx, 'Animal', dto.sowId, [farmId]);
       const sow = await tx.animal.findFirst({
         where: { id: dto.sowId, farmId },
       });
@@ -365,7 +366,7 @@ export class BreedingService {
       await this.assertCycleOrder(tx, sow.id, serviceDate);
       if (dto.boarId) {
         // Keeps the boar from leaving the herd while this record points at him.
-        await tx.$queryRaw`SELECT id FROM "Animal" WHERE id = ${dto.boarId} AND "farmId" = ${farmId} FOR NO KEY UPDATE`;
+        await lockRow(tx, 'Animal', dto.boarId, [farmId]);
         const boar = await tx.animal.findFirst({
           where: { id: dto.boarId, farmId, sex: 'M', status: 'ACTIF' },
           select: { id: true },
@@ -395,7 +396,7 @@ export class BreedingService {
               boarId: dto.boarId,
               semenLabel: dto.semenLabel,
               serviceDate,
-              expectedFarrowingDate: this.expected(serviceDate, days),
+              expectedFarrowingDate: addDays(serviceDate, days),
             },
             include,
           }),
@@ -428,7 +429,7 @@ export class BreedingService {
         where: { id },
         data: {
           serviceDate,
-          expectedFarrowingDate: this.expected(serviceDate, days),
+          expectedFarrowingDate: addDays(serviceDate, days),
         },
       });
       const before = toItem(row);

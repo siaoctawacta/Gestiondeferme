@@ -47,6 +47,9 @@ export const feedConversion = (feedKg: Num, gainKg: Num) =>
 export const layingRate = (eggs: Num, hens: Num) => percent(eggs, hens);
 export const breakageRate = (broken: Num, collected: Num) =>
   percent(broken, collected);
+/** fertile eggs / eggs set × 100. */
+export const fertilityRate = (fertile: Num, eggsSet: Num) =>
+  percent(fertile, eggsSet);
 export const hatchRate = (chicks: Num, eggsSet: Num) =>
   percent(chicks, eggsSet);
 

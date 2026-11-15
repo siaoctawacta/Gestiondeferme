@@ -24,6 +24,10 @@ export function requireDay(value: string): Date {
 export const formatDay = (date: Date): string =>
   date.toISOString().slice(0, 10);
 
+/** `formatDay` for an optional date. */
+export const formatDayOrNull = (date: Date | null): string | null =>
+  date ? formatDay(date) : null;
+
 /** The server's current UTC calendar day. */
 export function today(now: Date = new Date()): Date {
   return new Date(
@@ -41,6 +45,10 @@ export function assertNotFuture(date: Date): void {
 export function daysBetween(from: Date, to: Date = today()): number {
   return Math.max(0, Math.round((to.getTime() - from.getTime()) / MS_PER_DAY));
 }
+
+/** Whole days from `a` to `b`; negative when `b` is before `a`. */
+export const signedDaysBetween = (a: Date, b: Date): number =>
+  Math.round((b.getTime() - a.getTime()) / MS_PER_DAY);
 
 export function assertNotBeforeEntry(entryDate: Date, date: Date): void {
   if (date.getTime() < entryDate.getTime()) {

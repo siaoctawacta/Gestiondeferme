@@ -1,3 +1,4 @@
+import { nextNumberedCode } from '../common/next-code';
 import type { Prisma } from '../generated/prisma/client';
 import type { AnimalCategory } from '../generated/prisma/enums';
 
@@ -19,15 +20,16 @@ export async function nextAnimalTag(
   category: AnimalCategory,
 ): Promise<string> {
   const prefix = `${PREFIX[category]}-`;
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`animal-tag:${farmId}:${prefix}`}, 0))`;
-  const rows = await tx.animal.findMany({
-    where: { farmId, tag: { startsWith: prefix } },
-    select: { tag: true },
+  return nextNumberedCode(tx, {
+    lockKey: `animal-tag:${farmId}:${prefix}`,
+    prefix,
+    width: 3,
+    existing: async () =>
+      (
+        await tx.animal.findMany({
+          where: { farmId, tag: { startsWith: prefix } },
+          select: { tag: true },
+        })
+      ).map((r) => r.tag),
   });
-  let max = 0;
-  for (const { tag } of rows) {
-    const rest = tag.slice(prefix.length);
-    if (/^\d+$/.test(rest)) max = Math.max(max, Number(rest));
-  }
-  return `${prefix}${String(max + 1).padStart(3, '0')}`;
 }

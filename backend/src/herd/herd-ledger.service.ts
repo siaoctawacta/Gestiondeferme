@@ -4,6 +4,7 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import { lockRow } from '../common/lock-row';
 import type {
   AnimalBatch,
   BatchEvent,
@@ -11,7 +12,7 @@ import type {
 } from '../generated/prisma/client';
 import type { BatchEventType } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
-import { assertNotFuture, BEFORE_ENTRY } from './days';
+import { assertNotFuture, BEFORE_ENTRY } from '../common/days';
 import { OccupationRegistry, OccupationSource } from './occupation';
 
 type Tx = Prisma.TransactionClient;
@@ -126,15 +127,7 @@ export class HerdLedgerService implements OccupationSource {
     batchId: string,
     farmIds?: string[],
   ): Promise<AnimalBatch> {
-    // NO KEY UPDATE serialises writers of one batch against each other but not
-    // against the FOR KEY SHARE lock a referencing insert takes on this row,
-    // so a caller that inserted a child row first cannot deadlock here.
-    // The farm scope is part of the locking query: another farm's row is never locked.
-    if (farmIds) {
-      await tx.$queryRaw`SELECT id FROM "AnimalBatch" WHERE id = ${batchId} AND "farmId" = ANY(${farmIds}::text[]) FOR NO KEY UPDATE`;
-    } else {
-      await tx.$queryRaw`SELECT id FROM "AnimalBatch" WHERE id = ${batchId} FOR NO KEY UPDATE`;
-    }
+    await lockRow(tx, 'AnimalBatch', batchId, farmIds);
     const batch = await tx.animalBatch.findFirst({
       where: { id: batchId, ...(farmIds ? { farmId: { in: farmIds } } : {}) },
     });
@@ -144,7 +137,7 @@ export class HerdLedgerService implements OccupationSource {
 
   /** Same lock on the building row, taken before an occupation check so two batches cannot overfill it together. */
   async lockBuilding(tx: Tx, buildingId: string): Promise<void> {
-    await tx.$queryRaw`SELECT id FROM "Building" WHERE id = ${buildingId} FOR NO KEY UPDATE`;
+    await lockRow(tx, 'Building', buildingId);
   }
 
   assertOpen(batch: Pick<AnimalBatch, 'status'>): void {

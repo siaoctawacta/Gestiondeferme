@@ -11,7 +11,7 @@ import type { ListQueryDto } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
 import { PrismaService } from '../prisma/prisma.service';
 import { BatchesService, BatchItem } from './batches.service';
-import { formatDay, requireDay } from './days';
+import { formatDay, requireDay } from '../common/days';
 import type {
   CreateEventDto,
   TransferDto,

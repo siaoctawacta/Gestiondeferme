@@ -1,6 +1,6 @@
 import { applyDecorators } from '@nestjs/common';
 import { Matches, ValidateBy } from 'class-validator';
-import { parseDay } from '../days';
+import { parseDay } from '../../common/days';
 
 const MESSAGE = 'Date invalide (AAAA-MM-JJ)';
 

@@ -1,6 +1,6 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { RequestContext } from '../../access/decorators';
-import { addDays, formatDay, today } from '../../herd/days';
+import { addDays, formatDay, today } from '../../common/days';
 import { HerdLedgerService } from '../../herd/herd-ledger.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AlertsRegistry } from './alerts-registry';

@@ -17,7 +17,7 @@ import {
 } from 'class-validator';
 import { Trim } from '../../listing/list-helpers';
 import { ListQueryDto } from '../../listing/list-query.dto';
-import { QueryBool } from './feed-product.dto';
+import { QueryBool } from '../../listing/query-bool';
 
 const SPECIES = ['AVICOLE', 'PORCIN'] as const;
 const SPECIES_MSG = "L'espèce est invalide";

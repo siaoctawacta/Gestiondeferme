@@ -1,5 +1,4 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { Transform } from 'class-transformer';
 import {
   IsBoolean,
   IsEnum,
@@ -13,18 +12,13 @@ import {
 } from 'class-validator';
 import { Trim } from '../../listing/list-helpers';
 import { ListQueryDto } from '../../listing/list-query.dto';
+import { QueryBool } from '../../listing/query-bool';
 
 export const FEED_KINDS = ['MATIERE_PREMIERE', 'ALIMENT_COMPLET'] as const;
 const COST = 'Le coût doit être un nombre positif ou nul (2 décimales au plus)';
 /** With `MAX_KG` below, keeps `quantityKg × unitCost` inside Decimal(14,2). */
 export const MAX_UNIT_COST = 999_999;
 const KIND = "Le type d'aliment est invalide";
-
-/** `?active=true|false` → boolean (anything else fails validation). */
-export const QueryBool = () =>
-  Transform(({ value }: { value: unknown }) =>
-    value === 'true' ? true : value === 'false' ? false : value,
-  );
 
 export class FeedProductQueryDto extends ListQueryDto {
   @ApiPropertyOptional({ enum: FEED_KINDS })

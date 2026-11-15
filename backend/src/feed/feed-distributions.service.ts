@@ -6,7 +6,7 @@ import {
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
-import { formatDay, requireDay } from '../herd/days';
+import { formatDay, requireDay } from '../common/days';
 import type { ExportColumn } from '../listing/export';
 import { containsInsensitive } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';

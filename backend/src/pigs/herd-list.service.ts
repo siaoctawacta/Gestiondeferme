@@ -5,7 +5,7 @@ import type {
   AnimalStatus,
   BatchType,
 } from '../generated/prisma/enums';
-import { formatDay } from '../herd/days';
+import { formatDay } from '../common/days';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import type { ExportColumn } from '../listing/export';
 import { PrismaService } from '../prisma/prisma.service';

@@ -7,7 +7,9 @@ import {
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { Heat } from '../generated/prisma/client';
-import { assertNotFuture, formatDay, requireDay } from '../herd/days';
+import { assertNotFuture, formatDay, requireDay } from '../common/days';
+import { lockRow } from '../common/lock-row';
+import { EXITED } from '../common/messages';
 import type { ListQueryDto } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
 import { PrismaService } from '../prisma/prisma.service';
@@ -69,13 +71,13 @@ export class HeatsService {
     dto: CreateHeatDto,
   ): Promise<HeatItem> {
     return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Animal" WHERE id = ${animalId} AND "farmId" = ANY(${ctx.farmIds}::text[]) FOR NO KEY UPDATE`;
+      await lockRow(tx, 'Animal', animalId, ctx.farmIds);
       const animal = await this.animal(ctx, animalId, tx);
       if (animal.sex !== 'F') {
         throw new BadRequestException('Seules les femelles ont des chaleurs');
       }
       if (!['ACTIF', 'GESTANTE', 'ALLAITANTE'].includes(animal.status)) {
-        throw new ConflictException('Cet animal est sorti du cheptel');
+        throw new ConflictException(EXITED);
       }
       const date = requireDay(dto.date);
       assertNotFuture(date);
@@ -103,7 +105,7 @@ export class HeatsService {
 
   remove(ctx: RequestContext, animalId: string, heatId: string): Promise<void> {
     return this.prisma.$transaction(async (tx) => {
-      await tx.$queryRaw`SELECT id FROM "Animal" WHERE id = ${animalId} AND "farmId" = ANY(${ctx.farmIds}::text[]) FOR NO KEY UPDATE`;
+      await lockRow(tx, 'Animal', animalId, ctx.farmIds);
       const animal = await this.animal(ctx, animalId, tx);
       const heat = await tx.heat.findFirst({
         where: { id: heatId, animalId, farmId: { in: ctx.farmIds } },

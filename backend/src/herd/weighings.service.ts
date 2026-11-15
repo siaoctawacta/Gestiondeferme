@@ -11,7 +11,7 @@ import {
   assertNotFuture,
   formatDay,
   requireDay,
-} from './days';
+} from '../common/days';
 import type { CreateWeighingDto, UpdateWeighingDto } from './dto/weighing.dto';
 import { auditHerd } from './herd-audit';
 import { HerdLedgerService } from './herd-ledger.service';
