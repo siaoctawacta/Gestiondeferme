@@ -12,7 +12,9 @@ import { HealthController } from './health/health.controller';
 import { IndicatorsModule } from './indicators/indicators.module';
 import { PigsModule } from './pigs/pigs.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { PurchasesModule } from './purchases/purchases.module';
 import { StockModule } from './stock/stock.module';
+import { SuppliersModule } from './suppliers/suppliers.module';
 
 @Module({
   imports: [
@@ -27,6 +29,8 @@ import { StockModule } from './stock/stock.module';
     PigsModule,
     BreedingModule,
     StockModule,
+    SuppliersModule,
+    PurchasesModule,
     IndicatorsModule,
     DashboardModule,
   ],

@@ -1,7 +1,7 @@
 generator client {
-  provider     = "prisma-client"
-  output       = "../src/generated/prisma"
-  moduleFormat = "cjs"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "cjs"
   // relationJoins: the feed and water services pass `relationLoadStrategy: 'join'`
   // to load a row with its batch/building/product names in one query. With the
   // flag on, Prisma's default relation load strategy may itself be `join`, so
@@ -135,6 +135,8 @@ model Organization {
   feedProducts FeedProduct[]
   feedFormulas FeedFormula[]
   stockItems   StockItem[]
+  suppliers    Supplier[]
+  purchases    Purchase[]
 }
 
 model Farm {
@@ -165,6 +167,8 @@ model Farm {
   stockBatches      StockBatch[]
   stockMovements    StockMovement[]
   inventories       InventorySession[]
+  purchases         Purchase[]
+  supplierPayments  SupplierPayment[]
 }
 
 model Site {
@@ -245,6 +249,12 @@ model User {
   stockMovements       StockMovement[]
   inventoriesCreated   InventorySession[] @relation("InventoryCreatedBy")
   inventoriesValidated InventorySession[] @relation("InventoryValidatedBy")
+  purchasesRequested   Purchase[]         @relation("PurchaseRequestedBy")
+  purchasesValidated   Purchase[]         @relation("PurchaseValidatedBy")
+  purchasesOrdered     Purchase[]         @relation("PurchaseOrderedBy")
+  purchasesReceived    Purchase[]         @relation("PurchaseReceivedBy")
+  purchasesCancelled   Purchase[]         @relation("PurchaseCancelledBy")
+  supplierPayments     SupplierPayment[]
 }
 
 model UserFarm {
@@ -746,6 +756,7 @@ model StockItem {
   movements      StockMovement[]
   inventoryLines InventoryLine[]
   feedProduct    FeedProduct?
+  purchaseItems  PurchaseItem[]
 
   @@unique([organizationId, name])
 }
@@ -855,4 +866,124 @@ model InventoryLine {
 
   @@unique([sessionId, stockItemId])
   @@index([stockItemId])
+}
+
+enum PurchaseStatus {
+  DEMANDE
+  VALIDEE
+  COMMANDEE
+  RECUE
+  PAYEE
+  ANNULEE
+}
+
+enum PaymentMethod {
+  ESPECES
+  VIREMENT
+  MOBILE_MONEY
+  CHEQUE
+}
+
+/// Organisation master data (not farm-scoped).
+model Supplier {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  name           String
+  products       String?
+  phone          String?
+  email          String?
+  address        String?
+  active         Boolean      @default(true)
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  purchases      Purchase[]
+
+  @@unique([organizationId, name])
+}
+
+/// A purchase request (DA-NNNN) that becomes an order (BC-NNNN), is received into the stock ledger, then paid.
+model Purchase {
+  id             String            @id @default(cuid())
+  organizationId String
+  organization   Organization      @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  farmId         String
+  farm           Farm              @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  supplierId     String
+  supplier       Supplier          @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  /// DA-NNNN, assigned at creation.
+  reference      String
+  /// BC-NNNN, assigned at order.
+  orderNumber    String?
+  date           DateTime          @db.Date
+  status         PurchaseStatus    @default(DEMANDE)
+  requestedById  String
+  requestedBy    User              @relation("PurchaseRequestedBy", fields: [requestedById], references: [id], onDelete: Restrict)
+  validatedById  String?
+  validatedBy    User?             @relation("PurchaseValidatedBy", fields: [validatedById], references: [id], onDelete: Restrict)
+  validatedAt    DateTime?
+  orderedById    String?
+  orderedBy      User?             @relation("PurchaseOrderedBy", fields: [orderedById], references: [id], onDelete: Restrict)
+  orderedAt      DateTime?
+  receivedById   String?
+  receivedBy     User?             @relation("PurchaseReceivedBy", fields: [receivedById], references: [id], onDelete: Restrict)
+  receivedAt     DateTime?
+  receivedDate   DateTime?         @db.Date
+  cancelledById  String?
+  cancelledBy    User?             @relation("PurchaseCancelledBy", fields: [cancelledById], references: [id], onDelete: Restrict)
+  cancelledAt    DateTime?
+  cancelReason   String?
+  note           String?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  items          PurchaseItem[]
+  payments       SupplierPayment[]
+
+  @@unique([organizationId, reference])
+  @@unique([organizationId, orderNumber])
+  @@index([farmId])
+  @@index([supplierId])
+  @@index([requestedById])
+  @@index([validatedById])
+  @@index([orderedById])
+  @@index([receivedById])
+  @@index([cancelledById])
+  @@index([farmId, status])
+}
+
+model PurchaseItem {
+  id               String    @id @default(cuid())
+  purchaseId       String
+  purchase         Purchase  @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  stockItemId      String
+  stockItem        StockItem @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
+  /// Order of the line on the document.
+  position         Int
+  quantity         Decimal   @db.Decimal(12, 2)
+  unitPrice        Decimal   @db.Decimal(12, 2)
+  receivedQuantity Decimal?  @db.Decimal(12, 2)
+  lotNumber        String?
+  expiryDate       DateTime? @db.Date
+
+  @@unique([purchaseId, position])
+  @@index([stockItemId])
+}
+
+model SupplierPayment {
+  id          String        @id @default(cuid())
+  farmId      String
+  farm        Farm          @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  purchaseId  String
+  purchase    Purchase      @relation(fields: [purchaseId], references: [id], onDelete: Restrict)
+  date        DateTime      @db.Date
+  amount      Decimal       @db.Decimal(14, 2)
+  method      PaymentMethod
+  reference   String?
+  createdById String
+  createdBy   User          @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime      @default(now())
+
+  @@index([farmId])
+  @@index([purchaseId])
+  @@index([createdById])
 }
