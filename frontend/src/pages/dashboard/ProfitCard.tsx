@@ -1,4 +1,4 @@
-import { formatMoney } from '../../lib/format';
+import { formatMoney, signedMoney } from '../../lib/format';
 import { rateOrDash, type DashboardDto } from '../../lib/dashboard';
 
 const R = 70;
@@ -34,7 +34,7 @@ export function ProfitCard({ profit }: { profit: NonNullable<DashboardDto['profi
       <dl className="mt-auto space-y-1.5 text-sm">
         <div className="flex justify-between"><dt className="text-white/80">Chiffre d'affaires</dt><dd className="font-semibold">{formatMoney(profit.revenue)}</dd></div>
         <div className="flex justify-between"><dt className="text-white/80">Dépenses</dt><dd className="font-semibold">{formatMoney(profit.expenses)}</dd></div>
-        <div className="flex justify-between border-t border-white/25 pt-2"><dt className="text-white/80">Marge</dt><dd className="font-semibold">{formatMoney(profit.margin)}</dd></div>
+        <div className="flex justify-between border-t border-white/25 pt-2"><dt className="text-white/80">Marge</dt><dd className="font-semibold">{signedMoney(profit.margin)}</dd></div>
       </dl>
     </div>
   );

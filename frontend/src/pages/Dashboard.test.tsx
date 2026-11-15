@@ -42,9 +42,9 @@ const FULL = {
   feedDistributedKg: 1800,
   waterConsumedL: 4370,
   revenueVsExpenses: [
-    { activity: 'Avicole', revenue: 2050000, expenses: 1140000 },
-    { activity: 'Porcin', revenue: 1920000, expenses: 560000 },
-    { activity: 'Général', revenue: 0, expenses: 1135000 },
+    { activity: 'AVICOLE', revenue: 2050000, expenses: 1140000, margin: 910000 },
+    { activity: 'PORCIN', revenue: 1920000, expenses: 560000, margin: 1360000 },
+    { activity: 'GENERAL', revenue: 0, expenses: 1135000, margin: -1135000 },
   ],
   alerts: { total: 14, items: ALERT_ITEMS },
   upcomingTasks: [
@@ -63,9 +63,9 @@ const EMPTY = {
   feedDistributedKg: 0,
   waterConsumedL: 0,
   revenueVsExpenses: [
-    { activity: 'Avicole', revenue: 0, expenses: 0 },
-    { activity: 'Porcin', revenue: 0, expenses: 0 },
-    { activity: 'Général', revenue: 0, expenses: 0 },
+    { activity: 'AVICOLE', revenue: 0, expenses: 0, margin: 0 },
+    { activity: 'PORCIN', revenue: 0, expenses: 0, margin: 0 },
+    { activity: 'GENERAL', revenue: 0, expenses: 0, margin: 0 },
   ],
   alerts: { total: 0, items: [] },
   upcomingTasks: [],
@@ -153,32 +153,38 @@ describe('Dashboard', () => {
 });
 
 describe('Dashboard without finance access', () => {
-  it('renders neither the profitability card nor placeholder zeros when the API returns null', async () => {
-    mount(<Dashboard />, (u) => (u === '/api/dashboard' ? json(200, { ...FULL, profitability: null }) : undefined));
-    await screen.findByText('Bonjour 👋 — Ferme Kpalimé');
-    expect(screen.queryByText('Rentabilité du mois')).not.toBeInTheDocument();
-    expect(screen.queryByText("Chiffre d'affaires")).not.toBeInTheDocument();
-    expect(screen.queryByText('0 FCFA')).not.toBeInTheDocument();
-    // The egg chart takes the whole row instead of leaving a hole where the card was.
-    expect(screen.getByTestId('egg-chart-cell').className).toContain('lg:col-span-3');
-    expect(await screen.findByText('Recettes vs dépenses')).toBeInTheDocument();
-  });
+  const layout = (id: string) => screen.getByTestId(id).className;
 
-  it('renders no revenue chart when revenueVsExpenses is null, and the row closes up to two columns', async () => {
-    mount(<Dashboard />, (u) => (u === '/api/dashboard' ? json(200, { ...FULL, revenueVsExpenses: null }) : undefined));
+  it.each([
+    ['the card is null', { profitability: null }, 'lg:col-span-3', 'lg:grid-cols-3', true, false],
+    ['the chart is null', { revenueVsExpenses: null }, 'lg:col-span-2', 'lg:grid-cols-2', false, true],
+    ['both are null', { profitability: null, revenueVsExpenses: null }, 'lg:col-span-3', 'lg:grid-cols-2', true, true],
+  ])('closes the grid up when %s, with no placeholder and no /finance request', async (_name, over, eggSpan, rowCols, noCard, noChart) => {
+    mount(<Dashboard />, (u) => (u === '/api/dashboard' ? json(200, { ...FULL, ...over }) : undefined));
     await screen.findByText('Bonjour 👋 — Ferme Kpalimé');
-    expect(screen.queryByText('Recettes vs dépenses')).not.toBeInTheDocument();
-    expect(screen.getByText('Rentabilité du mois')).toBeInTheDocument();
-    const row = screen.getByTestId('farm-alerts-row');
-    expect(row.className).toContain('lg:grid-cols-2');
-    expect(row.className).not.toContain('lg:grid-cols-3');
+    expect(screen.queryByText('Rentabilité du mois') === null).toBe(noCard);
+    expect(screen.queryByText('Recettes vs dépenses') === null).toBe(noChart);
+    if (noCard) expect(screen.queryByText("Chiffre d'affaires")).not.toBeInTheDocument();
+    expect(screen.queryByText('0 FCFA')).not.toBeInTheDocument();
+    expect(layout('egg-chart-cell')).toContain(eggSpan);
+    expect(layout('farm-alerts-row')).toContain(rowCols);
+    if (noChart) expect(layout('farm-alerts-row')).not.toContain('lg:grid-cols-3');
+    else expect(layout('farm-alerts-row')).toContain('lg:grid-cols-3');
+    expect(urls.some((u) => u.includes('/finance'))).toBe(false);
   });
 
   it('keeps the three-column layout for a role that sees everything', async () => {
     mount(<Dashboard />, (u) => (u === '/api/dashboard' ? json(200, FULL) : undefined));
     await screen.findByText('Bonjour 👋 — Ferme Kpalimé');
-    expect(screen.getByTestId('egg-chart-cell').className).toContain('lg:col-span-2');
-    expect(screen.getByTestId('farm-alerts-row').className).toContain('lg:grid-cols-3');
+    expect(layout('egg-chart-cell')).toContain('lg:col-span-2');
+    expect(layout('farm-alerts-row')).toContain('lg:grid-cols-3');
+  });
+
+  it('makes no /finance request from the report and shows no activity placeholder while loading for a role without finance', async () => {
+    mount(<Reports />, (u) => (u === '/api/dashboard' ? (new Promise<Response>(() => {}) as unknown as Response) : undefined));
+    const busy = await screen.findByLabelText('Chargement');
+    expect(busy.querySelectorAll('.h-28')).toHaveLength(0);
+    expect(urls.some((u) => u.includes('/finance'))).toBe(false);
   });
 
   it('leaves the financial rows and the activity blocks out of the report', async () => {
@@ -228,7 +234,7 @@ describe('Reports', () => {
     expect(within(rows[12]).getByText('14')).toBeInTheDocument();
     expect(screen.getByText('Activité Avicole')).toBeInTheDocument();
     expect(screen.getByText('910 000 FCFA')).toBeInTheDocument();
-    expect(screen.getByText('-1 135 000 FCFA')).toBeInTheDocument();
+    expect(screen.getByText('−1 135 000 FCFA')).toBeInTheDocument();
     expect(screen.getByText('Recettes 2 050 000 FCFA · Dépenses 1 140 000 FCFA')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Imprimer/ })).toBeInTheDocument();
   });

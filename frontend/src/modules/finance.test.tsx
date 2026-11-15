@@ -8,6 +8,7 @@ import { setAccessToken, setFarmHeader } from '../lib/api';
 import { ModulePage } from '../components/module/ModulePage';
 import { todayIso } from '../lib/format';
 import { LotDetail } from '../pages/details/LotDetail';
+import { ModuleRoute } from '../pages/ModuleRoute';
 import { MODULES } from './registry';
 import './index';
 import { finance } from './finance';
@@ -32,18 +33,20 @@ const ENTRIES = [
   entry('m4', '2026-10-10', 'Vaccins & médicaments', 'DEPENSE', 'AVICOLE', 'SANTE', 120000),
   entry('m5', '2026-10-14', 'Aliment porc 2 t', 'DEPENSE', 'PORCIN', 'ALIMENT', 560000),
 ];
+const WITH_LOT = entry('m6', '2026-10-20', 'Transport poussins', 'DEPENSE', 'AVICOLE', 'TRANSPORT', 50000, { batchId: 'l1', batchCode: 'LC-2026-14', note: 'Camion' });
 const DERIVED = [
   entry('facture:i1:AVICOLE:VENTE_ANIMAUX', '2026-10-21', 'Facture FA-0310 — Restaurant Le Palmier', 'RECETTE', 'AVICOLE', 'VENTE_ANIMAUX', 1050000, { origin: 'FACTURE', sourceId: 'i1', editable: false }),
   entry('avoir:cn1:AVICOLE:VENTE_ANIMAUX', '2026-11-02', 'Avoir AV-0001 — Restaurant Le Palmier (FA-0310)', 'RECETTE', 'AVICOLE', 'VENTE_ANIMAUX', -105000, { origin: 'AVOIR', sourceId: 'cn1', editable: false }),
+  entry('lot:l1', '2026-09-20', 'Achat du lot LC-2026-14', 'DEPENSE', 'AVICOLE', 'ANIMAUX', 1500000, { origin: 'LOT', sourceId: 'l1', editable: false }),
   entry('achat:p1:ALIMENT', '2026-10-30', 'Achat BC-0142 — Agro Provende SA', 'DEPENSE', 'AVICOLE', 'ALIMENT', 930000, { origin: 'ACHAT', sourceId: 'p1', editable: false }),
 ];
 
 const SUMMARY = {
   from: '2026-10-01', to: '2026-10-31', revenue: 3970000, expenses: 2835000, margin: 1135000, marginPct: 29, receivables: 400000,
   byActivity: [
-    { activity: 'Avicole', revenue: 2050000, expenses: 1140000, margin: 910000 },
-    { activity: 'Porcin', revenue: 1920000, expenses: 560000, margin: 1360000 },
-    { activity: 'Général', revenue: 0, expenses: 1135000, margin: -1135000 },
+    { activity: 'AVICOLE', revenue: 2050000, expenses: 1140000, margin: 910000 },
+    { activity: 'PORCIN', revenue: 1920000, expenses: 560000, margin: 1360000 },
+    { activity: 'GENERAL', revenue: 0, expenses: 1135000, margin: -1135000 },
   ],
   byCategory: [
     { kind: 'DEPENSE', category: 'SALAIRES', label: 'Salaires', amount: 950000 },
@@ -78,10 +81,13 @@ const writes = () => calls.filter((c) => c.method !== 'GET' && !c.url.startsWith
 const fetchMock = vi.fn<typeof fetch>();
 const page = (items: unknown[], extra: object = {}) => json(200, { items, total: items.length, page: 1, pageSize: 25, ...extra });
 
-const COMPTABLE = { finance: ['read', 'create'], ventes: ['read'], achats: ['read'], lots: ['read'], porcs: ['read'] };
-const PROPRIETAIRE = { finance: ['read'], ventes: ['read'], lots: ['read'] };
+// The real grants of the accountant: no `lots`, no `porcs`.
+const COMPTABLE = {
+  finance: ['read', 'create', 'update', 'delete'], ventes: ['read', 'update', 'validate'], achats: ['read'], clients: ['read'], fournisseurs: ['read'], rapports: ['read'],
+};
+const PROPRIETAIRE = { finance: ['read'], ventes: ['read'], lots: ['read'], porcs: ['read'] };
 
-function mount(ui: React.ReactNode, { perms = COMPTABLE, farm, entries = [...ENTRIES, ...DERIVED], summary = SUMMARY }: { perms?: Record<string, string[]>; farm?: string; entries?: unknown[]; summary?: object } = {}) {
+function mount(ui: React.ReactNode, { perms = COMPTABLE, farm, entries = [...ENTRIES, WITH_LOT, ...DERIVED], summary = SUMMARY, route = '/' }: { perms?: Record<string, string[]>; farm?: string; entries?: unknown[]; summary?: object; route?: string } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
   fetchMock.mockImplementation(async (input, init) => {
     const call: Call = { method: init?.method ?? 'GET', url: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined };
@@ -96,15 +102,16 @@ function mount(ui: React.ReactNode, { perms = COMPTABLE, farm, entries = [...ENT
     if (url.startsWith('/api/finance/summary')) return json(200, summary);
     if (url === '/api/finance/lots/l1') return json(200, LOTS[0]);
     if (url.startsWith('/api/finance/lots')) return page(LOTS);
-    if (url.startsWith('/api/batches?') && url.includes('species=AVICOLE')) return page([{ id: 'l1', code: 'LC-2026-14' }]);
-    if (url.startsWith('/api/batches?') && url.includes('species=PORCIN')) return page([{ id: 'p1', code: 'PC-2026-03' }]);
+    if (url.startsWith('/api/finance/lot-options')) {
+      return json(200, { items: url.includes('activity=AVICOLE') ? [{ id: 'l1', label: 'LC-2026-14' }] : [{ id: 'p1', label: 'PC-2026-03' }] });
+    }
     if (/^\/api\/batches\/l1(\?|$)/.test(url)) return json(200, LOT_DETAIL);
     if (/^\/api\/batches\/l1\/(events|weighings)/.test(url)) return page([]);
     throw new Error(`unexpected ${call.method} ${url}`);
   });
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <MemoryRouter>
+      <MemoryRouter initialEntries={[route]}>
         <AuthProvider>{ui}</AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -168,10 +175,28 @@ describe('finance list', () => {
     }
     expect(invoice.getByRole('link', { name: 'Facture FA-0310 — Restaurant Le Palmier' })).toHaveAttribute('href', '/m/ventes/i1');
     expect(rowOf('Achat BC-0142 — Agro Provende SA').getByRole('link')).toHaveAttribute('href', '/m/achats/p1');
+    // The accountant reads no lot module: the lot purchase is plain text; the credit note has no page.
+    expect(within(screen.getByText('Achat du lot LC-2026-14').closest('tr')!).queryByRole('link')).not.toBeInTheDocument();
+    expect(rowOf('Avoir AV-0001 — Restaurant Le Palmier (FA-0310)').queryByRole('link')).not.toBeInTheDocument();
     expect(rowOf('Achat BC-0142 — Agro Provende SA').getByRole('button', { name: 'Supprimer' })).toHaveAttribute('title', "Écriture générée par un achat — corrigez le document d'origine");
     const manual = rowOf('Salaires septembre');
     expect(manual.getByRole('button', { name: 'Modifier' })).not.toHaveAttribute('aria-disabled');
     expect(manual.getByRole('button', { name: 'Supprimer' })).not.toHaveAttribute('aria-disabled');
+  });
+
+  it('links a derived row only to a module the role can read', async () => {
+    mountPage({ perms: { finance: ['read'], lots: ['read'] } });
+    await screen.findByText('Salaires septembre');
+    expect(within(screen.getByText('Achat du lot LC-2026-14').closest('tr')!).getByRole('link')).toHaveAttribute('href', '/m/lots/l1');
+    expect(rowOf('Facture FA-0310 — Restaurant Le Palmier').queryByRole('link')).not.toBeInTheDocument();
+    expect(rowOf('Achat BC-0142 — Agro Provende SA').queryByRole('link')).not.toBeInTheDocument();
+    cleanup();
+    mountPage({ perms: { finance: ['read'], lots: ['read'] }, entries: [{ ...DERIVED[2], id: 'lot:p9', sourceId: 'p9', activity: 'PORCIN', label: 'Achat du lot PC-2026-03' }] });
+    await screen.findByText('Achat du lot PC-2026-03');
+    expect(within(screen.getByText('Achat du lot PC-2026-03').closest('tr')!).queryByRole('link')).not.toBeInTheDocument();
+    cleanup();
+    mountPage({ perms: { finance: ['read'], porcs: ['read'] }, entries: [{ ...DERIVED[2], id: 'lot:p9', sourceId: 'p9', activity: 'PORCIN', label: 'Achat du lot PC-2026-03' }] });
+    expect(await screen.findByRole('link', { name: 'Achat du lot PC-2026-03' })).toHaveAttribute('href', '/m/porcs/lot-p9');
   });
 
   it('has the period, activity and category filters and sends them to the entries endpoint', async () => {
@@ -225,7 +250,7 @@ describe('finance form', () => {
     expect(within(dialog).getByLabelText('Catégorie')).toHaveValue('');
   });
 
-  it('offers the lot of the species for an Avicole or Porcin expense only', async () => {
+  it('offers the lots of finance/lot-options for an Avicole or Porcin expense only, with no /batches request', async () => {
     const { user, dialog } = await openForm();
     expect(within(dialog).queryByLabelText('Lot')).not.toBeInTheDocument();
     await user.selectOptions(within(dialog).getByLabelText('Activité'), 'Avicole');
@@ -234,11 +259,23 @@ describe('finance form', () => {
     await user.selectOptions(within(dialog).getByLabelText('Activité'), 'Porcin');
     await waitFor(() => expect(within(dialog).getByRole('option', { name: 'PC-2026-03' })).toBeInTheDocument());
     expect(within(dialog).queryByRole('option', { name: 'LC-2026-14' })).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Lot')).toHaveValue('');
     await user.selectOptions(within(dialog).getByLabelText('Activité'), 'Général');
     expect(within(dialog).queryByLabelText('Lot')).not.toBeInTheDocument();
     await user.selectOptions(within(dialog).getByLabelText('Activité'), 'Avicole');
     await user.click(within(dialog).getByRole('radio', { name: 'Recette' }));
     expect(within(dialog).queryByLabelText('Lot')).not.toBeInTheDocument();
+    expect(calls.filter((c) => c.url.startsWith('/api/finance/lot-options')).map((c) => c.url)).toEqual(expect.arrayContaining(['/api/finance/lot-options?activity=AVICOLE']));
+    expect(calls.some((c) => c.url.startsWith('/api/batches'))).toBe(false);
+  });
+
+  it('clears the lot when the activity changes', async () => {
+    const { user, dialog } = await openForm();
+    await user.selectOptions(within(dialog).getByLabelText('Activité'), 'Avicole');
+    await waitFor(() => expect(within(dialog).getByRole('option', { name: 'LC-2026-14' })).toBeInTheDocument());
+    await user.selectOptions(within(dialog).getByLabelText('Lot'), 'LC-2026-14');
+    await user.selectOptions(within(dialog).getByLabelText('Activité'), 'Porcin');
+    expect(within(dialog).getByLabelText('Lot')).toHaveValue('');
   });
 
   it('posts the entry with its lot, today as default date, and the amount as a number', async () => {
@@ -272,6 +309,30 @@ describe('finance form', () => {
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/finance/entries/m1', body: { amount: 960000 } });
     expect(Object.keys(writes()[0].body as object)).toEqual(['amount']);
+  });
+
+  it('clears the stored lot (batchId: null) when an entry with a lot becomes a Recette, or leaves Avicole', async () => {
+    mountPage();
+    await screen.findByText('Transport poussins');
+    const user = userEvent.setup();
+    await user.click(rowOf('Transport poussins').getByRole('button', { name: 'Modifier' }));
+    let dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByLabelText('Lot')).toHaveValue('l1'));
+    await user.click(within(dialog).getByRole('radio', { name: 'Recette' }));
+    await user.selectOptions(within(dialog).getByLabelText('Catégorie'), 'Prestations');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/finance/entries/m6', body: { kind: 'RECETTE', category: 'PRESTATIONS', batchId: null } });
+    cleanup();
+    calls.length = 0;
+    mountPage();
+    await screen.findByText('Transport poussins');
+    await user.click(rowOf('Transport poussins').getByRole('button', { name: 'Modifier' }));
+    dialog = await screen.findByRole('dialog');
+    await user.selectOptions(within(dialog).getByLabelText('Activité'), 'Général');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({ activity: 'GENERAL', batchId: null });
   });
 
   it('has no Ajouter for a read-only role and under all farms', async () => {
@@ -314,7 +375,7 @@ describe('Synthèse', () => {
     expect(screen.getByText('910 000 FCFA')).toBeInTheDocument();
     expect(screen.getByText('Recettes 2 050 000 FCFA · Dépenses 1 140 000 FCFA')).toBeInTheDocument();
     expect(screen.getByText('Activité Général')).toBeInTheDocument();
-    expect(screen.getByText('-1 135 000 FCFA')).toBeInTheDocument();
+    expect(screen.getAllByText('−1 135 000 FCFA').length).toBeGreaterThan(0);
   });
 
   it('lists the categories with their type and amount, and no per-farm table for one farm', async () => {
@@ -337,6 +398,44 @@ describe('Synthèse', () => {
     expect(screen.getByText(/« Marge du lot »/)).toBeInTheDocument();
   });
 
+  it('shares ONE period across the three tabs, month to date by default, and keeps it when switching', async () => {
+    mountPage();
+    await screen.findByText('Salaires septembre');
+    const start = `${todayIso().slice(0, 8)}01`;
+    expect(screen.getByLabelText('Du')).toHaveValue(start);
+    expect(screen.getByLabelText('Au')).toHaveValue(todayIso());
+    expect(calls.find((c) => c.url.startsWith('/api/finance/entries'))!.url).toContain(`from=${start}`);
+    const user = userEvent.setup();
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-10-01' } });
+    await user.click(screen.getByRole('tab', { name: 'Synthèse' }));
+    await screen.findByText("Chiffre d'affaires");
+    expect(screen.getByLabelText('Du')).toHaveValue('2026-10-01');
+    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-10-31' } });
+    await user.click(screen.getByRole('tab', { name: 'Rentabilité par lot' }));
+    await screen.findByText('LC-2026-14');
+    expect(screen.getByLabelText('Du')).toHaveValue('2026-10-01');
+    expect(screen.getByLabelText('Au')).toHaveValue('2026-10-31');
+    expect(calls.filter((c) => c.url.startsWith('/api/finance/lots')).at(-1)!.url).toContain('from=2026-10-01&to=2026-10-31');
+    await user.click(screen.getByRole('tab', { name: 'Dépenses & recettes' }));
+    await screen.findByText('Salaires septembre');
+    expect(screen.getByLabelText('Du')).toHaveValue('2026-10-01');
+    expect(screen.getByLabelText('Au')).toHaveValue('2026-10-31');
+  });
+
+  it('refuses a start date after the end date on every tab, without a request', async () => {
+    mountPage();
+    await screen.findByText('Salaires septembre');
+    const user = userEvent.setup();
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2999-01-01' } });
+    expect(await screen.findByText('La date de début est après la date de fin')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Synthèse' }));
+    expect(await screen.findByText('La date de début est après la date de fin')).toBeInTheDocument();
+    expect(calls.some((c) => c.url.startsWith('/api/finance/summary'))).toBe(false);
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-10-01' } });
+    await waitFor(() => expect(screen.queryByText('La date de début est après la date de fin')).not.toBeInTheDocument());
+    await screen.findByText("Chiffre d'affaires");
+  });
+
   it('sends the chosen period to the summary endpoint', async () => {
     await openSummary();
     fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-10-01' } });
@@ -356,7 +455,7 @@ describe('Rentabilité par lot', () => {
   it('renders the nine columns, dashes for a missing cost per kg and the formula hint', async () => {
     await openLots();
     for (const h of ['LOT', 'TYPE', 'STATUT', 'VENDUS', 'COÛT TOTAL', 'RECETTES', 'MARGE', 'COÛT / ANIMAL', 'COÛT / KG']) expect(screen.getByRole('columnheader', { name: h })).toBeInTheDocument();
-    expect(cells(screen.getByText('LC-2026-14').closest('tr'))).toBe('LC-2026-14 Chair En cours 270 1 772 400 FCFA 945 000 FCFA -827 400 FCFA 367.72 FCFA —');
+    expect(cells(screen.getByText('LC-2026-14').closest('tr'))).toBe('LC-2026-14 Chair En cours 270 1 772 400 FCFA 945 000 FCFA −827 400 FCFA 367.72 FCFA —');
     expect(cells(screen.getByText('LC-2026-12').closest('tr'))).toContain('Clôturé 5 000 1 000 000 FCFA 1 500 000 FCFA 500 000 FCFA 200 FCFA 1 449.28 FCFA');
     expect(screen.getByText('Marge du lot = recettes du lot − (achat des animaux + aliment + santé + charges affectées).')).toBeInTheDocument();
     expect(screen.getByText(/leurs sommes ne sont pas censées concorder/)).toBeInTheDocument();
@@ -364,11 +463,31 @@ describe('Rentabilité par lot', () => {
 
   it('shows a negative margin in danger, a positive one and zero in success, and links to the lot', async () => {
     await openLots();
-    expect(tone(rowOf('LC-2026-14'), '-827 400 FCFA')).toBe('danger');
+    expect(tone(rowOf('LC-2026-14'), '−827 400 FCFA')).toBe('danger');
     expect(tone(rowOf('LC-2026-12'), '500 000 FCFA')).toBe('success');
+    expect(tone(rowOf('PC-2026-03'), '0 FCFA')).toBe('success');
+  });
+
+  it('links a lot only to a species module the role can read: the owner does, the accountant does not', async () => {
+    await openLots({ perms: PROPRIETAIRE });
     expect(rowOf('LC-2026-14').getByRole('link', { name: 'LC-2026-14' })).toHaveAttribute('href', '/m/lots/l1');
     expect(rowOf('PC-2026-03').getByRole('link', { name: 'PC-2026-03' })).toHaveAttribute('href', '/m/porcs/lot-p1');
-    expect(tone(rowOf('PC-2026-03'), '0 FCFA')).toBe('success');
+    cleanup();
+    await openLots({ perms: COMPTABLE });
+    expect(rowOf('LC-2026-14').queryByRole('link')).not.toBeInTheDocument();
+    expect(rowOf('PC-2026-03').queryByRole('link')).not.toBeInTheDocument();
+    cleanup();
+    await openLots({ perms: { finance: ['read'], lots: ['read'] } });
+    expect(rowOf('LC-2026-14').getByRole('link')).toBeInTheDocument();
+    expect(rowOf('PC-2026-03').queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('has the Statut filter (Tous les statuts / En cours / Clôturé)', async () => {
+    await openLots();
+    const select = screen.getByLabelText('Tous les statuts');
+    expect(Array.from(select.querySelectorAll('option')).map((o) => o.textContent)).toEqual(['Tous les statuts', 'En cours', 'Clôturé']);
+    await userEvent.setup().selectOptions(select, 'Clôturé');
+    await waitFor(() => expect(calls.filter((c) => c.url.startsWith('/api/finance/lots')).at(-1)!.url).toContain('status=CLOTURE'));
   });
 
   it('has the period and species filters and is read-only', async () => {
@@ -388,20 +507,34 @@ describe('profitability card of the lot detail', () => {
 
   it('shows the cost lines, revenue, lot margin and unit costs for a role with finance read', async () => {
     mountLot({ lots: ['read'], finance: ['read'] });
+    await userEvent.setup().click(await screen.findByRole('tab', { name: 'Rentabilité' }));
     const card = await screen.findByRole('region', { name: 'Rentabilité' });
     await waitFor(() => expect(flat(card.textContent)).toContain('Coût total'));
     const text = Array.from(card.querySelectorAll('dl > div')).map((l) => `${l.querySelector('dt')!.textContent} ${l.querySelector('dd')!.textContent}`).map(flat);
     for (const part of [
       "Coût des animaux 1 500 000 FCFA", 'Aliment 198 400 FCFA', 'Santé 24 000 FCFA', 'Autres charges 50 000 FCFA', 'Coût total 1 772 400 FCFA',
-      'Recettes 945 000 FCFA', 'Marge du lot -827 400 FCFA', 'Coût par animal 367.72 FCFA', 'Coût/kg —',
+      'Recettes 945 000 FCFA', 'Marge du lot −827 400 FCFA', 'Coût par animal 367.72 FCFA', 'Coût/kg —',
     ]) expect(text).toContain(part);
-    expect(tone(within(card), '-827 400 FCFA')).toBe('danger');
+    expect(tone(within(card), '−827 400 FCFA')).toBe('danger');
   });
 
   it('needs finance read only: no card and no request without it', async () => {
     mountLot({ lots: ['read'] });
     await screen.findByText('LC-2026-14');
+    expect(screen.queryByRole('tab', { name: 'Rentabilité' })).not.toBeInTheDocument();
     expect(screen.queryByRole('region', { name: 'Rentabilité' })).not.toBeInTheDocument();
+    expect(calls.some((c) => c.url.startsWith('/api/finance'))).toBe(false);
+  });
+});
+
+describe('roles without finance access', () => {
+  it.each([
+    ['COMMERCIAL', { clients: ['read'], ventes: ['read', 'create'] }],
+    ['AGENT_ELEVAGE', { lots: ['read', 'create'], porcs: ['read', 'create'] }],
+  ])('%s gets no finance page and no /finance request', async (_role, perms) => {
+    mount(<Routes><Route path="/m/:module" element={<ModuleRoute />} /></Routes>, { perms, route: '/m/finance' });
+    expect(await screen.findByText('Accès non autorisé')).toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Dépenses & recettes' })).not.toBeInTheDocument();
     expect(calls.some((c) => c.url.startsWith('/api/finance'))).toBe(false);
   });
 });

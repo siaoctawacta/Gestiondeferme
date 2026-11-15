@@ -341,8 +341,11 @@ type ModuleConfigBase<T extends { id: string }> = {
   toPayload?: (values: FormMap, mode: FormMode) => unknown;
   /** Label used in the delete confirmation (default `row.name`). */
   rowLabel?: (row: T) => string;
-  /** First column links here (takes precedence over `detail`). */
-  detailPath?: (row: T) => string;
+  /**
+   * First column links here (takes precedence over `detail`). `undefined` leaves the cell as plain text: a row whose
+   * page the user may not read (`can` is the user's permission check).
+   */
+  detailPath?: (row: T, ctx: { can: (module: ModuleKey, action: Action) => boolean }) => string | undefined;
   /**
    * Detail screen of one record. When set, the first column links to `/m/{slug}/{id}` and `ModuleRoute`
    * renders this component there (after the same `read` permission check as the list). The component
@@ -404,6 +407,17 @@ type ModuleConfigBase<T extends { id: string }> = {
    * read permission on its `slug`; an `element` tab is any content and always shown.
    */
   tabs?: ModuleTab[];
+  /**
+   * Filters (`params`, date or select filters of `filters`) that the page and ALL its tabs share: one state, kept when
+   * switching tabs, read by the `config` tabs' lists and by `element` tabs through `useSharedFilters()`. `defaults` gives
+   * their first values (a period of the month to date, shown in the inputs); `validate` answers a French message for
+   * values that must not be sent (the lists and the tabs then query nothing and the page shows the message).
+   */
+  sharedFilters?: {
+    params: string[];
+    defaults: () => Record<string, string>;
+    validate?: (values: Record<string, string>) => string | null;
+  };
   /** False when the endpoint has no export route: the Exporter control is not rendered. Default true. */
   exportable?: boolean;
   /** False for data outside any farm (farms, users): writes stay possible under "all farms". Default true. */

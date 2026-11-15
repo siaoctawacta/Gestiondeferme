@@ -3,7 +3,7 @@ import { Card } from '../components/ui/Card';
 import { Pill, type PillTone } from '../components/ui/Pill';
 import { useAuth } from '../lib/auth';
 import type { ModuleKey } from '../lib/modules';
-import { formatMoney } from '../lib/format';
+import { formatMoney, signedMoney } from '../lib/format';
 import { ACTIVITIES, activityLabel } from './purchasingShared';
 
 /* ---------------------------------------------------------------------------------------------
@@ -38,7 +38,7 @@ export interface FinanceEntryRow {
   editable: boolean;
 }
 
-/** One activity of the summary (`activity` is the label: `Avicole`, `Porcin`, `Général`). */
+/** One activity of the summary (`activity` is the enum, labelled by the UI; every figure is the API's, the margin too). */
 export interface ActivitySummary {
   activity: string;
   revenue: number;
@@ -141,9 +141,6 @@ export function EntryLabel({ row }: { row: FinanceEntryRow }) {
     : <>{row.label}</>;
 }
 
-/** `−105 000 FCFA`: a negative amount with the typographic minus of the reference. */
-export const signedMoney = (n: number) => (n < 0 ? `−${formatMoney(-n)}` : formatMoney(n));
-
 /** The `MONTANT` pill: a `Dépense` in danger, a `Recette` in success, a negative revenue (a credit note) in danger. */
 export function AmountPill({ row }: { row: Pick<FinanceEntryRow, 'kind' | 'amount'> }) {
   const tone: PillTone = row.kind === 'DEPENSE' || row.amount < 0 ? 'danger' : 'success';
@@ -152,7 +149,7 @@ export function AmountPill({ row }: { row: Pick<FinanceEntryRow, 'kind' | 'amoun
 
 /** A margin: success from zero up, danger below. */
 export function MarginPill({ value }: { value: number }) {
-  return <Pill tone={value >= 0 ? 'success' : 'danger'}>{formatMoney(value)}</Pill>;
+  return <Pill tone={value >= 0 ? 'success' : 'danger'}>{signedMoney(value)}</Pill>;
 }
 
 /**
@@ -162,17 +159,14 @@ export function MarginPill({ value }: { value: number }) {
 export const SUMS_HINT =
   'La « Marge » de la ferme (recettes − dépenses) et la « Marge du lot » de la rentabilité par lot sont deux vues différentes : leurs sommes ne sont pas censées concorder.';
 
-/**
- * One card per activity, as the reports screen shows them: its margin, then its revenue and expenses. The margin is the
- * API's; the dashboard's per-activity rows carry none yet, and then it is their difference.
- */
-export function ActivityCards({ rows }: { rows: (Omit<ActivitySummary, 'margin'> & { margin?: number })[] }) {
+/** One card per activity, as the reports screen shows them: its margin, then its revenue and expenses, all from the API. */
+export function ActivityCards({ rows }: { rows: ActivitySummary[] }) {
   return (
     <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
       {rows.map((a) => (
         <Card key={a.activity} className="p-5">
-          <p className="text-sm text-muted-foreground">Activité {a.activity}</p>
-          <p className="mt-2 font-display text-[28px] font-bold leading-9">{formatMoney(a.margin ?? a.revenue - a.expenses)}</p>
+          <p className="text-sm text-muted-foreground">Activité {activityLabel(a.activity)}</p>
+          <p className="mt-2 font-display text-[28px] font-bold leading-9">{signedMoney(a.margin)}</p>
           <p className="mt-1 text-xs text-muted-foreground">
             Recettes {formatMoney(a.revenue)} · Dépenses {formatMoney(a.expenses)}
           </p>

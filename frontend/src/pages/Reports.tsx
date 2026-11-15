@@ -2,7 +2,8 @@ import { Download, Printer } from 'lucide-react';
 import { api } from '../lib/api';
 import { rateOrDash, type DashboardDto } from '../lib/dashboard';
 import { saveBlob } from '../lib/api';
-import { formatDate, formatDateFr, formatMoney, formatNumber } from '../lib/format';
+import { formatDate, formatDateFr, formatNumber, signedMoney } from '../lib/format';
+import { useAuth } from '../lib/auth';
 import { useFarmQuery } from '../lib/query';
 import { ErrorRetry } from '../components/module/ErrorRetry';
 import { errorMessage } from '../components/module/errorMessage';
@@ -16,7 +17,7 @@ import { Skeleton } from './PageParts';
 
 function indicators(d: DashboardDto): IndicatorRow[] {
   const num = (label: string, value: number, unit = ''): IndicatorRow => ({
-    label, display: unit === 'FCFA' ? formatMoney(value) : `${formatNumber(value)}${unit ? ` ${unit}` : ''}`, value, unit,
+    label, display: unit === 'FCFA' ? signedMoney(value) : `${formatNumber(value)}${unit ? ` ${unit}` : ''}`, value, unit,
   });
   const rate = (label: string, value: number | null): IndicatorRow => ({
     label, display: rateOrDash(value), value, unit: '%',
@@ -50,6 +51,7 @@ function downloadCsv(rows: IndicatorRow[], today: Date) {
 
 export default function Reports() {
   const query = useFarmQuery<DashboardDto>(['dashboard'], () => api.get<DashboardDto>('/dashboard'));
+  const { can } = useAuth();
   const d = query.data;
   const today = new Date();
   const rows = d ? indicators(d) : [];
@@ -77,7 +79,8 @@ export default function Reports() {
       ) : !d ? (
         <div aria-busy="true" aria-label="Chargement" className="space-y-6">
           <Skeleton className="h-[580px]" />
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-28" />)}</div>
+          {/* The activity cards exist for a role with finance access only. */}
+          {can('finance', 'read') && <div className="grid grid-cols-1 gap-4 md:grid-cols-3">{[0, 1, 2].map((i) => <Skeleton key={i} className="h-28" />)}</div>}
         </div>
       ) : (
         <div className="space-y-6">

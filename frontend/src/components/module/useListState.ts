@@ -1,13 +1,19 @@
 import { useEffect, useState } from 'react';
 import type { SortState } from './DataTable';
+import type { SharedFilterState } from './sharedFilters';
 
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** Search box (debounced), filters, sort and page of a list screen; any change but the page goes back to page 1. */
-export function useListState(pageSize = 25) {
+/**
+ * Search box (debounced), filters, sort and page of a list screen; any change but the page goes back to page 1.
+ * `initial` are the first filter values; `shared` (the page's shared filters) holds the params the page shares
+ * with its tabs: they are read from it and written to it.
+ */
+export function useListState(pageSize = 25, initial: Record<string, string> = {}, shared: SharedFilterState | null = null) {
   const [searchInput, setSearchInput] = useState('');
   const [search, setSearch] = useState('');
-  const [filters, setFilters] = useState<Record<string, string>>({});
+  const [ownFilters, setFilters] = useState<Record<string, string>>(initial);
+  const filters = shared ? { ...ownFilters, ...Object.fromEntries(shared.params.map((k) => [k, shared.values[k] ?? ''])) } : ownFilters;
   const [sort, setSort] = useState<SortState | null>(null);
   const [page, setPage] = useState(1);
 
@@ -23,7 +29,8 @@ export function useListState(pageSize = 25) {
   }, [searchInput]);
 
   const setFilter = (param: string, value: string) => {
-    setFilters((s) => ({ ...s, [param]: value }));
+    if (shared && shared.params.includes(param)) shared.set(param, value);
+    else setFilters((s) => ({ ...s, [param]: value }));
     setPage(1);
   };
   const toggleSort = (key: string) => {

@@ -140,6 +140,9 @@ export function LotDetail({ id }: { id: string }) {
     ...(health
       ? [{ key: 'health', label: 'Santé', content: <ModuleList config={health} scope={{ batchId: id }} readOnly={closed} /> }]
       : []),
+    // Money figures need `finance` read and nothing else (ruling Q25), whatever the species module grants. A tab keeps
+    // the reference layout of the page intact for the roles without it, and shifts nothing while it loads.
+    ...(can('finance', 'read') ? [{ key: 'profitability', label: 'Rentabilité', content: <LotProfitabilityCard batchId={id} /> }] : []),
   ];
 
   return (
@@ -168,8 +171,6 @@ export function LotDetail({ id }: { id: string }) {
           <>
             <WithdrawalNotice until={batch.withdrawalUntil} />
             {notice && <Alert className="mb-4">{notice}</Alert>}
-            {/* Money figures need `finance` read and nothing else (ruling Q25), whatever the species module grants. */}
-            {can('finance', 'read') && <LotProfitabilityCard batchId={id} />}
           </>
         }
         stats={[

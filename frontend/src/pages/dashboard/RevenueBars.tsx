@@ -2,6 +2,7 @@ import { Bar, BarChart, CartesianGrid, ResponsiveContainer, XAxis, YAxis } from 
 import { Card } from '../../components/ui/Card';
 import { EmptyData } from '../PageParts';
 import type { DashboardDto } from '../../lib/dashboard';
+import { activityLabel } from '../../modules/purchasingShared';
 
 /** Four equal intervals up to a round maximum (2.05M → 2.2M, ticks every 0.55M). */
 export function barDomain(max: number): number[] {
@@ -13,7 +14,8 @@ export function barDomain(max: number): number[] {
 
 const millions = (v: number) => `${+(v / 1_000_000).toFixed(2)}M`;
 
-export function RevenueBars({ rows }: { rows: NonNullable<DashboardDto['revenueVsExpenses']> }) {
+export function RevenueBars({ rows: apiRows }: { rows: NonNullable<DashboardDto['revenueVsExpenses']> }) {
+  const rows = apiRows.map((r) => ({ ...r, activity: activityLabel(r.activity) }));
   const max = Math.max(0, ...rows.flatMap((r) => [r.revenue, r.expenses]));
   const ticks = barDomain(max);
 

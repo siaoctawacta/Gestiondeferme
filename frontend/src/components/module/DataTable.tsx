@@ -29,7 +29,8 @@ export interface DataTableProps<T extends { id: string }> {
   /** Only needed when a column is `sortable`. */
   sort?: SortState | null;
   onSort?: (key: string) => void;
-  detailPath?: (row: T) => string;
+  /** `undefined` for a row without a page: its first cell is plain text. */
+  detailPath?: (row: T) => string | undefined;
   qr?: boolean;
   actions?: TableAction<T>[];
   /** Shown when there are no rows (default `Aucun enregistrement`). */
@@ -135,8 +136,8 @@ export function DataTable<T extends { id: string }>({
                 const content = cell(row, c, statuses, statusKey);
                 return (
                   <TD key={c.key} className={`${c.align === 'right' ? 'text-right' : ''} ${i === 0 ? 'font-semibold' : ''}`}>
-                    {i === 0 && detailPath ? (
-                      <Link to={detailPath(row)} className="hover:underline">{content}</Link>
+                    {i === 0 && detailPath?.(row) ? (
+                      <Link to={detailPath(row)!} className="hover:underline">{content}</Link>
                     ) : (
                       content
                     )}
@@ -151,8 +152,8 @@ export function DataTable<T extends { id: string }>({
                         <a.icon aria-hidden className="size-4" />
                       </ActionButton>
                     ))}
-                    {qr && detailPath && (
-                      <Link to={detailPath(row)} aria-label="QR code" title="QR code" className={ICON_BUTTON}>
+                    {qr && detailPath?.(row) && (
+                      <Link to={detailPath(row)!} aria-label="QR code" title="QR code" className={ICON_BUTTON}>
                         <QrCode aria-hidden className="size-4" />
                       </Link>
                     )}

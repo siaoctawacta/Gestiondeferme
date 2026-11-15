@@ -34,6 +34,12 @@ export const todayIso = (): string => new Date().toISOString().slice(0, 10);
 /** Money groups thousands with a regular no-break space (U+00A0): the reference's money lines show a wide gap, its tables a narrow one. */
 export const formatMoney = (n: number): string => `${formatNumber(n).replaceAll(NBSP, '\u00a0')}\u00a0FCFA`;
 
+/**
+ * THE formatter of an amount that may be negative (a margin, a credit note): like `formatMoney`, with the true minus sign
+ * (`−105 000 FCFA`, U+2212) instead of a hyphen, so every finance screen writes a loss the same way.
+ */
+export const signedMoney = (n: number): string => (n < 0 ? `\u2212${formatMoney(-n)}` : formatMoney(n));
+
 /** `n` shifted by `by` decimal places, on its decimal representation (no binary-float drift). */
 function shift(n: number, by: number): number {
   const [mantissa, exp = '0'] = String(n).split('e');

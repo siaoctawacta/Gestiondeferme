@@ -1,4 +1,4 @@
-import { useEffect, useId, useState, type ReactNode } from 'react';
+import { useContext, useEffect, useId, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -8,9 +8,11 @@ import { farmKey, useFarmQuery } from '../../lib/query';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
-import { Input, SearchInput } from '../ui/Input';
+import { SearchInput } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { ConfirmDialog } from './ConfirmDialog';
+import { DateFilter } from './DateFilter';
+import { SharedFiltersContext, type SharedFilterState } from './sharedFilters';
 import { DataTable, type TableAction } from './DataTable';
 import { ErrorRetry } from './ErrorRetry';
 import { errorMessage } from './errorMessage';
@@ -28,15 +30,6 @@ import { useListState } from './useListState';
 const PAGE_SIZE = 25;
 
 type Notice = { tone: 'success' | 'error'; message: string };
-
-function FilterDate({ def, value, onChange }: { def: FilterDef; value: string; onChange: (v: string) => void }) {
-  return (
-    <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
-      {def.allLabel}
-      <Input type="date" className="h-9! w-auto! px-3!" value={value} onChange={(e) => onChange(e.target.value)} />
-    </label>
-  );
-}
 
 function FilterSelect({ def, value, onChange }: { def: FilterDef; value: string; onChange: (v: string) => void }) {
   const options = useEndpointOptions(def.options ?? []);
@@ -87,8 +80,16 @@ function ModuleView<T extends { id: string }>({
   const queryClient = useQueryClient();
   const tabBase = useId();
 
+  // A page that declares `sharedFilters` owns them and hands them to its tabs; a tab or an embedded list reads its page's.
+  const inherited = useContext(SharedFiltersContext);
+  const shareDef = layout === 'page' ? config.sharedFilters : undefined;
   const { searchInput, setSearchInput, filters: filterValues, setFilter, sort, toggleSort, page, setPage, params, listParams } =
-    useListState(PAGE_SIZE);
+    useListState(PAGE_SIZE, shareDef?.defaults(), layout === 'page' ? null : inherited);
+  const sharedValues = shareDef ? Object.fromEntries(shareDef.params.map((k) => [k, filterValues[k] ?? ''])) : undefined;
+  const sharedError = shareDef?.validate?.(sharedValues!) ?? (layout === 'page' ? null : (inherited?.error ?? null));
+  const sharedState: SharedFilterState | null = shareDef
+    ? { params: shareDef.params, values: sharedValues!, set: setFilter, error: sharedError }
+    : null;
   const [tab, setTab] = useState('main');
   const [editing, setEditing] = useState<T | 'new' | null>(null);
   const [deleting, setDeleting] = useState<T | null>(null);
@@ -117,7 +118,7 @@ function ModuleView<T extends { id: string }>({
     [config.endpoint, 'list', listParams, scope],
     () => api.get<ListResponse<T>>(config.endpoint, { ...listParams, ...scope }),
     {
-      enabled: onMain,
+      enabled: onMain && !sharedError,
       // Keep the last page while the next loads, but never across a farm switch.
       placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === farmId ? prev : undefined),
     },
@@ -211,7 +212,9 @@ function ModuleView<T extends { id: string }>({
     </>
   );
 
-  const detailPath = config.detailPath ?? (config.detail ? (row: T) => `/m/${config.slug}/${row.id}` : undefined);
+  const detailPath = config.detailPath
+    ? (row: T) => config.detailPath!(row, { can })
+    : config.detail ? (row: T) => `/m/${config.slug}/${row.id}` : undefined;
   const EditForm = config.form;
 
   const body = (
@@ -228,8 +231,10 @@ function ModuleView<T extends { id: string }>({
           />
           {layout === 'list' && <div className="order-last ml-auto flex flex-wrap items-center gap-2 [&_button]:h-9!">{actions}</div>}
           {filters.map((f) => {
-            const Control = f.type === 'date' ? FilterDate : FilterSelect;
-            return <Control key={f.param} def={f} value={filterValues[f.param] ?? ''} onChange={(v) => setFilter(f.param, v)} />;
+            const value = filterValues[f.param] ?? '';
+            return f.type === 'date'
+              ? <DateFilter key={f.param} label={f.allLabel} value={value} onChange={(v) => setFilter(f.param, v)} />
+              : <FilterSelect key={f.param} def={f} value={value} onChange={(v) => setFilter(f.param, v)} />;
           })}
         </div>
 
@@ -317,10 +322,11 @@ function ModuleView<T extends { id: string }>({
   const activeTab = extraTabs.find((t) => t.key === tab);
   const allTabs = [{ key: 'main', label: config.tabLabel ?? config.title }, ...extraTabs];
   const activeKey = activeTab ? activeTab.key : 'main';
-  return (
+  const pageContent = (
     <>
       <PageHeader group={config.group} title={config.title} subtitle={config.subtitle} actions={onMain ? actions : undefined} />
       {extraTabs.length > 0 && <TabBar tabs={allTabs} active={activeKey} onChange={setTab} idBase={tabBase} />}
+      {sharedError && <Alert className="mb-4">{sharedError}</Alert>}
       <div
         id={panelId(tabBase, activeKey)}
         role={extraTabs.length > 0 ? 'tabpanel' : undefined}
@@ -337,4 +343,5 @@ function ModuleView<T extends { id: string }>({
       </div>
     </>
   );
+  return sharedState ? <SharedFiltersContext.Provider value={sharedState}>{pageContent}</SharedFiltersContext.Provider> : pageContent;
 }

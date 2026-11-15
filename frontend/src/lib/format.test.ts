@@ -1,5 +1,5 @@
 import {
-  formatDate, formatDateFr, formatDateTime, formatDateTimeFr, formatDecimal, formatMoney, formatNumber, formatPct, orDash, roundDecimal, todayIso,
+  formatDate, formatDateFr, formatDateTime, formatDateTimeFr, formatDecimal, formatMoney, formatNumber, formatPct, orDash, roundDecimal, signedMoney, todayIso,
 } from './format';
 
 describe('format', () => {
@@ -17,6 +17,11 @@ describe('format', () => {
   it('formats money in FCFA', () => {
     expect(formatMoney(3970000)).toBe('3\u00a0970\u00a0000\u00a0FCFA');
     expect(formatMoney(-1135000)).toBe('-1\u00a0135\u00a0000\u00a0FCFA');
+  });
+  it('writes a negative amount with the true minus sign, one convention for every finance screen', () => {
+    expect(signedMoney(-105000)).toBe('\u2212105\u00a0000\u00a0FCFA');
+    expect(signedMoney(950000)).toBe(formatMoney(950000));
+    expect(signedMoney(0)).toBe('0\u00a0FCFA');
   });
   it('formats percentages with a dot decimal', () => {
     expect(formatPct(3.6)).toBe('3.6%');

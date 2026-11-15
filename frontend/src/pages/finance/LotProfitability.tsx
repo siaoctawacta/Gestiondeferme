@@ -18,7 +18,7 @@ const unitCost = (n: number | null) => orDash(n, (v) => `${formatDecimal(v, 2)}�
 
 /**
  * The `Rentabilité par lot` list: read-only, one row per lot over a period (`from` / `to`), linking to the lot. A pig
- * lot opens under `porcs`, as its own list does.
+ * lot opens under `porcs`, as its own list does. Its period is the page's shared one.
  */
 export const lotProfitability: ModuleConfig<LotProfitRow> = {
   slug: 'finance',
@@ -53,7 +53,11 @@ export const lotProfitability: ModuleConfig<LotProfitRow> = {
   canEdit: () => false,
   canDelete: () => false,
   rowLabel: (l) => l.code,
-  detailPath: (l) => (l.species === 'PORCIN' ? `/m/porcs/lot-${l.batchId}` : `/m/lots/${l.batchId}`),
+  // The lot page needs the species module's read right: without it the code is plain text.
+  detailPath: (l, { can }) =>
+    l.species === 'PORCIN'
+      ? (can('porcs', 'read') ? `/m/porcs/lot-${l.batchId}` : undefined)
+      : (can('lots', 'read') ? `/m/lots/${l.batchId}` : undefined),
 };
 
 /** `Rentabilité par lot` tab: the list and what its margin means. */
@@ -87,7 +91,7 @@ export function LotProfitabilityCard({ batchId }: { batchId: string }) {
   // A lot the finance view does not know yet (404) simply has no card.
   if (query.isError && query.error instanceof ApiError && query.error.status === 404) return null;
   return (
-    <section aria-label="Rentabilité" className="mb-6">
+    <section aria-label="Rentabilité">
       <Card className="p-5">
         <h2 className="text-lg font-bold">Rentabilité</h2>
         {query.isError ? (

@@ -26,8 +26,8 @@ export interface DashboardDto {
   activeBuildings: number;
   feedDistributedKg: number;
   waterConsumedL: number;
-  /** `null` for a role without `finance:read`: the chart is not rendered at all. `margin` is the API's when it sends one. */
-  revenueVsExpenses: { activity: 'Avicole' | 'Porcin' | 'Général'; revenue: number; expenses: number; margin?: number }[] | null;
+  /** `null` for a role without `finance:read`: the chart is not rendered at all. One row per activity (enum), every figure the API's. */
+  revenueVsExpenses: { activity: 'AVICOLE' | 'PORCIN' | 'GENERAL'; revenue: number; expenses: number; margin: number }[] | null;
   alerts: {
     total: number;
     items: { key: string; title: string; detail: string; level: 'A_VOIR' | 'URGENT'; module: string }[];
