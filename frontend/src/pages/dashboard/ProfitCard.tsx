@@ -24,7 +24,7 @@ function Donut({ pct }: { pct: number | null }) {
   );
 }
 
-export function ProfitCard({ profit }: { profit: DashboardDto['profitability'] }) {
+export function ProfitCard({ profit }: { profit: NonNullable<DashboardDto['profitability']> }) {
   return (
     <div className="flex flex-col rounded-[calc(var(--radius)+10px)] bg-(image:--gradient-hero) p-5 text-white shadow-card">
       <h2 className="text-lg font-bold">Rentabilité du mois</h2>

@@ -704,3 +704,21 @@ describe('ModulePage kit extensions', () => {
     });
   });
 });
+
+describe('date filters', () => {
+  const periodic: ModuleConfig<Building> = {
+    ...batiments,
+    filters: [{ param: 'from', allLabel: 'Du', type: 'date' }, { param: 'to', allLabel: 'Au', type: 'date' }],
+  };
+
+  it('sends a date input as a query parameter and clears it when emptied', async () => {
+    setup({ config: periodic });
+    await screen.findByText('Poulailler A');
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-10-01' } });
+    await waitFor(() => expect(listCalls().some((c) => c.url.includes('from=2026-10-01') && c.url.includes('page=1'))).toBe(true));
+    expect(screen.getByLabelText('Du')).toHaveAttribute('type', 'date');
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '' } });
+    await waitFor(() => expect(listCalls().at(-1)!.url).not.toContain('from='));
+    expect(listCalls().every((c) => !c.url.includes('to='))).toBe(true);
+  });
+});

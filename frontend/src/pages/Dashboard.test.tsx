@@ -152,6 +152,58 @@ describe('Dashboard', () => {
   });
 });
 
+describe('Dashboard without finance access', () => {
+  it('renders neither the profitability card nor placeholder zeros when the API returns null', async () => {
+    mount(<Dashboard />, (u) => (u === '/api/dashboard' ? json(200, { ...FULL, profitability: null }) : undefined));
+    await screen.findByText('Bonjour 👋 — Ferme Kpalimé');
+    expect(screen.queryByText('Rentabilité du mois')).not.toBeInTheDocument();
+    expect(screen.queryByText("Chiffre d'affaires")).not.toBeInTheDocument();
+    expect(screen.queryByText('0 FCFA')).not.toBeInTheDocument();
+    // The egg chart takes the whole row instead of leaving a hole where the card was.
+    expect(screen.getByTestId('egg-chart-cell').className).toContain('lg:col-span-3');
+    expect(await screen.findByText('Recettes vs dépenses')).toBeInTheDocument();
+  });
+
+  it('renders no revenue chart when revenueVsExpenses is null, and the row closes up to two columns', async () => {
+    mount(<Dashboard />, (u) => (u === '/api/dashboard' ? json(200, { ...FULL, revenueVsExpenses: null }) : undefined));
+    await screen.findByText('Bonjour 👋 — Ferme Kpalimé');
+    expect(screen.queryByText('Recettes vs dépenses')).not.toBeInTheDocument();
+    expect(screen.getByText('Rentabilité du mois')).toBeInTheDocument();
+    const row = screen.getByTestId('farm-alerts-row');
+    expect(row.className).toContain('lg:grid-cols-2');
+    expect(row.className).not.toContain('lg:grid-cols-3');
+  });
+
+  it('keeps the three-column layout for a role that sees everything', async () => {
+    mount(<Dashboard />, (u) => (u === '/api/dashboard' ? json(200, FULL) : undefined));
+    await screen.findByText('Bonjour 👋 — Ferme Kpalimé');
+    expect(screen.getByTestId('egg-chart-cell').className).toContain('lg:col-span-2');
+    expect(screen.getByTestId('farm-alerts-row').className).toContain('lg:grid-cols-3');
+  });
+
+  it('leaves the financial rows and the activity blocks out of the report', async () => {
+    mount(<Reports />, (u) => (u === '/api/dashboard' ? json(200, { ...FULL, profitability: null, revenueVsExpenses: null }) : undefined));
+    const rows = await screen.findAllByRole('row');
+    expect(rows).toHaveLength(9); // header + 8 operational indicators
+    for (const label of ["Chiffre d'affaires", 'Dépenses', 'Marge indicative', 'Créances clients']) expect(screen.queryByText(label)).not.toBeInTheDocument();
+    expect(screen.getByText('Alertes ouvertes')).toBeInTheDocument();
+    expect(screen.queryByText(/^Activité /)).not.toBeInTheDocument();
+  });
+
+  it('exports a CSV without the financial rows', async () => {
+    let blob: Blob | undefined;
+    URL.createObjectURL = vi.fn((b: Blob | MediaSource) => { blob = b as Blob; return 'blob:x'; });
+    URL.revokeObjectURL = vi.fn();
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    mount(<Reports />, (u) => (u === '/api/dashboard' ? json(200, { ...FULL, profitability: null, revenueVsExpenses: null }) : undefined));
+    await userEvent.click(await screen.findByRole('button', { name: 'CSV' }));
+    const text = await blob!.text();
+    expect(text).toContain('"Volailles vivantes"');
+    expect(text).not.toContain('Marge indicative');
+    expect(text).not.toContain("Chiffre d'affaires");
+  });
+});
+
 describe('Alerts', () => {
   it('lists alerts with their module label', async () => {
     mount(<Alerts />, (u) => (u === '/api/alerts' ? json(200, { total: 2, items: ALERT_ITEMS }) : undefined));

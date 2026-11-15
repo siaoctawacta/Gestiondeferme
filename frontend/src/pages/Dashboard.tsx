@@ -88,24 +88,31 @@ export default function Dashboard() {
               <KpiCard label="Mortalité lots" icon={Skull} value={rateOrDash(d.kpis.mortalityRate)} sub="Lots avicoles en cours" />
             </div>
 
+            {/* Without the profitability card (no finance access) the egg chart takes its place: no hole. */}
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              <div className="lg:col-span-2">
+              <div data-testid="egg-chart-cell" className={d.profitability ? 'lg:col-span-2' : 'sm:col-span-2 lg:col-span-3'}>
                 <ErrorBoundary>
                   <Suspense fallback={<Skeleton className="h-[340px]" />}>
                     <EggChart series={d.eggSeries} />
                   </Suspense>
                 </ErrorBoundary>
               </div>
-              <ProfitCard profit={d.profitability} />
+              {d.profitability && <ProfitCard profit={d.profitability} />}
             </div>
 
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {/* Without the revenue chart the two remaining cards share the row. */}
+            <div
+              data-testid="farm-alerts-row"
+              className={`grid grid-cols-1 gap-4 md:grid-cols-2 ${d.revenueVsExpenses ? 'lg:grid-cols-3' : 'lg:grid-cols-2'}`}
+            >
               <FarmTile activeBuildings={d.activeBuildings} feedDistributedKg={d.feedDistributedKg} waterConsumedL={d.waterConsumedL} />
-              <ErrorBoundary>
-                <Suspense fallback={<Skeleton className="h-full min-h-[300px]" />}>
-                  <RevenueBars rows={d.revenueVsExpenses} />
-                </Suspense>
-              </ErrorBoundary>
+              {d.revenueVsExpenses && (
+                <ErrorBoundary>
+                  <Suspense fallback={<Skeleton className="h-full min-h-[300px]" />}>
+                    <RevenueBars rows={d.revenueVsExpenses} />
+                  </Suspense>
+                </ErrorBoundary>
+              )}
               <AlertsCard alerts={d.alerts} />
             </div>
 

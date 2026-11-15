@@ -8,7 +8,7 @@ import { farmKey, useFarmQuery } from '../../lib/query';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Card } from '../ui/Card';
-import { SearchInput } from '../ui/Input';
+import { Input, SearchInput } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DataTable, type TableAction } from './DataTable';
@@ -29,8 +29,17 @@ const PAGE_SIZE = 25;
 
 type Notice = { tone: 'success' | 'error'; message: string };
 
+function FilterDate({ def, value, onChange }: { def: FilterDef; value: string; onChange: (v: string) => void }) {
+  return (
+    <label className="flex items-center gap-1.5 text-sm text-muted-foreground">
+      {def.allLabel}
+      <Input type="date" className="h-9! w-auto! px-3!" value={value} onChange={(e) => onChange(e.target.value)} />
+    </label>
+  );
+}
+
 function FilterSelect({ def, value, onChange }: { def: FilterDef; value: string; onChange: (v: string) => void }) {
-  const options = useEndpointOptions(def.options);
+  const options = useEndpointOptions(def.options ?? []);
   return (
     <Select className="h-9! pr-2!" aria-label={def.allLabel} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{def.allLabel}</option>
@@ -217,14 +226,10 @@ function ModuleView<T extends { id: string }>({
             onChange={(e) => setSearchInput(e.target.value)}
           />
           {layout === 'list' && <div className="order-last ml-auto flex flex-wrap items-center gap-2 [&_button]:h-9!">{actions}</div>}
-          {filters.map((f) => (
-            <FilterSelect
-              key={f.param}
-              def={f}
-              value={filterValues[f.param] ?? ''}
-              onChange={(v) => setFilter(f.param, v)}
-            />
-          ))}
+          {filters.map((f) => {
+            const Control = f.type === 'date' ? FilterDate : FilterSelect;
+            return <Control key={f.param} def={f} value={filterValues[f.param] ?? ''} onChange={(v) => setFilter(f.param, v)} />;
+          })}
         </div>
 
         {list.isError ? (

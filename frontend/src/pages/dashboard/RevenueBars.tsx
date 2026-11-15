@@ -13,7 +13,7 @@ export function barDomain(max: number): number[] {
 
 const millions = (v: number) => `${+(v / 1_000_000).toFixed(2)}M`;
 
-export function RevenueBars({ rows }: { rows: DashboardDto['revenueVsExpenses'] }) {
+export function RevenueBars({ rows }: { rows: NonNullable<DashboardDto['revenueVsExpenses']> }) {
   const max = Math.max(0, ...rows.flatMap((r) => [r.revenue, r.expenses]));
   const ticks = barDomain(max);
 

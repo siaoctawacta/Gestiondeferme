@@ -15,17 +15,19 @@ export interface DashboardDto {
     mortalityRate: number | null;
   };
   eggSeries: { date: string; eggs: number }[];
+  /** `null` for a role without `finance:read`: the card is not rendered at all. */
   profitability: {
     revenue: number;
     expenses: number;
     margin: number;
     marginPct: number | null;
     receivables: number;
-  };
+  } | null;
   activeBuildings: number;
   feedDistributedKg: number;
   waterConsumedL: number;
-  revenueVsExpenses: { activity: 'Avicole' | 'Porcin' | 'Général'; revenue: number; expenses: number }[];
+  /** `null` for a role without `finance:read`: the chart is not rendered at all. `margin` is the API's when it sends one. */
+  revenueVsExpenses: { activity: 'Avicole' | 'Porcin' | 'Général'; revenue: number; expenses: number; margin?: number }[] | null;
   alerts: {
     total: number;
     items: { key: string; title: string; detail: string; level: 'A_VOIR' | 'URGENT'; module: string }[];

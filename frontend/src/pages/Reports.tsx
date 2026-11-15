@@ -10,6 +10,7 @@ import { PageHeader } from '../components/module/PageHeader';
 import { Button } from '../components/ui/Button';
 import { Card } from '../components/ui/Card';
 import { Table, TD, TH, THead, TR } from '../components/ui/Table';
+import { ActivityCards } from '../modules/financeShared';
 import { buildCsv, type IndicatorRow } from './reportCsv';
 import { Skeleton } from './PageParts';
 
@@ -20,6 +21,16 @@ function indicators(d: DashboardDto): IndicatorRow[] {
   const rate = (label: string, value: number | null): IndicatorRow => ({
     label, display: rateOrDash(value), value, unit: '%',
   });
+  // A role without finance access gets no financial row (the API sends `null`), never a zero.
+  const p = d.profitability;
+  const finance: IndicatorRow[] = p
+    ? [
+        num("Chiffre d'affaires", p.revenue, 'FCFA'),
+        num('Dépenses', p.expenses, 'FCFA'),
+        num('Marge indicative', p.margin, 'FCFA'),
+        num('Créances clients', p.receivables, 'FCFA'),
+      ]
+    : [];
   return [
     num('Volailles vivantes', d.kpis.poultryAlive),
     num('Porcs (cheptel)', d.kpis.pigs),
@@ -28,10 +39,7 @@ function indicators(d: DashboardDto): IndicatorRow[] {
     rate('Taux de ponte', d.kpis.layingRate),
     num('Aliment distribué', d.feedDistributedKg, 'kg'),
     num('Eau consommée', d.waterConsumedL, 'L'),
-    num("Chiffre d'affaires", d.profitability.revenue, 'FCFA'),
-    num('Dépenses', d.profitability.expenses, 'FCFA'),
-    num('Marge indicative', d.profitability.margin, 'FCFA'),
-    num('Créances clients', d.profitability.receivables, 'FCFA'),
+    ...finance,
     num('Alertes ouvertes', d.alerts.total),
   ];
 }
@@ -91,17 +99,7 @@ export default function Reports() {
               </tbody>
             </Table>
           </Card>
-          <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-            {d.revenueVsExpenses.map((a) => (
-              <Card key={a.activity} className="p-5">
-                <p className="text-sm text-muted-foreground">Activité {a.activity}</p>
-                <p className="mt-2 font-display text-[28px] font-bold leading-9">{formatMoney(a.revenue - a.expenses)}</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Recettes {formatMoney(a.revenue)} · Dépenses {formatMoney(a.expenses)}
-                </p>
-              </Card>
-            ))}
-          </div>
+          {d.revenueVsExpenses && <ActivityCards rows={d.revenueVsExpenses} />}
         </div>
       )}
     </div>

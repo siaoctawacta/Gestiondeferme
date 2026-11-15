@@ -23,6 +23,7 @@ import {
 } from '../../modules/lotsShared';
 import { useBuildingOptions, type Species } from '../../modules/productionShared';
 import { WithdrawalNotice } from '../../modules/santeShared';
+import { LotProfitabilityCard } from '../finance/LotProfitability';
 import NotFound from '../NotFound';
 import { Skeleton } from '../PageParts';
 import { DetailLayout } from './DetailLayout';
@@ -167,6 +168,8 @@ export function LotDetail({ id }: { id: string }) {
           <>
             <WithdrawalNotice until={batch.withdrawalUntil} />
             {notice && <Alert className="mb-4">{notice}</Alert>}
+            {/* Money figures need `finance` read and nothing else (ruling Q25), whatever the species module grants. */}
+            {can('finance', 'read') && <LotProfitabilityCard batchId={id} />}
           </>
         }
         stats={[

@@ -217,13 +217,25 @@ export type StatusDef = {
 
 export type FormMode = 'create' | 'update';
 
-/** A list filter sent as query parameter `param`; rendered as a select before the table. */
-export type FilterDef = {
-  param: string;
-  /** Label of the "no filter" option, also the select's accessible name. */
-  allLabel: string;
-  options: OptionsDef;
-};
+/**
+ * A list filter sent as query parameter `param`; rendered before the table as a select, or as a date input
+ * (`type: 'date'`, a bound of a period: `from` / `to`; empty means no bound).
+ */
+export type FilterDef =
+  | {
+      param: string;
+      /** Label of the "no filter" option, also the select's accessible name. */
+      allLabel: string;
+      type?: 'select';
+      options: OptionsDef;
+    }
+  | {
+      param: string;
+      /** Accessible name of the date input (`Du`, `Au`). */
+      allLabel: string;
+      type: 'date';
+      options?: never;
+    };
 
 /** Fields shared by every extra per-row button. */
 type RowActionBase<T> = {
