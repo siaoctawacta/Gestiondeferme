@@ -454,6 +454,135 @@ describe('rendu : captures et comparaison avec la référence', () => {
     await context.close();
   });
 
+  it('tuiles : un montant long (1 120 000 FCFA, 12 345 678 FCFA) ne sort jamais de sa tuile ni ne se coupe, de 360 à 1440 px', async () => {
+    // A request with an eight-digit amount, next to the reference one (DA-0089, 1 120 000 FCFA). 100 x 123 456.78.
+    const suppliers = await api<{ items: { id: string; name: string }[] }>('/suppliers?pageSize=200', { token: admin.token, farmId: admin.farmId });
+    const items = await api<{ items: { id: string; name: string }[] }>('/stock-items?pageSize=200', { token: admin.token, farmId: admin.farmId });
+    const big = await api<{ id: string; reference: string }>('/purchases', {
+      method: 'POST', token: admin.token, farmId: admin.farmId,
+      body: {
+        supplierId: suppliers.items.find((x) => x.name === 'Agro Provende SA')!.id, date: new Date().toISOString().slice(0, 10),
+        lines: [{ itemId: items.items.find((x) => x.name === 'Aliment ponte')!.id, quantity: 100, unitPrice: 123456.78 }],
+      },
+    });
+    const { context, page: wide } = await newPage(browser);
+    await context.addInitScript((farm) => localStorage.setItem('ap_farm', farm), admin.farmId);
+    try {
+      await uiLoginWithBackupCode(wide, admin.email, admin.backupCodes[3]);
+      await wide.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
+      await wide.goto(`${WEB_URL}/m/achats`);
+      await wide.getByRole('row', { name: /DA-0089/ }).getByRole('link').first().click();
+      await wide.getByRole('heading', { name: 'DA-0089' }).waitFor();
+      const reference = wide.url();
+      const table: string[] = [];
+      for (const [label, url] of [['1 120 000', reference], ['12 345 678', reference.replace(/[^/]+$/, big.id)]] as const) {
+        for (const width of [360, 375, 640, 1024, 1280, 1440]) {
+          await wide.setViewportSize({ width, height: 900 });
+          await wide.goto(url);
+          await wide.getByText('Montant', { exact: true }).waitFor();
+          await settle(wide);
+          const tiles = await wide.locator('main .grid > div').evaluateAll((els) =>
+            els.map((tile) => {
+              const value = tile.querySelector('p:last-child') as HTMLElement;
+              const t = tile.getBoundingClientRect();
+              const css = getComputedStyle(tile);
+              const range = document.createRange();
+              range.selectNodeContents(value);
+              const text = range.getBoundingClientRect();
+              return {
+                text: value.textContent!.replace(/\s+/g, ' '), fontSize: getComputedStyle(value).fontSize, tileWidth: Math.round(t.width),
+                // The figure's right edge against the tile's content box (its right padding included).
+                slack: Math.round((t.right - parseFloat(css.paddingRight) - text.right) * 10) / 10,
+                lines: Math.round(value.getBoundingClientRect().height / parseFloat(getComputedStyle(value).lineHeight)),
+                scroll: value.scrollWidth - value.clientWidth,
+                // Only the unit may drop to a second line: the number (the text up to the last plain space) stays on one.
+                brokenNumber: (() => {
+                  const node = value.firstChild!;
+                  const whole = node.textContent!;
+                  const cut = whole.lastIndexOf(' ');
+                  const numberRange = document.createRange();
+                  numberRange.setStart(node, 0);
+                  numberRange.setEnd(node, cut > 0 ? cut : whole.length);
+                  return new Set([...numberRange.getClientRects()].map((r) => Math.round(r.top))).size > 1;
+                })(),
+                right: Math.round(t.right),
+              };
+            }),
+          );
+          const figure = tiles.find((t) => /\d{3}/.test(t.text) && /FCFA/.test(t.text))!;
+          table.push(`${label} @${width}: ${figure.fontSize}, tile ${figure.tileWidth}px, slack ${figure.slack}px, ${figure.lines} line(s)`);
+          for (const t of tiles) {
+            assert.ok(t.slack >= 0, `${label} @${width}: « ${t.text} » sticks out of its tile by ${-t.slack}px`);
+            assert.ok(t.scroll <= 0, `${label} @${width}: « ${t.text} » is cut (${t.scroll}px of overflow)`);
+            assert.equal(t.brokenNumber, false, `${label} @${width}: « ${t.text} » is broken inside its digits`);
+            assert.ok(t.right <= width, `${label} @${width}: a tile leaves the viewport`);
+          }
+          const doc = await wide.evaluate(() => document.documentElement.scrollWidth);
+          assert.ok(doc <= width, `${label} @${width}: the page scrolls sideways (${doc})`);
+          // From 1440 the figure is the reference's text-3xl (30px).
+          if (width === 1440) assert.equal(figure.fontSize, '30px', `${label} @1440: the reference size`);
+        }
+      }
+      console.log(`[tiles]\n${table.join('\n')}`);
+    } finally {
+      await api(`/purchases/${big.id}`, { method: 'DELETE', token: admin.token, farmId: admin.farmId });
+      await context.close();
+    }
+  });
+
+  it('formulaires larges : la réception (5 colonnes) et le plan vaccinal (4 colonnes) tiennent à 1440 sans défilement latéral, la grille défile dans son cadre à 375', async () => {
+    const { context, page: wide } = await newPage(browser, undefined, 2);
+    await context.addInitScript((farm) => localStorage.setItem('ap_farm', farm), admin.farmId);
+    try {
+      await uiLoginWithBackupCode(wide, admin.email, admin.backupCodes[4]);
+      await wide.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
+      const open = async (what: 'reception' | 'plan') => {
+        if (what === 'reception') {
+          await wide.goto(`${WEB_URL}/m/achats`);
+          await wide.getByRole('row', { name: /BC-0142/ }).getByRole('link').first().click();
+          await wide.getByRole('heading', { name: 'BC-0142' }).waitFor();
+          await wide.getByRole('button', { name: 'Réceptionner' }).click();
+        } else {
+          await wide.goto(`${WEB_URL}/m/sante`);
+          await wide.getByRole('tab', { name: 'Plans vaccinaux' }).click();
+          await wide.getByRole('button', { name: 'Ajouter' }).click();
+        }
+        const dialog = wide.getByRole('dialog');
+        await dialog.locator('fieldset .overflow-x-auto').waitFor();
+        await settle(wide);
+        return dialog;
+      };
+      const columns = {
+        reception: ['Quantité reçue ligne 1', 'N° de lot ligne 1', 'Péremption ligne 1'],
+        plan: ['Âge (jours) ligne 1', 'Produit ligne 1', 'Produit en stock ligne 1', 'Dose ligne 1'],
+      } as const;
+      for (const what of ['reception', 'plan'] as const) {
+        for (const width of [1440, 375]) {
+          await wide.setViewportSize({ width, height: 900 });
+          const dialog = await open(what);
+          const grid = await dialog.locator('fieldset .overflow-x-auto').evaluate((el) => ({ client: el.clientWidth, scroll: el.scrollWidth, right: el.getBoundingClientRect().right }));
+          const panel = await box(dialog);
+          const lastColumn = await box(dialog.getByLabel(columns[what][columns[what].length - 1], { exact: true }));
+          const doc = await wide.evaluate(() => document.documentElement.scrollWidth);
+          console.log(`[${what} @${width}] panel ${Math.round(panel.width)}px, grid ${grid.client}px client / ${grid.scroll}px scroll, last column right ${Math.round(lastColumn.x + lastColumn.width)}px (grid right ${Math.round(grid.right)}), page ${doc}px`);
+          assert.ok(doc <= width, `${what} @${width}: the page scrolls sideways (${doc})`);
+          assert.ok(panel.x >= 0 && panel.x + panel.width <= width, `${what} @${width}: the dialog fits the viewport`);
+          if (width === 1440) {
+            await wide.screenshot({ path: join(BUILT, what === 'reception' ? 'achat_reception_1440.png' : 'sante_plan_1440.png') });
+            assert.equal(Math.round(panel.width), 768, `${what}: the wide dialog (max-w-3xl)`);
+            assert.ok(grid.scroll <= grid.client, `${what} @1440: the grid does not scroll sideways (${grid.scroll} > ${grid.client})`);
+            assert.ok(lastColumn.x + lastColumn.width <= grid.right, `${what} @1440: every column is visible`);
+          } else {
+            assert.ok(grid.scroll > grid.client, `${what} @375: the grid scrolls inside its frame`);
+          }
+          await wide.keyboard.press('Escape');
+        }
+      }
+    } finally {
+      await context.close();
+    }
+  });
+
   it('barre latérale : 256 px, lignes de 48 px (principales) et 44 px (groupes)', async () => {
     await page.goto(`${WEB_URL}/`);
     await page.getByRole('heading', { name: 'Tableau de bord' }).waitFor();

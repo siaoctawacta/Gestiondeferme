@@ -54,6 +54,15 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     return page;
   }
 
+  /** A browser session of the seeded super administrator (a UI login burns one of its backup codes). */
+  async function asAdmin(): Promise<Page> {
+    const { page } = await newPage(browser);
+    await page.addInitScript((farm) => localStorage.setItem('ap_farm', farm), farmId);
+    await uiLoginWithBackupCode(page, admin.email, admin.backupCodes.shift()!);
+    await page.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
+    return page;
+  }
+
   /** The reference of the purchase row (`DA-0001`, then `BC-0001` once ordered) after a text filter. */
   const purchaseRow = (page: Page, re: RegExp) => page.getByRole('row', { name: re });
 
@@ -227,6 +236,45 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     await page.context().close();
   });
 
+  it('Administrateur : la pastille de péremption suit « Alerte de péremption » ; le réglage de biosécurité n’existe plus', async () => {
+    const page = await asAdmin();
+    const lot = (p: Page) => p.getByRole('row', { name: /PO-2026-11/ });
+    const openItem = async () => {
+      await page.goto(`${WEB_URL}/m/stocks`);
+      await page.getByRole('link', { name: 'Aliment ponte' }).click();
+      await page.getByRole('heading', { name: 'Aliment ponte' }).waitFor();
+      await lot(page).waitFor();
+    };
+    // The lot expires in 180 days: far beyond the default 30, so no pill.
+    await openItem();
+    assert.equal(await lot(page).getByText('Bientôt périmé').count(), 0);
+
+    await page.goto(`${WEB_URL}/admin/parametres`);
+    const alerts = page.locator('form').filter({ has: page.getByLabel('Alerte de péremption (jours)') });
+    await alerts.getByLabel('Alerte de péremption (jours)').waitFor();
+    // The dead `biosecurityWarningDays` setting is gone (the API would answer 400): no field, no request.
+    assert.equal(await page.locator('main').getByText(/biosécurité/i).count(), 0);
+    const puts: string[] = [];
+    page.on('request', (r) => { if (r.method() === 'PUT') puts.push(r.url().replace(/.*\/api/, '')); });
+    try {
+      assert.equal(await alerts.getByLabel('Alerte de péremption (jours)').inputValue(), '30');
+      await alerts.getByLabel('Alerte de péremption (jours)').fill('200');
+      await alerts.getByRole('button', { name: 'Enregistrer' }).click();
+      await page.getByText('Paramètres enregistrés').first().waitFor();
+      assert.ok(puts.length > 0 && puts.every((u) => /^\/settings\/[A-Za-z]+$/.test(u) && !/biosecurity/i.test(u)), `PUT ${puts.join(', ')}`);
+
+      // 180 days is now inside the warning window: the API's own judgement shows on the lot.
+      await openItem();
+      await lot(page).getByText('Bientôt périmé').waitFor();
+    } finally {
+      // The setting is the organisation's, shared with the other specs: put it back.
+      await api('/settings/expiryWarningDays', { method: 'PUT', token: admin.token, body: { value: 30 } });
+    }
+    await openItem();
+    assert.equal(await lot(page).getByText('Bientôt périmé').count(), 0);
+    await page.context().close();
+  });
+
   it('Responsable stock : crée un article, enregistre deux entrées, une sortie répartie sur deux lots, la corrige puis la supprime', async () => {
     const page = await asRole(emails.stock);
     await page.goto(`${WEB_URL}/m/stocks`);
@@ -328,12 +376,79 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     await page.context().close();
   });
 
+  it('Responsable stock : une entrée antidatée à un autre prix change le coût de la distribution (le registre fait foi) ; la supprimer le rétablit', async () => {
+    // Corrections happen BEFORE the inventory: once it is validated, this past is closed (see the lock test below).
+    const page = await asRole(emails.stock);
+    const director = await asRole(emails.director);
+    const distributionCost = async () => {
+      await director.goto(`${WEB_URL}/m/alimentation`);
+      await director.getByRole('tab', { name: 'Distributions' }).click();
+      const row = director.getByRole('row', { name: new RegExp(lotCode) });
+      await row.waitFor();
+      return flat(await row.innerText());
+    };
+    assert.match(await distributionCost(), /151 250 FCFA/);
+
+    // 1 000 kg received two days ago at 400: the average of the day of the distribution becomes
+    // (280 000 + 930 000 + 400 000) / 5 000 = 322, so 500 kg cost 161 000, not the 151 250 written at the time.
+    await page.goto(`${WEB_URL}/m/stocks`);
+    const ponte = page.getByRole('row', { name: /Aliment ponte/ });
+    await ponte.getByRole('button', { name: 'Entrée' }).click();
+    let dialog = page.getByRole('dialog', { name: 'Entrée — Aliment ponte' });
+    await dialog.getByLabel('Date', { exact: true }).fill(day(-2));
+    await dialog.getByLabel('Quantité').fill('1000');
+    await dialog.getByLabel('Coût unitaire (FCFA)').fill('400');
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await mainShows(page, /Aliment ponte Aliment 4 500 kg/);
+    assert.match(await distributionCost(), /161 000 FCFA/);
+
+    // Deleting the late entry puts the ledger, and the cost, back.
+    await page.getByRole('tab', { name: 'Mouvements' }).click();
+    const late = page.getByRole('row', { name: new RegExp(`^${day(-2)} Aliment ponte Entrée`) });
+    await late.waitFor();
+    await late.getByRole('button', { name: 'Supprimer' }).click();
+    dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Supprimer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await late.waitFor({ state: 'detached' });
+    assert.match(await distributionCost(), /151 250 FCFA/);
+    await director.context().close();
+    await page.context().close();
+  });
+
   it('Magasinier compte 3 400 kg ; Responsable stock valide : le niveau est ajusté de −100', async () => {
     let page = await asRole(emails.storekeeper);
     await page.goto(`${WEB_URL}/m/stocks`);
     await page.getByRole('tab', { name: 'Inventaires' }).click();
+    // A session dated four days ago: its draft shows what was held THEN (1 000 kg before the reception of day -3, and
+    // nothing of the buckets entered today), not today's levels.
     await page.getByRole('button', { name: 'Ajouter' }).click();
-    const dialog = page.getByRole('dialog');
+    let dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Date', { exact: true }).fill(day(-4));
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await page.getByRole('link', { name: day(-4) }).click();
+    await page.getByRole('heading', { name: `Inventaire du ${day(-4)}` }).waitFor();
+    const past = (name: string) => page.locator('fieldset div.flex.items-center.gap-2').filter({ hasText: name });
+    await past('Aliment ponte').waitFor();
+    assert.match(flat(await past('Aliment ponte').innerText()), /Théorique ligne \d : 1 000/);
+    assert.match(flat(await past('Seaux de test').innerText()), /Théorique ligne \d : 0/);
+    // The gap follows the typing, from that quantity.
+    await past('Aliment ponte').getByLabel(/^Compté ligne/).fill('990');
+    assert.match(flat(await past('Aliment ponte').innerText()), /−10/);
+    await page.goBack();
+    // The draft is useless: the storekeeper deletes it (the daily rule).
+    await page.getByRole('tab', { name: 'Inventaires' }).click();
+    const old = page.getByRole('row', { name: new RegExp(day(-4)) });
+    await old.getByRole('button', { name: 'Supprimer' }).click();
+    dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Supprimer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await old.waitFor({ state: 'detached' });
+
+    await page.getByRole('button', { name: 'Ajouter' }).click();
+    dialog = page.getByRole('dialog');
     await dialog.getByRole('button', { name: 'Enregistrer' }).click();
     await dialog.waitFor({ state: 'detached' });
     // `/m/stocks/inv-{id}` goes through the router to the count sheet.
@@ -363,6 +478,9 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     await page.getByText('Validée', { exact: true }).waitFor();
     assert.equal(await page.getByRole('button', { name: "Valider l'inventaire" }).count(), 0);
     assert.equal(await page.getByLabel(/^Compté ligne/).first().isDisabled(), true);
+    // A validated session lists what was counted, not every article of the farm as « — » rows.
+    assert.equal(await page.getByLabel(/^Compté ligne/).count(), 1);
+    assert.equal(await page.getByText(/Écart ligne \d : —/).count(), 0);
 
     await page.goto(`${WEB_URL}/m/stocks`);
     const ponte = page.getByRole('row', { name: /Aliment ponte/ });
@@ -373,6 +491,46 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     await adjustment.waitFor();
     assert.match(flat(await adjustment.innerText()), /Aliment ponte Ajustement -100 .* Inventaire/);
     await page.context().close();
+  });
+
+  it('Après l’inventaire validé : corriger la distribution ou supprimer l’entrée antérieure est refusé (409) et le stock ne bouge pas', async () => {
+    const locked = `Un inventaire validé le ${day(0)} verrouille les mouvements antérieurs de Aliment ponte`;
+    const stockOf = async () => (await api<{ items: { id: string; quantity: number }[] }>('/stock', { token: admin.token, farmId })).items.find((i) => i.id === ponteId)!.quantity;
+    assert.equal(await stockOf(), 3400);
+
+    // The director corrects the 500 kg of the distribution: refused, the message stays in the dialog.
+    let page = await asRole(emails.director);
+    await page.goto(`${WEB_URL}/m/alimentation`);
+    await page.getByRole('tab', { name: 'Distributions' }).click();
+    const row = page.getByRole('row', { name: new RegExp(lotCode) });
+    await row.getByRole('button', { name: 'Modifier' }).click();
+    let dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Quantité (kg)').fill('400');
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.getByText(locked).waitFor();
+    assert.equal(await page.getByRole('dialog').count(), 1, 'the dialog stays open on the refusal');
+    await dialog.getByRole('button', { name: 'Annuler' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.match(flat(await row.innerText()), /151 250 FCFA/);
+    await page.context().close();
+
+    // The stock manager deletes the entry of ten days ago: refused as well.
+    page = await asRole(emails.stock);
+    await page.goto(`${WEB_URL}/m/stocks`);
+    await page.getByRole('link', { name: 'Aliment ponte' }).click();
+    await page.getByRole('heading', { name: 'Aliment ponte' }).waitFor();
+    await page.getByRole('tab', { name: 'Mouvements' }).click();
+    const entry = page.getByRole('row', { name: new RegExp(`^${day(-10)} Aliment ponte Entrée`) });
+    await entry.getByRole('button', { name: 'Supprimer' }).click();
+    dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Supprimer' }).click();
+    await dialog.getByText(locked).waitFor();
+    await dialog.getByRole('button', { name: 'Annuler' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await entry.waitFor();
+    await page.context().close();
+
+    assert.equal(await stockOf(), 3400);
   });
 
   it('Vétérinaire : planifie deux vaccinations, réalise l’une depuis un lot de produit (le stock baisse), traite avec délai d’attente', async () => {
@@ -499,6 +657,48 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     await page.context().close();
   });
 
+  it('Administrateur : modifier un enregistrement dont la valeur n’est plus proposée garde cette valeur sélectionnée et ne l’envoie pas', async () => {
+    const call = <T = { id: string }>(path: string, method = 'GET', body?: unknown) => api<T>(path, { method, token: admin.token, farmId, body });
+    // A biosecurity entry on a building, and a feed product linked to an article that was deactivated since.
+    const buildings = await call<{ items: { id: string; name: string }[] }>('/buildings');
+    await call('/biosecurity-logs', 'POST', { date: day(-1), type: 'NETTOYAGE', buildingId: buildings.items.find((b) => b.name === 'Poulailler L')!.id, note: 'avant correction' });
+    const retired = await call('/stock-items', 'POST', { name: 'Aliment retiré', category: 'ALIMENT', unit: 'kg', active: true });
+    await call('/feed-products', 'POST', { name: 'Produit sur article retiré', kind: 'ALIMENT_COMPLET', unitCost: 200, stockItemId: retired.id });
+    await call(`/stock-items/${retired.id}`, 'PATCH', { active: false });
+
+    const page = await asAdmin();
+    const writes: string[] = [];
+    page.on('request', (r) => { if (['PATCH', 'PUT', 'POST'].includes(r.method()) && !r.url().includes('/auth/')) writes.push(`${r.method()} ${r.url().replace(/.*\/api/, '')} ${r.postData()}`); });
+    const options = (select: ReturnType<Page['getByLabel']>) =>
+      select.evaluate((el: HTMLSelectElement) => [...el.options].map((o) => `${o.text}${o.selected ? '*' : ''}${o.disabled ? '(off)' : ''}`));
+
+    // 1. The building is among the options once they load: it ends up selected (by its name), and only the note is sent.
+    await page.goto(`${WEB_URL}/m/sante`);
+    await page.getByRole('tab', { name: 'Biosécurité' }).click();
+    await page.getByRole('row', { name: /avant correction/ }).getByRole('button', { name: 'Modifier' }).click();
+    let dialog = page.getByRole('dialog');
+    await page.waitForFunction(() => [...document.querySelectorAll<HTMLSelectElement>('[role="dialog"] select')].some((s) => s.selectedOptions[0]?.text === 'Poulailler L'));
+    assert.ok((await options(dialog.getByLabel('Bâtiment'))).includes('Poulailler L*'));
+    await dialog.getByLabel('Note').fill('après correction');
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.ok(writes.some((w) => /^PATCH \/biosecurity-logs\/\w+ \{"note":"après correction"\}$/.test(w)), writes.join('\n'));
+
+    // 2. The article is no longer offered: « Valeur actuelle » stays selected (disabled) and is not sent.
+    await page.goto(`${WEB_URL}/m/alimentation`);
+    await page.getByRole('tab', { name: 'Aliments' }).click();
+    await page.getByRole('row', { name: /Produit sur article retiré/ }).getByRole('button', { name: 'Modifier' }).click();
+    dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Nom').fill('Produit sur article retiré 2');
+    const article = dialog.getByLabel(/Article/);
+    await page.waitForFunction(() => [...document.querySelectorAll<HTMLSelectElement>('[role="dialog"] select')].some((s) => [...s.options].some((o) => o.text === 'Aliment ponte')));
+    assert.ok((await options(article)).includes('Valeur actuelle*(off)'), JSON.stringify(await options(article)));
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    assert.ok(writes.some((w) => /^PATCH \/feed-products\/\w+ \{"name":"Produit sur article retiré 2"\}$/.test(w)), writes.join('\n'));
+    await page.context().close();
+  });
+
   it('Directeur : le tableau de bord liste « Stock faible » et « Vaccination en retard »', async () => {
     const page = await asRole(emails.director);
     await page.goto(`${WEB_URL}/`);
@@ -538,6 +738,42 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     // What the farm owes: the received goods, nothing paid.
     assert.match(flat(await supplier.innerText()), /Agro Provende SA .* 1 170 000 FCFA/);
     assert.equal(await page.getByRole('button', { name: 'Ajouter' }).count(), 0);
+    await page.context().close();
+  });
+
+  it('Administrateur : un plan vaccinal ne s’applique pas deux fois au même lot, sauf si toutes ses étapes ont été annulées', async () => {
+    const call = <T = { id: string }>(path: string, method = 'GET', body?: unknown) => api<T>(path, { method, token: admin.token, farmId, body });
+    await call('/vaccination-plans', 'POST', { name: 'Plan e2e', species: 'AVICOLE', items: [{ ageDays: 5, productName: 'Newcastle' }, { ageDays: 12, productName: 'Gumboro' }] });
+    const page = await asAdmin();
+    const apply = async () => {
+      await page.goto(`${WEB_URL}/m/sante`);
+      await page.getByRole('tab', { name: 'Plans vaccinaux' }).click();
+      await page.getByRole('row', { name: /Plan e2e/ }).getByRole('button', { name: 'Appliquer à un lot' }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByLabel('Lot').selectOption({ label: lotCode });
+      await dialog.getByRole('button', { name: 'Appliquer' }).click();
+      return dialog;
+    };
+    const planned = () => call<{ items: { id: string; productName: string; status: string }[] }>(`/health-acts?batchId=${lotId}&pageSize=100`).then((r) => r.items.filter((a) => /Newcastle|Gumboro/.test(a.productName ?? '')));
+    let dialog = await apply();
+    await dialog.waitFor({ state: 'detached' });
+    const created = (await planned()).filter((a) => a.status !== 'ANNULE');
+    assert.ok(created.length >= 2, 'the two steps were planned');
+
+    // Applied again while its acts stand: refused, the reason stays in the dialog.
+    dialog = await apply();
+    await dialog.getByText(/déjà/i).waitFor();
+    await dialog.getByRole('button', { name: 'Annuler' }).click();
+    await dialog.waitFor({ state: 'detached' });
+
+    // Every step cancelled: the plan can be applied again.
+    for (const act of created) await call(`/health-acts/${act.id}/cancel`, 'POST');
+    dialog = await apply();
+    await dialog.waitFor({ state: 'detached' });
+    const again = (await planned()).filter((a) => a.status !== 'ANNULE');
+    assert.ok(again.length >= 2, 'planned again');
+    // Leave the lot as it was: the alerts of the dashboard are asserted above, in this flow's order.
+    for (const act of again) await call(`/health-acts/${act.id}/cancel`, 'POST');
     await page.context().close();
   });
 });

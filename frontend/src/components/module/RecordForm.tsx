@@ -23,6 +23,8 @@ export interface RecordFormProps {
   patchPath: (row: { id: string }) => string;
   /** Fixed values merged into the create body (the list's scope). */
   scope?: Record<string, string>;
+  /** Wide dialog (see `ActionDialog`). */
+  wide?: boolean;
   onSaved: () => void;
   onClose: () => void;
 }

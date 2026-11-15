@@ -43,6 +43,8 @@ const plans: ModuleConfig<VaccinationPlanRow> = {
   // A catalogue of the organisation: master rights, whatever the verb.
   createPermission: 'update',
   deletePermission: 'update',
+  // The steps grid has four columns.
+  wide: true,
   fields: [
     { name: 'name', label: 'Nom', type: 'text', required: true },
     { name: 'species', label: 'Espèce', type: 'select', required: true, defaultValue: 'AVICOLE', options: [{ value: 'AVICOLE', label: 'Avicole' }, { value: 'PORCIN', label: 'Porcin' }] },

@@ -665,6 +665,21 @@ describe('inventory draft grid: built from the session response only', () => {
     expect(screen.queryByLabelText('Compté ligne 1')).not.toBeInTheDocument();
   });
 
+  it('re-reads the session after a save: the gap is the one the API now returns', async () => {
+    draftWith([draftLine('s1', 'Aliment croissance chair', 4200)]);
+    mountDetail('inv-i1');
+    const user = userEvent.setup();
+    await user.type(await screen.findByLabelText('Compté ligne 1'), '4180');
+    expect(screen.getByTestId('gap-1')).toHaveTextContent('Écart ligne 1 : −20');
+    // What the server holds once the count is saved: its own theoretical quantity and gap (4 190 at the session date).
+    draftWith([draftLine('s1', 'Aliment croissance chair', 4190, 4180, -10)]);
+    await user.click(screen.getByRole('button', { name: 'Enregistrer le brouillon' }));
+    await screen.findByText('Brouillon enregistré');
+    await waitFor(() => expect(screen.getByTestId('gap-1')).toHaveTextContent('Écart ligne 1 : −10'));
+    expect(screen.getByText('Théorique ligne 1 :').parentElement?.textContent).toBe('Théorique ligne 1 : 4\u202f190');
+    expect(screen.getByLabelText('Compté ligne 1')).toHaveValue(4180);
+  });
+
   it('keeps the saved count of an article no longer active in the grid and in the saved lines', async () => {
     draftWith([draftLine('s1', 'Aliment croissance chair', 4200), draftLine('old', 'Ancien article', 7, 5, -2)]);
     mountDetail('inv-i1');

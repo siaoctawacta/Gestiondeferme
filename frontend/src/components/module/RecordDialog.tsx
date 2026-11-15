@@ -23,6 +23,7 @@ export function RecordDialog<T extends { id: string }>({ config, row, scope, onC
       createPath={config.endpoint}
       patchPath={(r) => `${config.endpoint}/${r.id}`}
       scope={scope}
+      wide={config.wide}
       onSaved={onSaved}
       onClose={onClose}
     />

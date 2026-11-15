@@ -97,6 +97,13 @@ function Sheet({ data }: { data: InventoryData }) {
     try {
       await save();
       setNotice({ tone: 'success', message: 'Brouillon enregistré' });
+      // The save returns the counted lines only: the grid is read again, for the theoretical quantities and gaps the
+      // server now holds (the notice stays, so the sheet is refreshed in place and not remounted).
+      try {
+        setRows(rowsOf(await api.get<InventoryData>(`/inventories/${data.id}`)));
+      } catch {
+        /* the refetch below shows the error state */
+      }
       refresh();
     } catch (e) {
       setNotice({ tone: 'error', message: errorMessage(e) });

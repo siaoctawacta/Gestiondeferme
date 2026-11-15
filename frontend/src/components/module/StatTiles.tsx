@@ -3,19 +3,27 @@ export interface StatTile {
   value: string;
 }
 
+/**
+ * The space before a unit made of letters (`FCFA`, `kg`, `kg/jour`) becomes a plain one, so that only the unit may drop
+ * to a second line; every space inside the number stays a no-break one. `12 %` keeps its no-break space.
+ */
+const breakBeforeUnit = (value: string): string => value.replace(/[  ]+(?=\p{L}[\p{L}/.]*$)/u, ' ');
+
 export function StatTiles({ tiles }: { tiles: StatTile[] }) {
   return (
     <div className="mb-6 grid grid-cols-2 gap-3 lg:grid-cols-4">
       {tiles.map((t) => (
-        <div key={t.label} className="min-w-0 rounded-[calc(var(--radius)+10px)] bg-card p-3 shadow-card sm:p-4">
+        // The tile is a size container: its figure is sized from the tile's own content width (`cqw`), never from the
+        // screen or from the text, so the layout is the same for `12` and `12 345 678 FCFA`.
+        <div key={t.label} className="@container min-w-0 rounded-[calc(var(--radius)+10px)] bg-card p-3 shadow-card sm:p-4">
           <p className="text-xs text-muted-foreground">{t.label}</p>
           {/*
-            An amount never breaks inside its digits (`whitespace-nowrap`): the figure scales down with its tile instead.
-            `1 120 000 FCFA` is ~7.8em wide: two wide tiles from `sm` keep the reference `text-3xl`; the four tiles of
-            `lg` are ~165px wide at 1024 (`text-base`) and ~230px at 1280 (`text-2xl`); from 1440, where they are 271px
-            (the reference layout), `text-3xl` is back.
+            12.6cqw is the largest size at which `12 345 678 FCFA` (7.8em) still fits one line; it reaches the reference
+            `text-3xl` (30px) at the 1440px layout, whose tile content is 239px wide, and is floored at 18px. Digits never
+            break (no-break spaces, no `overflow-wrap`); below ~13 characters the unit drops to a second line instead of
+            the figure leaving its tile.
           */}
-          <p className="mt-1 min-w-0 whitespace-nowrap font-display text-lg font-bold sm:text-3xl lg:text-base xl:text-2xl min-[1440px]:text-3xl">{t.value}</p>
+          <p className="mt-1 min-w-0 font-display font-bold leading-[1.2] [font-size:clamp(1.125rem,12.6cqw,1.875rem)]">{breakBeforeUnit(t.value)}</p>
         </div>
       ))}
     </div>

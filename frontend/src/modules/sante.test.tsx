@@ -438,6 +438,19 @@ describe('vaccination plans', () => {
     });
   });
 
+  it('opens the plan form wide (four columns of steps), the act form at the default width', async () => {
+    mountPage();
+    await openTab('Plans vaccinaux');
+    await screen.findByText('Programme chair');
+    const user = userEvent.setup();
+    await user.click(button('Ajouter'));
+    expect((await screen.findByRole('dialog')).className).toContain('max-w-3xl');
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Annuler' }));
+    await openTab('Interventions');
+    await user.click(button('Ajouter'));
+    expect((await screen.findByRole('dialog')).className).toContain('max-w-lg');
+  });
+
   it('is a master list: a daily-entry agent neither adds nor applies', async () => {
     mountPage({ perms: { sante: ['read', 'create'], lots: ALL } });
     await openTab('Plans vaccinaux');

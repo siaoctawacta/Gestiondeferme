@@ -383,15 +383,21 @@ Livraison en cinq tranches ; chacune se termine par une application qui tourne e
   saisie : c'est la somme des mouvements (entrées, sorties, ajustements) ; une sortie qui rendrait le stock négatif est
   refusée. Une sortie prise sur plusieurs lots reste une seule opération (la corriger ou la supprimer agit sur
   l'ensemble).
-- Inventaires : un brouillon de comptage, enregistré puis validé ; la validation recalcule la quantité théorique et
-  enregistre les écarts comme ajustements.
-- Alimentation : une distribution consomme le stock de l'aliment lié et prend le coût moyen pondéré du stock.
+- Inventaires : un brouillon de comptage, enregistré puis validé ; la feuille propose chaque article actif avec sa
+  quantité théorique à la date de l'inventaire (pas celle d'aujourd'hui) ; la validation enregistre les écarts comme
+  ajustements. Un inventaire validé ferme le passé de l'article compté : tout mouvement, toute correction de
+  distribution, d'acte de santé ou réception antérieurs à cette date sont refusés (« Un inventaire validé le … verrouille
+  les mouvements antérieurs de … »). Les corrections se font donc avant la validation.
+- Alimentation : une distribution consomme le stock de l'aliment lié ; son coût est toujours celui du registre de stock
+  (il suit une entrée antidatée à un autre prix ou sa suppression). Changer l'unité ou la catégorie d'un article lié à
+  un aliment est refusé.
 - Fournisseurs et achats : demande → validation → commande (bon de commande imprimable) → réception → paiement, ou
   annulation avant la réception. La réception entre en stock (lot, péremption) ; on ne peut pas recevoir plus que la
   quantité commandée. Le solde d'un fournisseur est la somme de ses achats reçus moins les paiements.
 - Santé et biosécurité : vaccinations, traitements, désinfections et diagnostics (planifiés, réalisés, en retard), plans
   vaccinaux appliqués à un lot, délais d'attente affichés sur le lot et l'animal, quarantaines, incidents, relevés de
-  biosécurité. Un acte réalisé avec un produit en stock en retire la quantité du stock.
+  biosécurité. Un acte réalisé avec un produit en stock en retire la quantité du stock. Un plan dont toutes les étapes
+  ont été annulées peut être appliqué de nouveau au lot. Le réglage « alerte biosécurité » n'existe plus.
 - Alertes du tableau de bord : « Stock faible / critique », produits périmés ou bientôt périmés, « Vaccination en
   retard / à venir », traitements et désinfections en retard.
 - Tests : parcours bout en bout Playwright `frontend/e2e/logistics.spec.ts` (`npm run e2e -- logistics` : demande,
@@ -399,7 +405,8 @@ Livraison en cinq tranches ; chacune se termine par une application qui tourne e
   alertes, droits du comptable) et captures de Stocks, Fournisseurs, Achats et Santé comparées à la maquette
   (`docs/reference/built/`), vérifiées aussi sur un écran de 375 px : feuille d'inventaire
   (`m_stocks_inventaire_375.png`), détail d'un achat (`achat_detail_375.png`), réception (`achat_reception_375.png`),
-  formulaire d'acte de santé (`sante_acte_375.png`) et bon de commande à l'impression
+  formulaire d'acte de santé (`sante_acte_375.png`), réception et plan vaccinal en dialogue large à 1440 px
+  (`achat_reception_1440.png`, `sante_plan_1440.png`) et bon de commande à l'impression
   (`bon_de_commande_impression_375.png`).
 - Écarts assumés avec la maquette, dans les données de test : les jours de stock et la vaccination planifiée sont
   datés par rapport au jour d'exécution (la date de la maquette est passée) ; le solde d'Agro Provende SA est 0 (le

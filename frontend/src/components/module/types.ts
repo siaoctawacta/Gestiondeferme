@@ -256,6 +256,11 @@ type ModuleConfigBase<T extends { id: string }> = {
   statusKey?: keyof T;
   /** Extra filters after the status one. */
   filters?: FilterDef[];
+  /**
+   * Opens the generated add / edit dialog at `max-w-3xl` instead of `max-w-lg`: needed by a `lines` field of more than
+   * three columns, which would otherwise scroll sideways. Same option as `ActionDialog.wide`.
+   */
+  wide?: boolean;
   /** Row to initial form values: the stored values an edit is compared with (default: the row itself). */
   toForm?: (row: T) => FormMap;
   /**
