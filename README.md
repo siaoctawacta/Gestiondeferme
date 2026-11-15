@@ -387,7 +387,8 @@ Livraison en cinq tranches ; chacune se termine par une application qui tourne e
   quantité théorique à la date de l'inventaire (pas celle d'aujourd'hui) ; la validation enregistre les écarts comme
   ajustements. Un inventaire validé ferme le passé de l'article compté : tout mouvement, toute correction de
   distribution, d'acte de santé ou réception antérieurs à cette date sont refusés (« Un inventaire validé le … verrouille
-  les mouvements antérieurs de … »). Les corrections se font donc avant la validation.
+  les mouvements antérieurs de … »). Les corrections se font donc avant la validation ; seule la correction du prix
+  d'une entrée antérieure reste possible (l'inventaire fixe les quantités, pas les valeurs).
 - Alimentation : une distribution consomme le stock de l'aliment lié ; son coût est toujours celui du registre de stock
   (il suit une entrée antidatée à un autre prix ou sa suppression). Changer l'unité ou la catégorie d'un article lié à
   un aliment est refusé.
