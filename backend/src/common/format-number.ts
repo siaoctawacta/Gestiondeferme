@@ -6,3 +6,9 @@ export function formatCount(n: number): string {
   const grouped = int.replace(/\B(?=(\d{3})+(?!\d))/g, NNBSP);
   return `${n < 0 ? '-' : ''}${grouped}${dec ? `.${dec}` : ''}`;
 }
+
+const NBSP = '\u00a0';
+
+/** An amount the way `formatMoney` of the screens writes it: thousands and the currency separated by a no-break space (`400 000 FCFA`). */
+export const formatFcfa = (n: number): string =>
+  `${formatCount(n).replaceAll(NNBSP, NBSP)}${NBSP}FCFA`;

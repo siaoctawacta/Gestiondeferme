@@ -22,14 +22,17 @@ import {
   IssueInvoiceDto,
   UpdateInvoiceDto,
 } from './dto/invoice.dto';
+import { CreateClientPaymentDto } from './dto/payment.dto';
 import { InvoiceReads } from './invoice-reads.service';
+import { PaymentsService } from './payments.service';
 import { InvoicesService } from './invoices.service';
 import { INVOICE_COLUMNS } from './sale-view';
 
 /**
  * Permissions on `ventes`: a draft is a daily entry (`create`: create, edit,
- * delete while it is a draft); issuing (alone or with the creation) is
- * `update`; cancelling an issued invoice is `validate`.
+ * delete while it is a draft); issuing (alone or with the creation) and the
+ * client payments (and their deletion) are `update`; cancelling an issued
+ * invoice and refunding a customer are `validate`.
  *
  * `SalesModule` registers `SellablesController` BEFORE this controller, so
  * `GET /sales/sellables` is not taken for `GET /sales/:id`.
@@ -40,6 +43,7 @@ export class InvoicesController {
   constructor(
     private readonly reads: InvoiceReads,
     private readonly invoices: InvoicesService,
+    private readonly payments: PaymentsService,
   ) {}
 
   @Get()
@@ -117,5 +121,30 @@ export class InvoicesController {
     @Body() dto: CancelInvoiceDto,
   ) {
     return this.invoices.cancel(ctx, id, dto);
+  }
+
+  /**
+   * An encashment, or (`kind: REMBOURSEMENT`) the refund of what a credit note
+   * left owed back: the route needs `update`, a refund also `validate`
+   * (checked by the service).
+   */
+  @Post(':id/payments')
+  @RequirePermission('ventes', 'update')
+  pay(
+    @Ctx() ctx: RequestContext,
+    @Param('id') id: string,
+    @Body() dto: CreateClientPaymentDto,
+  ) {
+    return this.payments.add(ctx, id, dto);
+  }
+
+  @Delete(':id/payments/:paymentId')
+  @RequirePermission('ventes', 'update')
+  unpay(
+    @Ctx() ctx: RequestContext,
+    @Param('id') id: string,
+    @Param('paymentId') paymentId: string,
+  ) {
+    return this.payments.remove(ctx, id, paymentId);
   }
 }

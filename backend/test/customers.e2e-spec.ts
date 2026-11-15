@@ -121,6 +121,7 @@ describe('Customers (e2e)', () => {
       invoiced: 0,
       paid: 0,
       credited: 0,
+      refunded: 0,
     });
     await http().get('/api/customers/nope').set(director).expect(404);
   });

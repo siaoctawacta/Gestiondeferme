@@ -868,7 +868,7 @@ describe('Invoices (e2e)', () => {
       expect(inv).toMatchObject({ status: 'SOLDEE', total: 0, due: 0 });
     });
 
-    it('refuses an inactive customer at issue and a payment (arrives with the payments)', async () => {
+    it('refuses an inactive customer at issue, then issues with the payment collected (RC-0001) once it is active again', async () => {
       const d = await draft();
       await http()
         .patch(`/api/customers/${customerId}`)
@@ -887,19 +887,27 @@ describe('Invoices (e2e)', () => {
         .post(`/api/sales/${d.id}/issue`)
         .set(accountant)
         .send({ payment: { amount: 1000, method: 'ESPECES' } })
-        .expect(400);
-      expect(msg(pay)).toContain("Le paiement à l'émission");
+        .expect(201);
+      expect(pay.body).toMatchObject({
+        status: 'PARTIELLE',
+        paid: 1000,
+        payments: [{ number: 'RC-0001', amount: 1000, method: 'ESPECES' }],
+      });
       await http()
         .post('/api/sales/issued')
         .set(accountant)
-        .send({ ...body(), payment: { amount: 1000, method: 'ESPECES' } })
-        .expect(400);
-      expect((await get(d.id)).status).toBe('BROUILLON');
+        .send({
+          ...body({ lines: [lotLine({ quantity: 1 })] }),
+          payment: { amount: 3500, method: 'ESPECES' },
+        })
+        .expect(201);
+      const again = await draft({ lines: [lotLine({ quantity: 1 })] });
       await http()
-        .post(`/api/sales/${d.id}/issue`)
+        .post(`/api/sales/${again.id}/issue`)
         .set(accountant)
         .send({ payment: { amount: 0, method: 'X' } })
         .expect(400);
+      expect((await get(again.id)).status).toBe('BROUILLON');
     });
 
     it('permissions: COMPTABLE and COMMERCIAL issue, read-only and unrelated roles do not', async () => {

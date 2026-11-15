@@ -13,6 +13,7 @@ import type { ExportColumn } from '../listing/export';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { receivablesOf } from '../sales/sale-view';
 import type {
   CreateCustomerDto,
   CustomerQueryDto,
@@ -36,6 +37,7 @@ export interface CustomerDetail extends CustomerItem {
   invoiced: number;
   paid: number;
   credited: number;
+  refunded: number;
 }
 
 export const CUSTOMER_NOT_FOUND = 'Client introuvable';
@@ -78,6 +80,7 @@ interface Standing {
   invoiced: Decimal;
   paid: Decimal;
   credited: Decimal;
+  refunded: Decimal;
 }
 
 const NOTHING: Standing = {
@@ -85,6 +88,7 @@ const NOTHING: Standing = {
   invoiced: dec(0),
   paid: dec(0),
   credited: dec(0),
+  refunded: dec(0),
 };
 
 /**
@@ -101,17 +105,27 @@ export class CustomersService {
   ) {}
 
   /**
-   * The standing of each customer over `farmIds`. No invoice exists yet: every
-   * customer stands at 0 until the invoices land (the receivables function then
-   * replaces this body, the callers stay).
+   * The standing of each customer over `farmIds`, from `receivablesOf` (the
+   * one read of what customers owe): THREE queries whatever the number of
+   * customers. `balance` = Σ due − Σ refund due of the invoices in
+   * `REVENUE_STATUSES`; the totals behind it count the same invoices.
    */
-  private standings(
+  private async standings(
     customerIds: string[],
     farmIds: string[],
-  ): Map<string, Standing> {
+  ): Promise<Map<string, Standing>> {
     const result = new Map<string, Standing>();
-    if (farmIds.length === 0) return result;
-    for (const id of customerIds) result.set(id, NOTHING);
+    const rows = await receivablesOf(this.prisma, farmIds, { customerIds });
+    for (const r of rows) {
+      const so = result.get(r.customerId) ?? NOTHING;
+      result.set(r.customerId, {
+        balance: so.balance.add(r.due).sub(r.refundDue),
+        invoiced: so.invoiced.add(r.total),
+        paid: so.paid.add(r.paid),
+        credited: so.credited.add(r.credited),
+        refunded: so.refunded.add(r.refunded),
+      });
+    }
     return result;
   }
 
@@ -142,7 +156,7 @@ export class CustomersService {
           orderBy: [order, { id: 'asc' }],
           ...range,
         });
-        const standings = this.standings(
+        const standings = await this.standings(
           rows.map((r) => r.id),
           farmIds,
         );
@@ -169,12 +183,13 @@ export class CustomersService {
       where: { id, organizationId: ctx.user.organizationId },
     });
     if (!row) throw new NotFoundException(CUSTOMER_NOT_FOUND);
-    const standing = this.standings([id], farmIds).get(id) ?? NOTHING;
+    const standing = (await this.standings([id], farmIds)).get(id) ?? NOTHING;
     return {
       ...this.toItem(row, standing),
       invoiced: standing.invoiced.toNumber(),
       paid: standing.paid.toNumber(),
       credited: standing.credited.toNumber(),
+      refunded: standing.refunded.toNumber(),
     };
   }
 

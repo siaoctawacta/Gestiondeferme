@@ -1,5 +1,9 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
-import type { Decimal } from '@prisma/client/runtime/client';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+} from '@nestjs/common';
+import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
 import { EggStockService } from '../eggs/egg-stock';
 import type { Prisma } from '../generated/prisma/client';
@@ -8,6 +12,7 @@ import { AnimalTargetRegistry } from '../herd/animal-target';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import { WithdrawalRegistry } from '../herd/withdrawal';
 import { AnimalSales } from '../pigs/animal-sales';
+import { exitCostsByItem } from '../stock/operation-costs';
 import {
   StockLedgerService,
   type RecordInput,
@@ -38,7 +43,26 @@ export interface EffectInvoice {
   }[];
 }
 
+/** What the return of a credit note needs of it: its date and number and what each credited line takes back. */
+export interface ReturnNote {
+  id: string;
+  farmId: string;
+  /** The invoice credited: its SALE exits say what the returned articles cost. */
+  invoiceId: string;
+  /** The `AV-NNNN` number: written on the events and movements it makes. */
+  number: string;
+  date: Date;
+  lines: {
+    kind: SaleLineKind;
+    batchId: string | null;
+    stockItemId: string | null;
+    /** What this credit note takes back of the line. */
+    quantity: Decimal;
+  }[];
+}
+
 const SOURCE = 'SALE';
+const RETURN_SOURCE = 'CREDIT_NOTE';
 
 /** The distinct ids in ascending order: the order every lock is taken in. */
 const ascending = (ids: (string | null)[]): string[] =>
@@ -202,5 +226,123 @@ export class SaleEffects {
       label: invoice.number,
     });
     await this.stock.reverseBySource(tx, SOURCE, invoice.id, farmIds);
+  }
+
+  /**
+   * Puts the goods of a credit note with return back, at the credit note's
+   * date, in the same order of locks as `apply`: the lots (LOT and OEUFS
+   * lines, `lockBatches`, ascending id) -> the egg lots checked open
+   * (`assertReturn`: a closed lot is a 409) -> the herd events (an `ENTREE`
+   * `Retour client`, source `CREDIT_NOTE`; the ledger refuses a closed lot and
+   * a full building) -> ONE stock-ledger call last. ANIMAL lines are refused
+   * by the caller before any lock, SERVICE lines have nothing to return, eggs
+   * need no write (the credit note's lines are counted as negative outflow by
+   * `SaleEggOutflows`, the caller having stored them first).
+   *
+   * Each returned ARTICLE comes back as an `ENTREE` of reason `RETOUR` into a
+   * NEW batch carrying the lot number and expiry of the first piece the sale
+   * took, at the average unit cost of the sale's exits of that article as the
+   * ledger holds them NOW (`exitCostsByItem`: nothing is snapshotted); two
+   * lines of one article make one movement.
+   */
+  async applyReturn(
+    tx: Tx,
+    ctx: RequestContext,
+    note: ReturnNote,
+  ): Promise<void> {
+    const farmIds = [note.farmId];
+    const lotLines = note.lines.filter((l) => l.kind === 'LOT');
+    const eggLines = note.lines.filter((l) => l.kind === 'OEUFS');
+    const itemLines = note.lines.filter((l) => l.kind === 'ARTICLE');
+
+    // 1. lots, ascending id (egg lots included)
+    const batches = await this.herd.lockBatches(
+      tx,
+      ascending([...lotLines, ...eggLines].map((l) => l.batchId)),
+      farmIds,
+    );
+    // 2. the egg lots must still be open
+    for (const batch of batches) {
+      if (eggLines.some((l) => l.batchId === batch.id)) {
+        await this.eggs.assertReturn(tx, batch.id);
+      }
+    }
+    // 3. herd events
+    for (const l of lotLines) {
+      await this.herd.record(tx, {
+        farmId: note.farmId,
+        batchId: l.batchId as string,
+        date: note.date,
+        type: 'ENTREE',
+        quantity: l.quantity.toNumber(),
+        cause: 'Retour client',
+        note: `Avoir ${note.number}`,
+        sourceType: RETURN_SOURCE,
+        sourceId: note.id,
+        userId: ctx.user.id,
+      });
+    }
+    // 4. ONE stock-ledger call
+    if (itemLines.length === 0) return;
+    const quantities = new Map<string, Decimal>();
+    for (const l of itemLines) {
+      const id = l.stockItemId as string;
+      quantities.set(
+        id,
+        (quantities.get(id) ?? new Decimal(0)).add(l.quantity),
+      );
+    }
+    const itemIds = [...quantities.keys()].sort();
+    const costs = await exitCostsByItem(tx, {
+      sourceType: SOURCE,
+      sourceId: note.invoiceId,
+    });
+    const pieces = await tx.stockMovement.findMany({
+      where: {
+        sourceType: SOURCE,
+        sourceId: note.invoiceId,
+        stockItemId: { in: itemIds },
+        quantity: { lt: 0 },
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: {
+        stockItemId: true,
+        stockBatch: { select: { lotNumber: true, expiryDate: true } },
+      },
+    });
+    const inputs: RecordInput[] = [];
+    for (const itemId of itemIds) {
+      const cost = costs.get(itemId);
+      if (!cost || cost.quantity.lte(0)) {
+        throw new ConflictException(
+          'Le coût de sortie de cet article est introuvable',
+        );
+      }
+      const first = pieces.find((p) => p.stockItemId === itemId)?.stockBatch;
+      const batch = first
+        ? await this.stock.createBatch(tx, {
+            farmId: note.farmId,
+            stockItemId: itemId,
+            lotNumber: first.lotNumber,
+            expiryDate: first.expiryDate,
+            receivedDate: note.date,
+          })
+        : null;
+      inputs.push({
+        farmId: note.farmId,
+        stockItemId: itemId,
+        date: note.date,
+        type: 'ENTREE',
+        quantity: quantities.get(itemId) as Decimal,
+        unitCost: cost.cost.div(cost.quantity).toDecimalPlaces(2),
+        reason: 'RETOUR',
+        stockBatchId: batch?.id ?? null,
+        sourceType: RETURN_SOURCE,
+        sourceId: note.id,
+        note: `Avoir ${note.number}`,
+        userId: ctx.user.id,
+      });
+    }
+    await this.stock.recordMany(tx, inputs);
   }
 }

@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-} from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
 import { SettingsService } from '../admin/settings/settings.service';
@@ -16,6 +12,7 @@ import {
 } from '../common/days';
 import { nextDocumentNumber } from '../common/document-numbers';
 import { lockRow } from '../common/lock-row';
+import { toMoney } from '../common/money';
 import type { Prisma } from '../generated/prisma/client';
 import type { AuditAction } from '../generated/prisma/enums';
 import { orConflict } from '../listing/list-helpers';
@@ -23,10 +20,20 @@ import { PrismaService } from '../prisma/prisma.service';
 import type {
   CancelInvoiceDto,
   CreateInvoiceDto,
+  CreateIssuedInvoiceDto,
   IssueInvoiceDto,
+  IssuePaymentDto,
   UpdateInvoiceDto,
 } from './dto/invoice.dto';
+import {
+  assertAllowed,
+  lockInvoice,
+  logSale,
+  statusWith,
+  type InvoiceView,
+} from './invoice-guard';
 import { InvoiceReads } from './invoice-reads.service';
+import { OVERPAID, PaymentsService } from './payments.service';
 import { SaleEffects } from './sale-effects';
 import { lineActivity, lineCategory } from './sale-lines';
 import { assertSaleCustomer } from './sale-customer';
@@ -44,18 +51,11 @@ import {
   type InvoiceMoney,
   type QuoteFull,
 } from './sale-view';
-import {
-  invoiceStatusOf,
-  quoteStatusBeforeConversion,
-  refusal,
-  type InvoiceAction,
-} from './sale-workflow';
+import { invoiceStatusOf, quoteStatusBeforeConversion } from './sale-workflow';
 
 type Tx = Prisma.TransactionClient;
 
 const DUE_BEFORE_DATE = "L'échéance ne peut pas précéder la date de la facture";
-const PAYMENT_LATER =
-  "Le paiement à l'émission n'est pas encore pris en charge : encaissez la facture une fois émise";
 
 /** Label of an invoice in the audit log: its number, or what a draft is. */
 const labelOf = (i: { number: string | null; customer: { name: string } }) =>
@@ -81,35 +81,14 @@ export class InvoicesService {
     private readonly resolver: SaleLineResolver,
     private readonly effects: SaleEffects,
     private readonly settings: SettingsService,
+    private readonly payments: PaymentsService,
   ) {}
 
   // ------------------------------------------------------------- shared bits
 
   /** Locks the invoice (scoped to the caller's farms) and returns it fresh. */
-  private async lock(
-    tx: Tx,
-    ctx: RequestContext,
-    id: string,
-  ): Promise<{ invoice: InvoiceFull; money: InvoiceMoney }> {
-    await lockRow(tx, 'Invoice', id, ctx.farmIds);
-    return this.reads.view(tx, ctx, id);
-  }
-
-  /** 409 when the workflow refuses `action` from what the invoice is now. */
-  private allow(
-    { invoice, money }: { invoice: InvoiceFull; money: InvoiceMoney },
-    action: InvoiceAction,
-  ): void {
-    const message = refusal(
-      {
-        status: invoice.status,
-        paid: money.paid,
-        credited: money.credited,
-        refundDue: standingOf(invoice, money).refundDue,
-      },
-      action,
-    );
-    if (message) throw new ConflictException(message);
+  private lock(tx: Tx, ctx: RequestContext, id: string): Promise<InvoiceView> {
+    return lockInvoice(this.reads, tx, ctx, id);
   }
 
   private log(
@@ -122,29 +101,20 @@ export class InvoicesService {
     before?: unknown,
     after?: unknown,
   ): Promise<void> {
-    return this.audit.log(
-      {
-        ctx,
-        module: 'ventes',
-        action,
-        recordId,
-        label,
-        farmId,
-        before,
-        after,
-      },
-      tx,
-    );
+    return logSale(this.audit, tx, ctx, {
+      action,
+      recordId,
+      label,
+      farmId,
+      before,
+      after,
+    });
   }
 
   private assertDue(date: Date, dueDate: Date | null): void {
     if (dueDate && dueDate.getTime() < date.getTime()) {
       throw new BadRequestException(DUE_BEFORE_DATE);
     }
-  }
-
-  private noPayment(dto: { payment?: unknown }): void {
-    if (dto.payment) throw new BadRequestException(PAYMENT_LATER);
   }
 
   /** Stores a draft (no number, nothing moved) and returns its id. */
@@ -300,7 +270,7 @@ export class InvoicesService {
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
         const locked = await this.lock(tx, ctx, id);
-        this.allow(locked, 'edit');
+        assertAllowed(locked, 'edit');
         const before = locked.invoice;
         this.assertDue(
           date ?? before.date,
@@ -373,7 +343,7 @@ export class InvoicesService {
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
         const locked = await this.lock(tx, ctx, id);
-        this.allow(locked, 'delete');
+        assertAllowed(locked, 'delete');
         const before = locked.invoice;
         const day = formatDay(today());
         if (before.quoteId) {
@@ -417,16 +387,24 @@ export class InvoicesService {
 
   /**
    * Issues the draft `id` (the caller holds its row lock): the FA number, the
-   * effects on the ledgers, the status, the due date. A payment collected at
-   * issue is rejected until the payments exist.
+   * `RC` number of a payment collected with it, the effects on the ledgers,
+   * the payment, the status, the due date. The payment is dated the invoice's
+   * date and may not exceed its total; both numbers are taken before the
+   * ledgers' locks (counters first), and a refusal anywhere rolls the whole
+   * transaction back, numbers included.
    */
   private async issueIn(
     tx: Tx,
     ctx: RequestContext,
     invoice: InvoiceFull,
     money: InvoiceMoney,
+    payment?: IssuePaymentDto,
   ): Promise<void> {
     assertNotFuture(invoice.date);
+    const amount = payment ? new Decimal(payment.amount) : null;
+    if (amount && amount.gt(invoice.total)) {
+      throw new BadRequestException(OVERPAID);
+    }
     // Sources are checked against the active farm BEFORE any lock (a body id is a 400, never a 404).
     await this.resolver.assertSources(tx, ctx, invoice.farmId, invoice.lines);
     await assertSaleCustomer(tx, ctx, invoice.customerId);
@@ -441,6 +419,9 @@ export class InvoicesService {
         ),
       );
     const number = await nextDocumentNumber(tx, ctx.user.organizationId, 'FA');
+    const receipt = amount
+      ? await nextDocumentNumber(tx, ctx.user.organizationId, 'RC')
+      : null;
     await this.effects.apply(tx, ctx, {
       id: invoice.id,
       farmId: invoice.farmId,
@@ -448,22 +429,42 @@ export class InvoicesService {
       date: invoice.date,
       lines: invoice.lines,
     });
+    const collected: InvoiceMoney = {
+      ...money,
+      paid: money.paid.add(amount ?? 0),
+    };
+    const status = statusWith(invoice, collected);
     await tx.invoice.update({
       where: { id: invoice.id },
       data: {
         number,
         dueDate,
-        status: invoiceStatusOf({
-          issued: true,
-          cancelled: false,
-          net: invoice.total.sub(money.credited),
-          paid: money.paid,
-          refunded: money.refunded,
-        }),
+        status,
         issuedAt: new Date(),
         issuedById: ctx.user.id,
       },
     });
+    if (amount && receipt && payment) {
+      const standing = standingOf({ status, total: invoice.total }, collected);
+      await this.payments.insert(
+        tx,
+        ctx,
+        { ...invoice, number },
+        {
+          number: receipt,
+          kind: 'ENCAISSEMENT',
+          date: invoice.date,
+          amount,
+          method: payment.method,
+          reference: payment.reference ?? null,
+        },
+        {
+          status,
+          due: toMoney(standing.due),
+          refundDue: toMoney(standing.refundDue),
+        },
+      );
+    }
   }
 
   issue(
@@ -471,12 +472,11 @@ export class InvoicesService {
     id: string,
     dto: IssueInvoiceDto,
   ): Promise<InvoiceDetail> {
-    this.noPayment(dto);
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
         const locked = await this.lock(tx, ctx, id);
-        this.allow(locked, 'issue');
-        await this.issueIn(tx, ctx, locked.invoice, locked.money);
+        assertAllowed(locked, 'issue');
+        await this.issueIn(tx, ctx, locked.invoice, locked.money, dto.payment);
         const after = await this.reads.detail(tx, ctx, id);
         await this.log(
           tx,
@@ -496,15 +496,14 @@ export class InvoicesService {
   /** Create and issue in one transaction (one audit row: the creation of an issued invoice). */
   createIssued(
     ctx: RequestContext,
-    dto: CreateInvoiceDto & { payment?: unknown },
+    dto: CreateIssuedInvoiceDto,
   ): Promise<InvoiceDetail> {
     const farmId = this.farm(ctx);
-    this.noPayment(dto);
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
         const id = await this.createDraftIn(tx, ctx, farmId, dto);
         const { invoice, money } = await this.reads.view(tx, ctx, id);
-        await this.issueIn(tx, ctx, invoice, money);
+        await this.issueIn(tx, ctx, invoice, money, dto.payment);
         const after = await this.reads.detail(tx, ctx, id);
         await this.log(
           tx,
@@ -528,7 +527,7 @@ export class InvoicesService {
   ): Promise<InvoiceDetail> {
     return this.prisma.$transaction(async (tx) => {
       const locked = await this.lock(tx, ctx, id);
-      this.allow(locked, 'cancel');
+      assertAllowed(locked, 'cancel');
       const before = locked.invoice;
       await this.effects.reverse(tx, {
         id,
