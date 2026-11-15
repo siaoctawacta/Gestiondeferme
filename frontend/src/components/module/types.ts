@@ -23,8 +23,11 @@ interface FieldBase {
   required?: boolean;
   /** Only shown (and sent) when creating / when editing (update DTOs reject unknown keys). */
   only?: 'create' | 'update';
-  /** Initial value when creating. */
-  defaultValue?: unknown;
+  /**
+   * Initial value when creating. A function is evaluated each time the dialog opens, so a date default
+   * (`todayIso`) is never frozen when the module loads.
+   */
+  defaultValue?: unknown | (() => unknown);
 }
 
 /** One input of the add / edit dialog. */
@@ -112,8 +115,32 @@ export type ModuleTab =
   | { key: string; label: string; config: ModuleConfig<any> }
   | { key: string; label: string; element: ReactNode };
 
+/** What a per-row edit / delete switch answers: `true` shows the button, `false` hides it, a string shows it disabled with that reason as tooltip. */
+export type RowGate = boolean | string;
+
+/** The add / edit form of a module: generated from `fields`, or a custom component. */
+export type CustomForm<T> = ComponentType<{ row?: T; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }>;
+
 /** Everything `ModulePage` needs to render one module list; plain data only. */
-export type ModuleConfig<T extends { id: string }> = {
+export type ModuleConfig<T extends { id: string }> = ModuleConfigBase<T> &
+  (
+    | {
+        /** Add / edit form generated from these inputs. */
+        fields: Field[];
+        form?: never;
+      }
+    | {
+        /**
+         * Custom add / edit form replacing the generated dialog; `row` is absent when adding. Call `onSaved`
+         * after a successful write (the list is refetched and the form closed) or `onClose` to cancel.
+         * `scope` is the effective scope of the list (see `scope`): the form must merge it into its create payload.
+         */
+        form: CustomForm<T>;
+        fields?: never;
+      }
+  );
+
+type ModuleConfigBase<T extends { id: string }> = {
   /** Module whose permissions gate the page and its buttons. */
   slug: ModuleKey;
   /** Small label above the title (e.g. `Administration`). */
@@ -129,14 +156,10 @@ export type ModuleConfig<T extends { id: string }> = {
   /** List endpoint (`GET {items,total,page,pageSize}`), also used for create / patch / delete. */
   endpoint: string;
   columns: Column<T>[];
-  /** Add / edit form. */
-  fields: Field[];
   /** Status values: adds the status filter, per-status tiles and status pills. */
   statuses?: StatusDef[];
   /** Row property holding the status. */
   statusKey?: keyof T;
-  /** Key of the per-status totals in the list response (default `statusCounts`). */
-  statusCountsKey?: string;
   /** Extra filters after the status one. */
   filters?: FilterDef[];
   /** Row to initial form values (default: the row itself). */
@@ -153,18 +176,21 @@ export type ModuleConfig<T extends { id: string }> = {
    * renders its own `DetailLayout` and shows the 404 card for an unknown id.
    */
   detail?: ComponentType<{ id: string }>;
-  /** Per-row switch for the built-in edit button, on top of the `update` permission (default: always). */
-  canEdit?: (row: T) => boolean;
+  /**
+   * Per-row switch for the built-in edit button, on top of the `update` permission (default: always). `false`
+   * hides the button; a string keeps the icon visible but disabled, with the string as its tooltip (the reason
+   * the row cannot be edited, e.g. `Lot clôturé`).
+   */
+  canEdit?: (row: T) => RowGate;
   /** `DELETE` target of the built-in delete button when it is not `{endpoint}/{id}` (a list that merges several record kinds). */
   deletePath?: (row: T) => string;
-  /** Per-row switch for the built-in delete button, on top of the `delete` permission (default: always). */
-  canDelete?: (row: T) => boolean;
+  /** Per-row switch for the built-in delete button, on top of the `delete` permission (default: always); same answers as `canEdit`. */
+  canDelete?: (row: T) => RowGate;
   /**
-   * Custom add / edit form replacing the generated dialog; `row` is absent when adding. Call `onSaved`
-   * after a successful write (the list is refetched and the form closed) or `onClose` to cancel.
-   * `scope` is the effective scope of the list (see `scope`): the form must merge it into its create payload.
+   * Permission that shows the `Ajouter` button (default `create`). A master-data list (lots, herd, incubations,
+   * feeds, formulas) whose API routes need `update` sets `update`; daily entries keep `create`.
    */
-  form?: ComponentType<{ row?: T; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }>;
+  createPermission?: Action;
   /**
    * Fixed query parameters for a list embedded in a detail page (e.g. `{ batchId }`): sent with the list
    * request and the unfiltered-count request, and merged into every create payload after `toPayload` (a custom `form` receives it as a prop and must

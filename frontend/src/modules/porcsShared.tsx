@@ -1,6 +1,6 @@
 import type { ModuleConfig, StatusDef } from '../components/module/types';
-import { formatNumber } from '../lib/format';
-import { clean, num, text, today } from './lotsShared';
+import { formatDecimal, todayIso } from '../lib/format';
+import { STATUSES as LOT_STATUSES, TYPE_LABELS, num, text } from './lotsShared';
 
 /* ---------------------------------------------------------------------------------------------
  * API shapes (backend contract of `/pig-herd`, `/animals`, task 5).
@@ -16,8 +16,13 @@ export interface HerdRow {
   kind: 'ANIMAL' | 'LOT';
   /** Tag (animal) or code (lot). */
   identifier: string;
-  /** `Truie`, `Verrat`, `Cochette`, `Porcelets` or `Engraissement`. */
+  /** French label for display: `Truie`, `Verrat`, `Cochette`, `Porcelets` or `Engraissement`. */
   category: string;
+  /**
+   * Enum behind `category` (`TRUIE`, `VERRAT`, `COCHETTE`, `PORCELET`, `ENGRAISSEMENT`). Logic uses it when the API
+   * sends it; older responses carry the label only.
+   */
+  categoryCode?: string;
   breedName: string | null;
   buildingName: string;
   /** Animals (`null` for a lot). */
@@ -90,10 +95,7 @@ export const ANIMAL_CATEGORIES = [
   { value: 'COCHETTE', label: 'Cochette', sex: 'F' },
 ] as const;
 
-export const LOT_TYPES = [
-  { value: 'PORCELET', label: 'Porcelets' },
-  { value: 'ENGRAISSEMENT', label: 'Engraissement' },
-];
+export const LOT_TYPES = (['PORCELET', 'ENGRAISSEMENT'] as const).map((value) => ({ value, label: TYPE_LABELS[value] }));
 
 /** Category enum for a list label (`Truie` → `TRUIE`); unknown values come back unchanged. */
 export const categoryLabel = (value: string) => ANIMAL_CATEGORIES.find((c) => c.value === value)?.label ?? value;
@@ -107,15 +109,14 @@ export const STATUSES: StatusDef[] = [
   { value: 'REFORME', label: 'Réformé', tone: 'neutral' },
 ];
 
-/** Status of a herd row: a lot in progress reads `Actif`, a closed one is neutral. */
+/** Status of a herd row: a lot reads as in the Lots list (`En cours` / `Clôturé`), an animal from the animal statuses. */
 export function statusDef(row: Pick<HerdRow, 'kind' | 'status'>): StatusDef {
-  if (row.kind === 'LOT') {
-    return row.status === 'CLOTURE'
-      ? { value: 'CLOTURE', label: 'Clôturé', tone: 'neutral' }
-      : { value: 'ACTIF', label: 'Actif', tone: 'success' };
-  }
+  if (row.kind === 'LOT') return LOT_STATUSES.find((s) => s.value === row.status) ?? LOT_STATUSES[0];
   return STATUSES.find((s) => s.value === row.status) ?? { value: row.status, label: row.status, tone: 'neutral' };
 }
+
+/** An animal that left the herd (sold, dead or culled): the API refuses to change it. */
+export const hasLeft = (status: string) => ['VENDU', 'MORT', 'REFORME'].includes(status);
 
 /** `42 j`, `8 mois` or `3 ans` from a birth date; `—` when unknown. */
 export function ageLabel(birthDate: string | null | undefined, now: Date = new Date()): string {
@@ -140,16 +141,16 @@ export function animalWeighings(animalId: string): ModuleConfig<AnimalWeighing> 
     endpoint: `/animals/${animalId}/weighings`,
     columns: [
       { key: 'date', header: 'DATE' },
-      { key: 'weightKg', header: 'POIDS (KG)', align: 'right', render: (w) => formatNumber(w.weightKg) },
+      { key: 'weightKg', header: 'POIDS (KG)', align: 'right', render: (w) => formatDecimal(w.weightKg, 1) },
     ],
     fields: [
-      { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: today() },
+      { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
       { name: 'weightKg', label: 'Poids (kg)', type: 'number', required: true, min: 0.1, step: 0.1 },
     ],
     rowLabel: (w) => `Pesée du ${w.date}`,
     canEdit: () => false,
     canDelete: () => false,
-    toPayload: (v) => clean({ date: v.date, weightKg: num(v.weightKg) }, 'create'),
+    toPayload: (v) => ({ date: v.date, weightKg: num(v.weightKg) }),
   };
 }
 
@@ -168,12 +169,12 @@ export function animalHeats(animalId: string): ModuleConfig<Heat> {
       { key: 'note', header: 'NOTE', render: (h) => h.note ?? '' },
     ],
     fields: [
-      { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: today() },
+      { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
       { name: 'note', label: 'Note', type: 'textarea' },
     ],
     rowLabel: (h) => `Chaleurs du ${h.date}`,
     canEdit: () => false,
     canDelete: () => false,
-    toPayload: (v) => clean({ date: v.date, note: text(v.note) }, 'create'),
+    toPayload: (v) => ({ date: v.date, note: text(v.note) }),
   };
 }

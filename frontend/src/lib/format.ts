@@ -6,6 +6,22 @@ export function formatNumber(n: number): string {
   return `${n < 0 ? '-' : ''}${grouped}${dec ? `.${dec}` : ''}`;
 }
 
+/**
+ * A number rounded to at most `digits` decimals, thousands grouped, no trailing zeros (`12`, `55.3`, `1 450.25`):
+ * the one formatter for measured quantities (`kg/j`, averages). Use `formatPct` for percentages.
+ */
+export function formatDecimal(n: number, digits: number): string {
+  if (!Number.isFinite(n)) return '—';
+  return formatNumber(shift(Math.round(shift(Math.abs(n), digits)), -digits) * Math.sign(n) || 0);
+}
+
+/** `fmt(v)`, or `—` when `v` is missing. */
+export const orDash = (v: number | null | undefined, fmt: (n: number) => string = formatNumber): string =>
+  v === null || v === undefined ? '—' : fmt(v);
+
+/** Today's calendar date as `YYYY-MM-DD` (UTC, as the API reads operation dates). */
+export const todayIso = (): string => new Date().toISOString().slice(0, 10);
+
 /** Money groups thousands with a regular no-break space (U+00A0): the reference's money lines show a wide gap, its tables a narrow one. */
 export const formatMoney = (n: number): string => `${formatNumber(n).replaceAll(NBSP, '\u00a0')}\u00a0FCFA`;
 

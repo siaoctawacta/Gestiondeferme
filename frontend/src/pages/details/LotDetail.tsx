@@ -1,98 +1,74 @@
-import { useMemo, useState, type FormEvent } from 'react';
+import { Suspense, useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, ApiError } from '../../lib/api';
 import type { ModuleKey } from '../../lib/modules';
 import { useAuth } from '../../lib/auth';
-import { formatNumber, formatPct } from '../../lib/format';
+import { formatDecimal, formatNumber, formatPct, orDash, todayIso } from '../../lib/format';
 import { farmKey, useFarmQuery } from '../../lib/query';
+import { ActionDialog } from '../../components/module/ActionDialog';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
 import { ModuleList } from '../../components/module/ModulePage';
 import type { ListResponse } from '../../components/module/types';
-import { useEndpointOptions } from '../../components/module/useEndpointOptions';
 import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { lazyRetry } from '../../components/lazyRetry';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
-import { Dialog } from '../../components/ui/Dialog';
-import { Input } from '../../components/ui/Input';
 import { Pill } from '../../components/ui/Pill';
-import { Select } from '../../components/ui/Select';
+import { LotForm } from '../../modules/lotForm';
 import { MODULES } from '../../modules/registry';
 import {
-  TYPE_LABELS, batchEvents, batchWeighings, type BatchDetail, type Weighing,
+  STATUSES, TYPE_LABELS, batchEvents, batchWeighings, type BatchDetail, type Weighing,
 } from '../../modules/lotsShared';
+import { useBuildingOptions, type Species } from '../../modules/productionShared';
 import NotFound from '../NotFound';
+import { Skeleton } from '../PageParts';
 import { DetailLayout } from './DetailLayout';
 
 const WeightCurve = lazyRetry(() => import('./WeightCurve'));
 
-const dash = (v: number | null | undefined, fmt: (n: number) => string) => (v === null || v === undefined ? '—' : fmt(v));
-const oneDecimal = (n: number) => n.toFixed(1);
+/** Weights are stored in grams; pigs are shown in kilograms. */
+const weightLabel = (g: number, species: Species) =>
+  species === 'PORCIN' ? `${formatDecimal(g / 1000, 2)} kg` : `${formatNumber(g)} g`;
 
-function TransferDialog({ batch, onClose, onDone }: { batch: BatchDetail; onClose: () => void; onDone: () => void }) {
-  const buildings = useEndpointOptions({ endpoint: '/buildings' }).filter((b) => b.value !== batch.buildingId);
-  const [toBuildingId, setTo] = useState('');
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (!toBuildingId) return setError('Le champ « Bâtiment de destination » est requis');
-    setBusy(true);
-    setError(null);
-    try {
-      await api.post(`/batches/${batch.id}/transfer`, { toBuildingId, date, quantity: batch.alive });
-      onDone();
-    } catch (err) {
-      setError(errorMessage(err));
-      setBusy(false);
-    }
-  };
-
+function TransferDialog({ batch, species, onClose, onDone }: { batch: BatchDetail; species: Species; onClose: () => void; onDone: () => void }) {
+  // The species' own buildings first, the lot's current one left out.
+  const buildings = useBuildingOptions(species).filter((b) => b.value !== batch.buildingId);
   return (
-    <Dialog open onClose={onClose} title={`Transférer le lot ${batch.code}`}>
-      <form onSubmit={submit} noValidate className="space-y-4">
-        <p className="text-sm text-muted-foreground">
-          Les {formatNumber(batch.alive)} animaux vivants quittent {batch.buildingName}.
-        </p>
-        <div className="space-y-1.5">
-          <label htmlFor="transfer-to" className="block text-sm font-medium">Bâtiment de destination</label>
-          <Select id="transfer-to" className="w-full" value={toBuildingId} onChange={(e) => setTo(e.target.value)}>
-            <option value="">Sélectionner…</option>
-            {buildings.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-          </Select>
-        </div>
-        <div className="space-y-1.5">
-          <label htmlFor="transfer-date" className="block text-sm font-medium">Date</label>
-          <Input id="transfer-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
-        </div>
-        {error && <Alert>{error}</Alert>}
-        <div className="flex justify-end gap-2 pt-2">
-          <Button variant="outline" onClick={onClose}>Annuler</Button>
-          <Button type="submit" disabled={busy}>Transférer</Button>
-        </div>
-      </form>
-    </Dialog>
+    <ActionDialog
+      title={`Transférer le lot ${batch.code}`}
+      intro={`Les ${formatNumber(batch.alive)} animaux vivants quittent ${batch.buildingName}.`}
+      submitLabel="Transférer"
+      fields={[
+        { name: 'toBuildingId', label: 'Bâtiment de destination', type: 'select', required: true, options: buildings },
+        { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
+      ]}
+      toPayload={(v) => ({ toBuildingId: v.toBuildingId, date: v.date, quantity: batch.alive })}
+      onSubmit={(body) => api.post(`/batches/${batch.id}/transfer`, body)}
+      onClose={onClose}
+      onDone={onDone}
+    />
   );
 }
 
-function WeighingsTab({ batch, readOnly, moduleKey }: { batch: BatchDetail; readOnly: boolean; moduleKey: ModuleKey }) {
-  const config = useMemo(() => batchWeighings(batch.id, moduleKey), [batch.id, moduleKey]);
+function WeighingsTab({ batch, species, readOnly, moduleKey }: { batch: BatchDetail; species: Species; readOnly: boolean; moduleKey: ModuleKey }) {
+  const config = useMemo(() => batchWeighings(batch.id, moduleKey, species), [batch.id, moduleKey, species]);
   const points = useFarmQuery<ListResponse<Weighing>>(
     [`/batches/${batch.id}/weighings`, 'curve'],
     () => api.get<ListResponse<Weighing>>(`/batches/${batch.id}/weighings`, { page: 1, pageSize: 200 }),
   );
+  const pig = species === 'PORCIN';
   const series = [...(points.data?.items ?? [])]
     .sort((a, b) => a.date.localeCompare(b.date))
-    .map((w) => ({ date: w.date, weightG: w.averageWeightG }));
+    .map((w) => ({ date: w.date, weight: pig ? w.averageWeightG / 1000 : w.averageWeightG }));
   return (
     <>
       {series.length >= 2 && (
         <ErrorBoundary>
-          <WeightCurve points={series} />
+          <Suspense fallback={<Skeleton data-testid="weight-curve-skeleton" className="mb-4 h-[268px]" />}>
+            <WeightCurve points={series} unit={pig ? 'kg' : 'g'} />
+          </Suspense>
         </ErrorBoundary>
       )}
       <ModuleList config={config} readOnly={readOnly} />
@@ -109,32 +85,40 @@ export function LotDetail({ id }: { id: string }) {
   const queryClient = useQueryClient();
   const [confirmClose, setConfirmClose] = useState(false);
   const [transferring, setTransferring] = useState(false);
+  const [editing, setEditing] = useState(false);
+  const [reopening, setReopening] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
   const query = useFarmQuery<BatchDetail>(['/batches', 'detail', id], () => api.get<BatchDetail>(`/batches/${id}`));
 
   if (query.isPending) return <div aria-busy className="h-40 animate-pulse rounded-3xl bg-muted" />;
   if (query.isError) {
-    if (query.error instanceof ApiError && query.error.status === 404) return <NotFound />;
+    // An id that is not even a valid id (400) is as unknown as a missing one (404).
+    if (query.error instanceof ApiError && (query.error.status === 404 || query.error.status === 400)) return <NotFound />;
     return <ErrorRetry message={errorMessage(query.error)} onRetry={() => query.refetch()} />;
   }
 
   const batch = query.data;
-  const moduleKey: ModuleKey = batch.species === 'PORCIN' ? 'porcs' : 'lots';
+  const species: Species = batch.species ?? 'AVICOLE';
+  const moduleKey: ModuleKey = species === 'PORCIN' ? 'porcs' : 'lots';
   const events = batchEvents(id, moduleKey);
   const closed = batch.status === 'CLOTURE';
   const canManage = can(moduleKey, 'update') && farmId !== 'all';
   const perf = batch.performance;
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
-  const avian = batch.species !== 'PORCIN';
+  const status = STATUSES.find((s) => s.value === batch.status) ?? STATUSES[0];
 
   const reopen = async () => {
+    if (reopening) return;
+    setReopening(true);
     setNotice(null);
     try {
       await api.post(`/batches/${id}/reopen`);
       refresh();
     } catch (e) {
       setNotice(errorMessage(e));
+    } finally {
+      setReopening(false);
     }
   };
 
@@ -143,7 +127,7 @@ export function LotDetail({ id }: { id: string }) {
 
   const tabs = [
     { key: 'events', label: 'Mouvements', content: <ModuleList config={events} readOnly={closed} /> },
-    { key: 'weighings', label: 'Pesées', content: <WeighingsTab batch={batch} readOnly={closed} moduleKey={moduleKey} /> },
+    { key: 'weighings', label: 'Pesées', content: <WeighingsTab batch={batch} species={species} readOnly={closed} moduleKey={moduleKey} /> },
     ...(feeding
       ? [{ key: 'feeding', label: 'Alimentation', content: <ModuleList config={feeding} scope={{ batchId: id }} readOnly={closed} /> }]
       : []),
@@ -155,17 +139,18 @@ export function LotDetail({ id }: { id: string }) {
   return (
     <>
       <DetailLayout
-        back={avian ? { to: '/m/lots', label: 'Lots avicoles' } : { to: '/m/porcs', label: 'Cheptel porcin' }}
+        back={species === 'AVICOLE' ? { to: '/m/lots', label: 'Lots avicoles' } : { to: '/m/porcs', label: 'Cheptel porcin' }}
         title={batch.code}
         subtitle={[TYPE_LABELS[batch.type] ?? batch.type, batch.breedName, batch.buildingName].filter(Boolean).join(' · ')}
-        status={closed ? <Pill tone="success">Clôturé</Pill> : <Pill tone="warning">En cours</Pill>}
+        status={<Pill tone={status.tone}>{status.label}</Pill>}
         actions={
           canManage && (
             <>
               {closed ? (
-                <Button variant="outline" onClick={reopen}>Rouvrir</Button>
+                <Button variant="outline" disabled={reopening} onClick={reopen}>Rouvrir</Button>
               ) : (
                 <>
+                  <Button variant="outline" onClick={() => setEditing(true)}>Modifier</Button>
                   <Button variant="outline" onClick={() => setTransferring(true)}>Transférer</Button>
                   <Button variant="outline" onClick={() => setConfirmClose(true)}>Clôturer</Button>
                 </>
@@ -173,17 +158,21 @@ export function LotDetail({ id }: { id: string }) {
             </>
           )
         }
+        notice={notice && <Alert className="mb-4">{notice}</Alert>}
         stats={[
           { label: 'Vivants', value: formatNumber(batch.alive) },
-          { label: 'Mortalité', value: dash(batch.mortalityRate, formatPct) },
-          { label: 'Âge (jours)', value: dash(batch.ageDays, formatNumber) },
-          { label: 'Poids moyen', value: dash(batch.averageWeightG, formatNumber) },
-          { label: 'GMD', value: dash(perf?.dailyGainG, (n) => `${oneDecimal(n)} g/j`) },
-          { label: 'Indice de consommation', value: dash(perf?.feedConversion, (n) => n.toFixed(2)) },
+          { label: 'Mortalité', value: orDash(batch.mortalityRate, formatPct) },
+          { label: 'Âge (jours)', value: orDash(batch.ageDays) },
+          { label: 'Poids moyen', value: orDash(batch.averageWeightG, (g) => weightLabel(g, species)) },
+          {
+            label: 'GMD',
+            value: orDash(perf?.dailyGainG, (g) => (species === 'PORCIN' ? `${formatDecimal(g / 1000, 2)} kg/j` : `${formatDecimal(g, 1)} g/j`)),
+          },
+          { label: 'Indice de consommation', value: orDash(perf?.feedConversion, (n) => formatDecimal(n, 2)) },
         ]}
         tabs={tabs}
       />
-      {notice && <Alert className="mt-4">{notice}</Alert>}
+      {editing && <LotForm species={species} id={id} onSaved={() => { setEditing(false); refresh(); }} onClose={() => setEditing(false)} />}
       {confirmClose && (
         <ConfirmDialog
           title="Clôturer le lot"
@@ -198,7 +187,7 @@ export function LotDetail({ id }: { id: string }) {
         />
       )}
       {transferring && (
-        <TransferDialog batch={batch} onClose={() => setTransferring(false)} onDone={() => { setTransferring(false); refresh(); }} />
+        <TransferDialog batch={batch} species={species} onClose={() => setTransferring(false)} onDone={() => { setTransferring(false); refresh(); }} />
       )}
     </>
   );

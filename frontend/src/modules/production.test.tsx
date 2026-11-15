@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -217,6 +217,56 @@ describe('ponte', () => {
     expect(within(dialog).getByLabelText('Œufs incubés')).toHaveValue(300);
   });
 
+  it('edits a day of production and sends only the changed counts', async () => {
+    mountPage(ponte);
+    await screen.findByText('2026-10-22');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('2026-10-20').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Ponte & œufs' });
+    expect(within(dialog).queryByLabelText('Lot')).not.toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Œufs cassés')).toHaveValue(88);
+    await user.clear(within(dialog).getByLabelText('Œufs cassés'));
+    await user.type(within(dialog).getByLabelText('Œufs cassés'), '90');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/egg-production/e2' });
+    expect(writes()[0].body).toEqual({ broken: 90 });
+  });
+
+  it('edits an incubation: the changed key only, null for a cleared incubator, nothing when unchanged', async () => {
+    mountPage(ponte);
+    await screen.findByText('2026-10-22');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Incubation' }));
+    const open = async () => {
+      await user.click(within((await screen.findByText('INC-2026-01')).closest('tr')!).getByRole('button', { name: 'Modifier' }));
+      return screen.findByRole('dialog', { name: 'Modifier — Incubation' });
+    };
+    let dialog = await open();
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(writes()).toHaveLength(0);
+
+    dialog = await open();
+    await user.clear(within(dialog).getByLabelText('Couveuse'));
+    await user.clear(within(dialog).getByLabelText('Œufs incubés'));
+    await user.type(within(dialog).getByLabelText('Œufs incubés'), '320');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/incubations/i1' });
+    expect(writes()[0].body).toEqual({ incubator: null, eggsSet: 320 });
+  });
+
+  it('disables edit and delete on a finished incubation, with the reason', async () => {
+    mountPage(ponte);
+    await screen.findByText('2026-10-22');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Incubation' }));
+    const done = (await screen.findByText('INC-2026-00')).closest('tr')!;
+    expect(within(done).getByRole('button', { name: 'Modifier' })).toHaveAttribute('aria-disabled', 'true');
+    expect(within(done).getByRole('button', { name: 'Supprimer' })).toHaveAttribute('title', 'Incubation terminée');
+  });
+
   it('shows the server message when an action is refused', async () => {
     mountPage(ponte);
     await screen.findByText('2026-10-22');
@@ -246,9 +296,10 @@ describe('porcs', () => {
     expect(screen.getByRole('link', { name: 'LOT-ENG-01' })).toHaveAttribute('href', '/m/porcs/lot-p1');
     const lot = screen.getByText('LOT-ENG-01').closest('tr')!;
     expect(within(lot).getByText('2026-09-01')).toBeInTheDocument();
-    expect(within(lot).getByText('Actif')).toBeInTheDocument();
-    expect(within(lot).queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
-    expect(within(lot).queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
+    // A pig lot reads as in the Lots list: `En cours` (yellow), not `Actif`.
+    expect(within(lot).getByText('En cours').className).toContain('bg-warning');
+    expect(within(lot).getByRole('button', { name: 'Modifier' })).not.toHaveAttribute('aria-disabled');
+    expect(within(lot).getByRole('button', { name: 'Supprimer' })).not.toHaveAttribute('aria-disabled');
     expect(within(row).getByRole('button', { name: 'Modifier' })).toBeInTheDocument();
   });
 
@@ -301,6 +352,53 @@ describe('porcs', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
     expect(writes()).toHaveLength(0);
+  });
+
+  it('edits a pig lot from its pencil through PATCH /batches/:id with the changed key only', async () => {
+    mountPage(porcs);
+    await screen.findByText('TR-014');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('LOT-ENG-01').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Lot de porcs' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Effectif initial')).toHaveValue(240));
+    expect(calls.some((c) => c.url === '/api/batches/p1')).toBe(true);
+    expect(within(dialog).queryByLabelText('Type')).not.toBeInTheDocument();
+    await user.clear(within(dialog).getByLabelText('Effectif initial'));
+    await user.type(within(dialog).getByLabelText('Effectif initial'), '250');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/batches/p1' });
+    expect(writes()[0].body).toEqual({ initialCount: 250 });
+  });
+
+  it('deletes a pig lot through DELETE /batches/:id', async () => {
+    mountPage(porcs);
+    await screen.findByText('TR-014');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('LOT-ENG-01').closest('tr')!).getByRole('button', { name: 'Supprimer' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Supprimer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'DELETE', url: '/api/batches/p1' });
+  });
+
+  it('shows the icons of a closed lot and of an animal that left the herd disabled, with the reason', async () => {
+    mountPage(porcs);
+    handler = (c) =>
+      c.method === 'GET' && c.url.startsWith('/api/pig-herd')
+        ? page([
+            { ...HERD[2], id: 'p2', identifier: 'LOT-ENG-00', status: 'CLOTURE', headcount: 0 },
+            { ...HERD[1], id: 'a9', identifier: 'VR-009', status: 'VENDU', headcount: 0 },
+          ])
+        : undefined;
+    await screen.findByText('LOT-ENG-00');
+    const lot = screen.getByText('LOT-ENG-00').closest('tr')!;
+    expect(within(lot).getByText('Clôturé').className).toContain('bg-primary-soft');
+    expect(within(lot).getByRole('button', { name: 'Modifier' })).toHaveAttribute('title', 'Lot clôturé');
+    const animal = screen.getByText('VR-009').closest('tr')!;
+    for (const name of ['Modifier', 'Supprimer']) {
+      expect(within(animal).getByRole('button', { name })).toHaveAttribute('aria-disabled', 'true');
+      expect(within(animal).getByRole('button', { name })).toHaveAttribute('title', 'Animal sorti du cheptel');
+    }
   });
 
   it('asks animal or lot, then posts the animal to /animals with its sex', async () => {
@@ -366,8 +464,8 @@ describe('animal detail', () => {
     await user.click(screen.getByRole('tab', { name: 'Reproduction' }));
     expect(await screen.findByText('2025-08-23')).toBeInTheDocument();
     expect(screen.getByText('Portées').nextElementSibling).toHaveTextContent('1');
-    expect(screen.getByText('Nés vivants (moy.)').nextElementSibling).toHaveTextContent('12.0');
-    expect(screen.getByText('Sevrés (moy.)').nextElementSibling).toHaveTextContent('11.0');
+    expect(screen.getByText('Nés vivants (moy.)').nextElementSibling).toHaveTextContent('12');
+    expect(screen.getByText('Sevrés (moy.)').nextElementSibling).toHaveTextContent('11');
     await user.click(screen.getByRole('tab', { name: 'Chaleurs' }));
     expect(await screen.findByText('Nette')).toBeInTheDocument();
   });
@@ -432,6 +530,56 @@ describe('pig lot detail', () => {
     expect(screen.getByRole('link', { name: 'Cheptel porcin' })).toHaveAttribute('href', '/m/porcs');
     expect(screen.getByRole('button', { name: 'Clôturer' })).toBeInTheDocument();
   });
+
+  it('offers Modifier on a pig lot and edits it through PATCH /batches/:id', async () => {
+    const Detail = porcs.detail!;
+    mount(
+      <Routes>
+        <Route path="/m/porcs/:id" element={<Detail id="lot-p1" />} />
+      </Routes>,
+      { path: '/m/porcs/lot-p1' },
+    );
+    await screen.findByRole('heading', { name: 'LOT-ENG-01' });
+    expect(screen.getByText('En cours', { selector: 'span' }).className).toContain('bg-warning');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Lot de porcs' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Effectif initial')).toHaveValue(240));
+    await user.clear(within(dialog).getByLabelText('Effectif initial'));
+    await user.type(within(dialog).getByLabelText('Effectif initial'), '241');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/batches/p1', body: { initialCount: 241 } });
+  });
+});
+
+describe('the add button follows the kind of list', () => {
+  const addable = async (config: ModuleConfig<any>, perms: string[], tab?: string) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    cleanup();
+    mountPage(config, { perms });
+    if (tab) await userEvent.setup().click(await screen.findByRole('tab', { name: tab }));
+    await screen.findAllByRole('row');
+    await waitFor(() => expect(screen.queryAllByTestId('skeleton-row')).toHaveLength(0));
+    return screen.queryByRole('button', { name: 'Ajouter' }) !== null;
+  };
+
+  it('master-data lists need update permission', async () => {
+    expect(await addable(porcs, ['read', 'create'])).toBe(false);
+    expect(await addable(reproduction, ['read', 'create'])).toBe(false);
+    expect(await addable(ponte, ['read', 'create'], 'Incubation')).toBe(false);
+  });
+
+  it('master-data lists show it with update permission alone', async () => {
+    expect(await addable(porcs, ['read', 'update'])).toBe(true);
+  });
+
+  it('daily entries keep create permission', async () => {
+    expect(await addable(ponte, ['read', 'create'])).toBe(true);
+  });
+
+  it('daily entries do not show it with update permission alone', async () => {
+    expect(await addable(ponte, ['read', 'update'])).toBe(false);
+  });
 });
 
 describe('write controls are gated', () => {
@@ -482,7 +630,7 @@ describe('reproduction', () => {
     expect(screen.getByText('2026-09-23').className).toContain('bg-primary-soft');
   });
 
-  it('offers each action only on its statuses and hides edit and delete once farrowed', async () => {
+  it('offers each action only on its statuses and disables edit and delete once farrowed', async () => {
     mountPage(reproduction);
     await screen.findByText('TR-014');
     const gestation = screen.getByText('TR-014').closest('tr')!;
@@ -494,8 +642,26 @@ describe('reproduction', () => {
     expect(within(farrowed).queryByRole('button', { name: 'Mise bas' })).not.toBeInTheDocument();
     expect(within(farrowed).queryByRole('button', { name: 'Échec' })).not.toBeInTheDocument();
     expect(within(farrowed).getByRole('button', { name: 'Sevrage' })).toBeInTheDocument();
-    expect(within(farrowed).queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
-    expect(within(farrowed).queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
+    expect(within(gestation).getByRole('button', { name: 'Modifier' })).not.toHaveAttribute('aria-disabled');
+    for (const name of ['Modifier', 'Supprimer']) {
+      const icon = within(farrowed).getByRole('button', { name });
+      expect(icon).toHaveAttribute('aria-disabled', 'true');
+      expect(icon).toHaveAttribute('title', 'Enregistrement verrouillé');
+    }
+  });
+
+  it('edits the service date of a gestation and sends only that key', async () => {
+    mountPage(reproduction);
+    await screen.findByText('TR-014');
+    const user = userEvent.setup();
+    await user.click(within(screen.getByText('TR-014').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Reproduction' });
+    expect(within(dialog).getByLabelText('Date de saillie')).toHaveValue('2026-07-05');
+    fireEvent.change(within(dialog).getByLabelText('Date de saillie'), { target: { value: '2026-07-06' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/breeding/b1' });
+    expect(writes()[0].body).toEqual({ serviceDate: '2026-07-06' });
   });
 
   it('records a farrowing through POST /breeding/:id/farrowing', async () => {

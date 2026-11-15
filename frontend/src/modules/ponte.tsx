@@ -1,11 +1,11 @@
 import { Ban, Egg, Search } from 'lucide-react';
 import { ActionDialog } from '../components/module/ActionDialog';
+import { RecordForm } from '../components/module/RecordForm';
 import type { Field, ModuleConfig, RowAction, StatusDef } from '../components/module/types';
 import { Pill, type PillTone } from '../components/ui/Pill';
 import { api } from '../lib/api';
-import { formatNumber, formatPct } from '../lib/format';
-import { orDash, today } from './lotsShared';
-import { RecordForm, useBuildingOptions, useLayingBatchOptions } from './productionShared';
+import { formatNumber, formatPct, orDash, todayIso } from '../lib/format';
+import { breedOptions, useBuildingOptions, useLayingBatchOptions } from './productionShared';
 
 /* ---------------------------------------------------------------------------------------------
  * API shapes (backend contract of `/egg-production` and `/incubations`, task 4).
@@ -64,7 +64,7 @@ const count = (name: string, label: string, extra: Partial<{ required: boolean; 
 function EggForm({ row, scope, onSaved, onClose }: { row?: EggRecord; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }) {
   const lots = useLayingBatchOptions();
   const fields: Field[] = [
-    { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: today() },
+    { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
     ...(scope?.batchId ? [] : [{ name: 'batchId', label: 'Lot', type: 'select', required: true, only: 'create', options: lots } as Field]),
     count('collected', 'Œufs collectés', { required: true }),
     count('broken', 'Œufs cassés', { defaultValue: 0 }),
@@ -91,7 +91,7 @@ function IncubationForm({ row, onSaved, onClose }: { row?: Incubation; scope?: R
   const fields: Field[] = [
     { name: 'incubator', label: 'Couveuse', type: 'text' },
     { name: 'sourceBatchId', label: "Lot d'origine", type: 'select', options: lots, only: 'create' },
-    { name: 'startDate', label: 'Date de début', type: 'date', required: true, defaultValue: today() },
+    { name: 'startDate', label: 'Date de début', type: 'date', required: true, defaultValue: todayIso },
     { name: 'eggsSet', label: 'Œufs incubés', type: 'number', required: true, min: 1, step: 1 },
   ];
   return (
@@ -116,7 +116,7 @@ function CandlingDialog({ row, onClose, onDone }: DialogProps) {
       title={`Mirage — ${row.code}`}
       intro={`${formatNumber(row.eggsSet)} œufs incubés.`}
       fields={[
-        { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: today() },
+        { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
         { name: 'fertileEggs', label: 'Œufs fertiles', type: 'number', required: true, min: 0, max: row.eggsSet, step: 1 },
       ]}
       onSubmit={(body) => api.post(`/incubations/${row.id}/candling`, body)}
@@ -133,10 +133,10 @@ function HatchDialog({ row, onClose, onDone }: DialogProps) {
       title={`Éclosion — ${row.code}`}
       intro="Les poussins éclos forment un nouveau lot."
       fields={[
-        { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: today() },
+        { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
         { name: 'chicksHatched', label: 'Poussins éclos', type: 'number', required: true, min: 0, max: row.fertileEggs ?? row.eggsSet, step: 1 },
         { name: 'buildingId', label: 'Bâtiment', type: 'select', required: true, options: buildings },
-        { name: 'breedId', label: 'Souche', type: 'select', options: { endpoint: '/breeds', params: { species: 'AVICOLE' } } },
+        { name: 'breedId', label: 'Souche', type: 'select', options: breedOptions('AVICOLE') },
       ]}
       onSubmit={(body) => api.post(`/incubations/${row.id}/hatch`, body)}
       onClose={onClose}
@@ -183,12 +183,12 @@ export const incubations: ModuleConfig<Incubation> = {
     { key: 'hatchRate', header: "TAUX D'ÉCLOSION", render: (i) => orDash(i.hatchRate, formatPct) },
     { key: 'status', header: 'STATUT' },
   ],
-  fields: [],
   statuses: INCUBATION_STATUSES,
   statusKey: 'status',
   rowLabel: (i) => i.code,
-  canEdit: running,
-  canDelete: running,
+  createPermission: 'update',
+  canEdit: (i) => (running(i) ? true : 'Incubation terminée'),
+  canDelete: (i) => (running(i) ? true : 'Incubation terminée'),
   actions: incubationActions,
   form: IncubationForm,
 };
@@ -211,7 +211,6 @@ export const ponte: ModuleConfig<EggRecord> = {
       render: (e) => (e.breakageRate === null ? '—' : <Pill tone={breakageTone(e.breakageRate)}>{formatPct(e.breakageRate)}</Pill>),
     },
   ],
-  fields: [],
   rowLabel: (e) => `${e.batchCode} du ${e.date}`,
   form: EggForm,
   tabs: [{ key: 'incubation', label: 'Incubation', config: incubations }],

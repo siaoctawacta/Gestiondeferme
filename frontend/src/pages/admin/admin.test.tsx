@@ -115,11 +115,18 @@ describe('Users page', () => {
     const edit = await screen.findByRole('dialog', { name: 'Modifier — Utilisateurs' });
     expect(within(edit).queryByLabelText('Mot de passe')).not.toBeInTheDocument();
     expect(within(edit).queryByLabelText('E-mail')).not.toBeInTheDocument();
+    // Saving without a change sends nothing and closes.
     await user.click(within(edit).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(calls.some((c) => c.method === 'PATCH')).toBe(false);
+
+    await user.click(screen.getByRole('button', { name: 'Modifier' }));
+    const again = await screen.findByRole('dialog', { name: 'Modifier — Utilisateurs' });
+    await user.clear(within(again).getByLabelText('Nom'));
+    await user.type(within(again).getByLabelText('Nom'), 'Koffi M.');
+    await user.click(within(again).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
-    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({
-      name: 'Koffi Mensah', role: 'RESP_AVICOLE', farmIds: ['f1', 'f2'], active: true,
-    });
+    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ name: 'Koffi M.' });
   });
 });
 

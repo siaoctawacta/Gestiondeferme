@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -270,6 +270,63 @@ describe('alimentation', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0].body).toEqual({ quantityKg: 500 });
+  });
+
+  describe('water, when the API says whether the row may carry it (waterEditable)', () => {
+    const edit = async (target: string) => {
+      mountPage();
+      await screen.findByText('LC-2026-14');
+      const user = userEvent.setup();
+      await user.click(within(screen.getByText(target).closest('tr')!).getByRole('button', { name: 'Modifier' }));
+      return { user, dialog: await screen.findByRole('dialog') };
+    };
+    const withFlag = async (index: number, flag: boolean, run: () => Promise<void>) => {
+      Object.assign(DISTRIBUTIONS[index], { waterEditable: flag });
+      try {
+        await run();
+      } finally {
+        delete (DISTRIBUTIONS[index] as { waterEditable?: boolean }).waterEditable;
+      }
+    };
+
+    it('adds water to a distribution that has none', async () => {
+      await withFlag(1, true, async () => {
+        const { user, dialog } = await edit('Porcherie 1');
+        expect(within(dialog).getByLabelText('Eau (L)')).toBeEnabled();
+        await user.type(within(dialog).getByLabelText('Eau (L)'), '300');
+        await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+        await waitFor(() => expect(writes()).toHaveLength(1));
+        expect(writes()[0].body).toEqual({ waterLiters: 300 });
+      });
+    });
+
+    it('changes the water, and clears it as null', async () => {
+      await withFlag(0, true, async () => {
+        const { user, dialog } = await edit('LC-2026-14');
+        await user.clear(within(dialog).getByLabelText('Eau (L)'));
+        await user.type(within(dialog).getByLabelText('Eau (L)'), '1300');
+        await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+        await waitFor(() => expect(writes()).toHaveLength(1));
+        expect(writes()[0].body).toEqual({ waterLiters: 1300 });
+      });
+      calls.length = 0;
+      cleanup();
+      await withFlag(0, true, async () => {
+        const { user, dialog } = await edit('LC-2026-14');
+        await user.clear(within(dialog).getByLabelText('Eau (L)'));
+        await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+        await waitFor(() => expect(writes()).toHaveLength(1));
+        expect(writes()[0].body).toEqual({ waterLiters: null });
+      });
+    });
+
+    it('disables the water of a row the API says cannot carry it, even when it holds a value', async () => {
+      await withFlag(0, false, async () => {
+        const { dialog } = await edit('LC-2026-14');
+        expect(within(dialog).getByLabelText('Eau (L)')).toBeDisabled();
+        expect(within(dialog).getByText("La consommation d'eau du jour est portée par la première distribution")).toBeInTheDocument();
+      });
+    });
   });
 
   it('sends nothing when an edit changes nothing', async () => {

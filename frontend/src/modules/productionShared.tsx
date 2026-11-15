@@ -1,27 +1,15 @@
-import type { ReactNode } from 'react';
-import { api } from '../lib/api';
-import { useFarmQuery } from '../lib/query';
-import { ActionDialog } from '../components/module/ActionDialog';
-import type { Field, ListResponse } from '../components/module/types';
+import { allPages } from '../components/module/allPages';
+import type { EndpointOptions } from '../components/module/types';
 import type { Option } from '../components/module/useEndpointOptions';
+import { useFarmQuery } from '../lib/query';
 
-
-const PAGE_SIZE = 200;
-
-export async function allPages<T>(endpoint: string, params: Record<string, string>): Promise<T[]> {
-  const out: T[] = [];
-  for (let page = 1; ; page++) {
-    const res = await api.get<ListResponse<T>>(endpoint, { ...params, page, pageSize: PAGE_SIZE });
-    out.push(...res.items);
-    if (res.items.length === 0 || out.length >= res.total) return out;
-  }
-}
+export type Species = 'AVICOLE' | 'PORCIN';
 
 /** Buildings as select options, those of the species the form is about first (the API sorts by name only). */
-export function useBuildingOptions(firstType: 'AVICOLE' | 'PORCIN'): Option[] {
+export function useBuildingOptions(firstType: Species): Option[] {
   const { data } = useFarmQuery<{ id: string; name: string; type: string }[]>(
     ['/buildings', 'typed-options'],
-    () => allPages('/buildings', {}),
+    () => allPages('/buildings'),
   );
   const rank = (b: { type: string }) => (b.type === firstType ? 0 : 1);
   return [...(data ?? [])].sort((a, b) => rank(a) - rank(b)).map((b) => ({ value: b.id, label: b.name }));
@@ -36,43 +24,12 @@ export function useLayingBatchOptions(): Option[] {
   return (data ?? []).filter((b) => b.type === 'PONDEUSE' || b.type === 'REPRODUCTEUR').map((b) => ({ value: b.id, label: b.code }));
 }
 
-type Values = Record<string, unknown>;
+/** THE option source of the breeds of a species. */
+export const breedOptions = (species: Species): EndpointOptions => ({ endpoint: '/breeds', params: { species } });
 
-export interface RecordFormProps {
-  /** Dialog title suffix: `Ajouter — {label}` / `Modifier — {label}`. */
-  label: string;
-  /** The record being edited; absent when adding. */
-  row?: { id: string };
-  fields: Field[] | ((values: Values) => Field[]);
-  initial?: Values;
-  intro?: ReactNode;
-  toPayload?: (values: Values) => unknown;
-  /** `POST` target when adding. */
-  createPath: string;
-  /** `PATCH` target when editing. */
-  patchPath: (row: { id: string }) => string;
-  /** Fixed values merged into the create body (the list's scope). */
-  scope?: Record<string, string>;
-  onSaved: () => void;
-  onClose: () => void;
-}
-
-/**
- * The add / edit dialog of a record whose form is custom: `POST createPath` (with the scope) or `PATCH` the row.
- * An edit that changes nothing (empty body) sends no request and just closes.
- */
-export function RecordForm({ label, row, createPath, patchPath, scope, onSaved, onClose, ...rest }: RecordFormProps) {
-  return (
-    <ActionDialog
-      {...rest}
-      title={`${row ? 'Modifier' : 'Ajouter'} — ${label}`}
-      mode={row ? 'update' : 'create'}
-      onSubmit={async (body) => {
-        if (!row) await api.post(createPath, { ...(body as object), ...scope });
-        else if (Object.keys(body as object).length > 0) await api.patch(patchPath(row), body);
-      }}
-      onClose={onClose}
-      onDone={onSaved}
-    />
-  );
-}
+/** THE option source of the animals still on the farm, of one sex (sires and dams, boars and sows), labelled by tag. */
+export const activeAnimalOptions = (sex: 'F' | 'M'): EndpointOptions => ({
+  endpoint: '/animals',
+  params: { sex, status: 'ACTIF' },
+  labelKey: 'tag',
+});

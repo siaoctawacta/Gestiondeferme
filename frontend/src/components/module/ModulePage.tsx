@@ -111,7 +111,7 @@ function ModuleView<T extends { id: string }>({
     },
   );
 
-  const counts = list.data?.[config.statusCountsKey ?? 'statusCounts'] as Record<string, number> | undefined;
+  const counts = list.data?.['statusCounts'] as Record<string, number> | undefined;
   const showTiles = !embedded && onMain;
   // Without per-status totals the list total follows the filters, so count the unfiltered set apart.
   const unfiltered = useFarmQuery<number>(
@@ -122,7 +122,7 @@ function ModuleView<T extends { id: string }>({
 
   const scoped = config.farmScoped !== false;
   const writable = !scoped || farmId !== 'all';
-  const canCreate = !readOnly && can(config.slug, 'create') && writable;
+  const canCreate = !readOnly && can(config.slug, config.createPermission ?? 'create') && writable;
   const canUpdate = !readOnly && can(config.slug, 'update') && writable;
   const canDelete = !readOnly && can(config.slug, 'delete') && writable;
   const readOnlyBecauseAllFarms =

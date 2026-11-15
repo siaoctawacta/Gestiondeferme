@@ -172,8 +172,9 @@ describe('ModulePage with the batiments config', () => {
     await waitFor(() => expect(calls.some((c) => c.method === 'PATCH')).toBe(true));
     expect(calls.find((c) => c.method === 'PATCH')).toMatchObject({
       url: '/api/buildings/b1',
-      body: { name: 'Poulailler Z', type: 'AVICOLE', siteId: 's1', capacity: 5000, status: 'ACTIF' },
     });
+    // Only what changed is sent.
+    expect(calls.find((c) => c.method === 'PATCH')?.body).toEqual({ name: 'Poulailler Z' });
   });
 
   it('hides every write control without the matching permission', async () => {
@@ -389,6 +390,42 @@ describe('ModulePage kit extensions', () => {
     expect(screen.getAllByRole('button', { name: 'Modifier' })).toHaveLength(2);
   });
 
+  it('keeps the icon of a refused row visible but disabled, with the reason as tooltip, and does not act on click', async () => {
+    setup({ config: { ...batiments, canEdit: (b) => (b.id === 'b1' ? true : 'Raison de blocage'), canDelete: (b) => (b.id === 'b1' ? false : 'Bâtiment occupé') } });
+    await screen.findByText('Poulailler A');
+    const first = screen.getByText('Poulailler A').closest('tr')!;
+    const second = screen.getByText('Porcherie 2').closest('tr')!;
+    // `false` hides, `true` shows, a string disables.
+    expect(within(first).queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
+    expect(within(first).getByRole('button', { name: 'Modifier' })).not.toHaveAttribute('aria-disabled');
+    const edit = within(second).getByRole('button', { name: 'Modifier' });
+    expect(edit).toHaveAttribute('aria-disabled', 'true');
+    expect(edit).toHaveAttribute('title', 'Raison de blocage');
+    expect(within(second).getByRole('button', { name: 'Supprimer' })).toHaveAttribute('title', 'Bâtiment occupé');
+    const user = userEvent.setup();
+    await user.click(edit);
+    await user.click(within(second).getByRole('button', { name: 'Supprimer' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('shows the icons of a refused row only with the permission, and never under all farms', async () => {
+    setup({ perms: ['read'], config: { ...batiments, canEdit: () => 'Raison' } });
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
+  });
+
+  it('shows Ajouter on the permission named by createPermission (default create)', async () => {
+    setup({ perms: ['read', 'create'], config: { ...batiments, createPermission: 'update' } });
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+  });
+
+  it('shows Ajouter with update permission alone when createPermission is update', async () => {
+    setup({ perms: ['read', 'update'], config: { ...batiments, createPermission: 'update' } });
+    await screen.findByText('Poulailler A');
+    expect(screen.getByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
+  });
+
   it('renders a custom form instead of the generated dialog and refetches on save', async () => {
     const form: NonNullable<ModuleConfig<Building>['form']> = ({ row, onSaved, onClose }) => (
       <div role="dialog" aria-label="Formulaire perso">
@@ -397,7 +434,7 @@ describe('ModulePage kit extensions', () => {
         <button onClick={onClose}>Fermer</button>
       </div>
     );
-    setup({ config: { ...batiments, form } });
+    setup({ config: { ...batiments, fields: undefined, form } });
     await screen.findByText('Poulailler A');
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Ajouter' }));
@@ -447,7 +484,7 @@ describe('ModulePage kit extensions', () => {
       seen.push(scope);
       return <div role="dialog" aria-label="Formulaire perso" />;
     };
-    setup({ list: true, scope: { buildingId: 'b9' }, config: { ...batiments, scope: { batchId: 'b1' }, form } });
+    setup({ list: true, scope: { buildingId: 'b9' }, config: { ...batiments, scope: { batchId: 'b1' }, fields: undefined, form } });
     await screen.findByText('Poulailler A');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Ajouter' }));
     expect(seen.at(-1)).toEqual({ batchId: 'b1', buildingId: 'b9' });
@@ -487,6 +524,7 @@ describe('ModulePage kit extensions', () => {
   describe('select dependsOn and time field', () => {
     const dependent: ModuleConfig<Building> = {
       ...batiments,
+      form: undefined,
       fields: [
         { name: 'siteId', label: 'Site', type: 'select', options: { endpoint: '/sites' } },
         { name: 'zoneId', label: 'Zone', type: 'select', dependsOn: 'siteId', options: { endpoint: '/zones', params: { kind: 'x' } } },
@@ -527,6 +565,7 @@ describe('ModulePage kit extensions', () => {
     it('clears dependents transitively', async () => {
       const chain: ModuleConfig<Building> = {
         ...batiments,
+        form: undefined,
         fields: [
           { name: 'a', label: 'Aa', type: 'select', options: [{ value: '1', label: 'Un' }, { value: '2', label: 'Deux' }] },
           { name: 'b', label: 'Bb', type: 'select', dependsOn: 'a', options: [{ value: 'x', label: 'Ex' }] },

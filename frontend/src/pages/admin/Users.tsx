@@ -6,7 +6,7 @@ import { ModulePage } from '../../components/module/ModulePage';
 import type { FormMap, FormMode, ModuleConfig } from '../../components/module/types';
 import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
-import { Dialog } from '../../components/ui/Dialog';
+import { Dialog, DialogActions } from '../../components/ui/Dialog';
 import { Input } from '../../components/ui/Input';
 import { Pill } from '../../components/ui/Pill';
 import { ApiError, api } from '../../lib/api';
@@ -53,9 +53,9 @@ function ResetLinkDialog({ state, onClose }: { state: LinkState; onClose: () => 
           <p className="text-xs text-muted-foreground">Valable jusqu’au {formatDateTimeFr(state.expiresAt)}</p>
         </div>
       )}
-      <div className="mt-6 flex justify-end">
+      <DialogActions>
         <Button variant="outline" onClick={onClose}>Fermer</Button>
-      </div>
+      </DialogActions>
     </Dialog>
   );
 }

@@ -1,7 +1,7 @@
-import type { FormMode, ModuleConfig, StatusDef } from '../components/module/types';
+import type { ModuleConfig, StatusDef } from '../components/module/types';
 import { Pill, type PillTone } from '../components/ui/Pill';
 import type { ModuleKey } from '../lib/modules';
-import { formatNumber } from '../lib/format';
+import { formatDecimal, formatNumber, todayIso } from '../lib/format';
 
 /* ---------------------------------------------------------------------------------------------
  * API shapes (backend contract of `/batches`, `/batches/:id/events`, `/batches/:id/weighings`).
@@ -82,7 +82,7 @@ export const TYPE_LABELS: Record<string, string> = {
   PONDEUSE: 'Pondeuse',
   POUSSIN: 'Poussin',
   REPRODUCTEUR: 'Reproducteur',
-  PORCELET: 'Porcelet',
+  PORCELET: 'Porcelets',
   ENGRAISSEMENT: 'Engraissement',
 };
 
@@ -104,19 +104,10 @@ export const EVENT_LABELS: Record<string, { label: string; tone: PillTone }> = {
 };
 const MANUAL_EVENTS = ['MORTALITE', 'VENTE', 'REFORME', 'ENTREE', 'NAISSANCE'] as const;
 
-export const today = () => new Date().toISOString().slice(0, 10);
-export const orDash = (v: number | null | undefined, fmt: (n: number) => string = formatNumber) => (v === null || v === undefined ? '—' : fmt(v));
-
-/** Drops empty optional values from a request body (create) or turns them into `null` (update, to clear them). */
-export function clean(body: Record<string, unknown>, mode: FormMode, clearable: string[] = []): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(body)) {
-    if (v === '' || v === undefined) {
-      if (mode === 'update' && clearable.includes(k)) out[k] = null;
-    } else out[k] = v;
-  }
-  return out;
-}
+/** Why a lot cannot be edited or deleted (an open lot that lost animals or sold some has history: the API answers 409 for it). */
+export const lotLocked = (b: { status: string }): string | true => (b.status === 'CLOTURE' ? 'Lot clôturé' : true);
+export const lotHasHistory = (b: Pick<Batch, 'deaths' | 'alive' | 'initialCount'> & { status: string }): string | true =>
+  b.status === 'CLOTURE' ? 'Lot clôturé' : b.deaths === 0 && b.alive === b.initialCount ? true : 'Lot avec historique — clôturez-le';
 
 export const text = (v: unknown) => String(v ?? '').trim();
 export const num = (v: unknown) => (text(v) === '' ? '' : Number(v));
@@ -145,7 +136,7 @@ export function batchEvents(batchId: string, slug: ModuleKey = 'lots'): ModuleCo
       { key: 'note', header: 'NOTE', render: (e) => e.note ?? '' },
     ],
     fields: [
-      { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: today() },
+      { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
       {
         name: 'type',
         label: 'Type',
@@ -161,13 +152,19 @@ export function batchEvents(batchId: string, slug: ModuleKey = 'lots'): ModuleCo
     // Transfers are written by the transfer action only.
     canEdit: (e) => (MANUAL_EVENTS as readonly string[]).includes(e.type),
     canDelete: (e) => (MANUAL_EVENTS as readonly string[]).includes(e.type),
-    toPayload: (v, mode) =>
-      clean({ date: v.date, type: v.type, quantity: num(v.quantity), cause: text(v.cause), note: text(v.note) }, mode, ['cause', 'note']),
+    toPayload: (v) => ({ date: v.date, type: v.type, quantity: num(v.quantity), cause: text(v.cause), note: text(v.note) }),
   };
 }
 
-/** Weighings of one lot. */
-export function batchWeighings(batchId: string, slug: ModuleKey = 'lots'): ModuleConfig<Weighing> {
+/** Kilograms to the grams the API stores (whole grams). */
+const toGrams = (kg: unknown) => (text(kg) === '' ? '' : Math.round(Number(kg) * 1000));
+
+/**
+ * Weighings of one lot. The API stores grams: poultry is entered and shown in grams, pigs in kilograms (the
+ * form asks `Poids moyen (kg)` and converts, rows are shown divided by 1000).
+ */
+export function batchWeighings(batchId: string, slug: ModuleKey = 'lots', species: 'AVICOLE' | 'PORCIN' = 'AVICOLE'): ModuleConfig<Weighing> {
+  const pig = species === 'PORCIN';
   return {
     slug,
     exportable: false,
@@ -178,17 +175,26 @@ export function batchWeighings(batchId: string, slug: ModuleKey = 'lots'): Modul
     columns: [
       { key: 'date', header: 'DATE' },
       { key: 'sampleSize', header: "ÉCHANTILLON", align: 'right', render: (w) => formatNumber(w.sampleSize) },
-      { key: 'averageWeightG', header: 'POIDS MOYEN (G)', align: 'right', render: (w) => formatNumber(w.averageWeightG) },
+      pig
+        ? { key: 'averageWeightG', header: 'POIDS MOYEN', align: 'right', render: (w) => `${formatDecimal(w.averageWeightG / 1000, 2)} kg` }
+        : { key: 'averageWeightG', header: 'POIDS MOYEN (G)', align: 'right', render: (w) => formatNumber(w.averageWeightG) },
       { key: 'note', header: 'NOTE', render: (w) => w.note ?? '' },
     ],
     fields: [
-      { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: today() },
+      { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
       { name: 'sampleSize', label: "Taille de l'échantillon", type: 'number', required: true, min: 1, step: 1 },
-      { name: 'averageWeightG', label: 'Poids moyen (g)', type: 'number', required: true, min: 1, step: 1 },
+      pig
+        ? { name: 'averageWeightKg', label: 'Poids moyen (kg)', type: 'number', required: true, min: 0.1, step: 0.1 }
+        : { name: 'averageWeightG', label: 'Poids moyen (g)', type: 'number', required: true, min: 1, step: 1 },
       { name: 'note', label: 'Note', type: 'textarea' },
     ],
     rowLabel: (w) => `Pesée du ${w.date}`,
-    toPayload: (v, mode) =>
-      clean({ date: v.date, sampleSize: num(v.sampleSize), averageWeightG: num(v.averageWeightG), note: text(v.note) }, mode, ['note']),
+    toForm: (w) => ({ ...w, averageWeightKg: w.averageWeightG / 1000 }),
+    toPayload: (v) => ({
+      date: v.date,
+      sampleSize: num(v.sampleSize),
+      averageWeightG: pig ? toGrams(v.averageWeightKg) : num(v.averageWeightG),
+      note: text(v.note),
+    }),
   };
 }

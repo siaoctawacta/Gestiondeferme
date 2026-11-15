@@ -1,4 +1,6 @@
-import { formatDate, formatDateFr, formatDateTime, formatDateTimeFr, formatMoney, formatNumber, formatPct } from './format';
+import {
+  formatDate, formatDateFr, formatDateTime, formatDateTimeFr, formatDecimal, formatMoney, formatNumber, formatPct, orDash, todayIso,
+} from './format';
 
 describe('format', () => {
   it('formats numbers with a narrow no-break space (U+202F) as thousands separator', () => {
@@ -16,6 +18,20 @@ describe('format', () => {
     for (const [n, out] of [[1.95, '2%'], [2.45, '2.5%'], [0, '0%'], [99.96, '100%'], [-0, '0%'], [-0.04, '0%'], [1e-7, '0%'], [-3.65, '-3.7%'], [NaN, '—'], [Infinity, '—']] as const) {
       expect(formatPct(n)).toBe(out);
     }
+  });
+  it('formats decimals rounded, grouped and without trailing zeros', () => {
+    for (const [n, digits, out] of [
+      [12, 1, '12'], [55.34, 1, '55.3'], [1.7, 2, '1.7'], [1.705, 2, '1.71'], [1450.25, 2, '1\u202f450.25'], [-0.04, 1, '0'], [NaN, 1, '—'],
+    ] as const) {
+      expect(formatDecimal(n, digits)).toBe(out);
+    }
+  });
+  it('shows a dash for a missing value, and today as an ISO date', () => {
+    expect(orDash(null)).toBe('—');
+    expect(orDash(undefined)).toBe('—');
+    expect(orDash(1450)).toBe('1\u202f450');
+    expect(orDash(3.6, formatPct)).toBe('3.6%');
+    expect(todayIso()).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
   it('formats ISO dates as YYYY-MM-DD', () => {
     expect(formatDate('2026-10-22T00:00:00Z')).toBe('2026-10-22');

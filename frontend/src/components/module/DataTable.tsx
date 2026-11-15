@@ -4,7 +4,7 @@ import { Link } from 'react-router';
 import { ChevronDown, ChevronUp, Pencil, QrCode, Trash2 } from 'lucide-react';
 import { Table, TD, TH, THead, TR } from '../ui/Table';
 import { Pill } from '../ui/Pill';
-import type { Column, StatusDef } from './types';
+import type { Column, RowGate, StatusDef } from './types';
 
 export interface SortState {
   key: string;
@@ -36,16 +36,30 @@ export interface DataTableProps<T extends { id: string }> {
   emptyText?: string;
   onEdit?: (row: T) => void;
   onDelete?: (row: T) => void;
-  /** Per-row switches for the edit / delete buttons (default: shown on every row). */
-  canEdit?: (row: T) => boolean;
-  canDelete?: (row: T) => boolean;
+  /** Per-row switches for the edit / delete buttons (default: shown on every row): `false` hides, a string disables with that tooltip. */
+  canEdit?: (row: T) => RowGate;
+  canDelete?: (row: T) => RowGate;
 }
 
 const ICON_BUTTON =
   'inline-flex size-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring';
 
-export const ActionButton = ({ label, onClick, children }: { label: string; onClick: () => void; children: ReactNode }) => (
-  <button type="button" aria-label={label} title={label} onClick={onClick} className={ICON_BUTTON}>
+/**
+ * An icon button. With `disabledReason` it stays visible but muted: `aria-disabled`, the reason as tooltip and no
+ * action on click. It is not the `disabled` attribute, so it keeps its place in the tab order and the tooltip
+ * stays reachable.
+ */
+export const ActionButton = ({
+  label, onClick, children, disabledReason,
+}: { label: string; onClick: () => void; children: ReactNode; disabledReason?: string }) => (
+  <button
+    type="button"
+    aria-label={label}
+    aria-disabled={disabledReason ? true : undefined}
+    title={disabledReason ?? label}
+    onClick={disabledReason ? undefined : onClick}
+    className={disabledReason ? `${ICON_BUTTON} cursor-not-allowed opacity-40 hover:bg-transparent hover:text-muted-foreground` : ICON_BUTTON}
+  >
     {children}
   </button>
 );
@@ -63,6 +77,9 @@ function cell<T extends { id: string }>(
 }
 
 const SKELETON_ROWS = 5;
+
+const gate = <T,>(fn: ((row: T) => RowGate) | undefined, row: T): RowGate => fn?.(row) ?? true;
+const reason = (g: RowGate): string | undefined => (typeof g === 'string' ? g : undefined);
 
 export function DataTable<T extends { id: string }>({
   columns, rows, loading, statuses, statusKey, sort, onSort, detailPath, qr, actions, emptyText = 'Aucun enregistrement', onEdit, onDelete, canEdit, canDelete,
@@ -139,13 +156,13 @@ export function DataTable<T extends { id: string }>({
                         <QrCode aria-hidden className="size-4" />
                       </Link>
                     )}
-                    {onEdit && (canEdit?.(row) ?? true) && (
-                      <ActionButton label="Modifier" onClick={() => onEdit(row)}>
+                    {onEdit && gate(canEdit, row) !== false && (
+                      <ActionButton label="Modifier" onClick={() => onEdit(row)} disabledReason={reason(gate(canEdit, row))}>
                         <Pencil aria-hidden className="size-4" />
                       </ActionButton>
                     )}
-                    {onDelete && (canDelete?.(row) ?? true) && (
-                      <ActionButton label="Supprimer" onClick={() => onDelete(row)}>
+                    {onDelete && gate(canDelete, row) !== false && (
+                      <ActionButton label="Supprimer" onClick={() => onDelete(row)} disabledReason={reason(gate(canDelete, row))}>
                         <Trash2 aria-hidden className="size-4" />
                       </ActionButton>
                     )}

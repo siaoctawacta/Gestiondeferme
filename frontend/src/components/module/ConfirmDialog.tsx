@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dialog } from '../ui/Dialog';
+import { Dialog, DialogActions } from '../ui/Dialog';
 import { Button } from '../ui/Button';
 import { Alert } from '../ui/Alert';
 import { errorMessage } from './errorMessage';
@@ -32,7 +32,7 @@ export function ConfirmDialog({ title, message, confirmLabel = 'Supprimer', onCo
     <Dialog open onClose={onClose} title={title}>
       <p className="text-sm">{message}</p>
       {error && <Alert className="mt-4">{error}</Alert>}
-      <div className="mt-6 flex justify-end gap-2">
+      <DialogActions>
         <Button variant="outline" onClick={onClose}>Annuler</Button>
         <Button
           className="bg-destructive text-white hover:bg-destructive/90"
@@ -41,7 +41,7 @@ export function ConfirmDialog({ title, message, confirmLabel = 'Supprimer', onCo
         >
           {confirmLabel}
         </Button>
-      </div>
+      </DialogActions>
     </Dialog>
   );
 }

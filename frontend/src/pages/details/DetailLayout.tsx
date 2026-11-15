@@ -14,6 +14,8 @@ export interface DetailLayoutProps {
   status?: ReactNode;
   /** Buttons at the right of the header. */
   actions?: ReactNode;
+  /** Message shown under the header (e.g. why an action failed). */
+  notice?: ReactNode;
   /** Tile row under the header. */
   stats?: StatTile[];
   /** Tab bar with one panel each; the first tab is shown first. Without tabs, put the content in `children`. */
@@ -22,7 +24,7 @@ export interface DetailLayoutProps {
 }
 
 /** Layout of a record's detail page: back link, header (same typography as `PageHeader`), stat tiles and tabs. */
-export function DetailLayout({ back, title, subtitle, status, actions, stats, tabs, children }: DetailLayoutProps) {
+export function DetailLayout({ back, title, subtitle, status, actions, notice, stats, tabs, children }: DetailLayoutProps) {
   useDocumentTitle(title);
   const base = useId();
   const [active, setActive] = useState(tabs?.[0]?.key ?? '');
@@ -43,6 +45,7 @@ export function DetailLayout({ back, title, subtitle, status, actions, stats, ta
         </div>
         {actions && <div className="flex flex-wrap items-center gap-2 print:hidden [&_button]:h-9!">{actions}</div>}
       </div>
+      {notice}
       {stats && stats.length > 0 && <StatTiles tiles={stats} />}
       {tabs && tabs.length > 0 && current ? (
         <>
