@@ -58,6 +58,42 @@ export class HealthHistory
     return latest;
   }
 
+  /** `withdrawalUntil` of many lots and animals: one query. */
+  async withdrawalUntilMany(
+    ids: { batchIds?: string[]; animalIds?: string[] },
+    tx?: Prisma.TransactionClient,
+  ): Promise<Map<string, Date>> {
+    const result = new Map<string, Date>();
+    const targets = [
+      ...(ids.batchIds?.length ? [{ batchId: { in: ids.batchIds } }] : []),
+      ...(ids.animalIds?.length ? [{ animalId: { in: ids.animalIds } }] : []),
+    ];
+    if (targets.length === 0) return result;
+    const acts = await (tx ?? this.prisma).healthAct.findMany({
+      where: {
+        OR: targets,
+        status: 'REALISE',
+        withdrawalDays: { not: null },
+      },
+      select: {
+        batchId: true,
+        animalId: true,
+        status: true,
+        doneDate: true,
+        durationDays: true,
+        withdrawalDays: true,
+      },
+    });
+    for (const act of acts) {
+      const id = act.batchId ?? act.animalId;
+      const end = withdrawalEnd(act);
+      if (!id || !end) continue;
+      const known = result.get(id);
+      if (!known || end > known) result.set(id, end);
+    }
+    return result;
+  }
+
   /**
    * Earliest health record of the lot: the day of a live act (the earlier of
    * its date and the day it was done; cancelled acts do not count), a

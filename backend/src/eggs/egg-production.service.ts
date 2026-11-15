@@ -18,6 +18,7 @@ import {
   type BatchHistorySource,
 } from '../herd/batch-history';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
+import { EggStockService } from './egg-stock';
 import { breakageRate, layingRate } from '../indicators/indicators';
 import type { ExportColumn } from '../listing/export';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
@@ -63,6 +64,14 @@ export const EGG_COLUMNS: ExportColumn<EggProductionItem>[] = [
   { header: 'Taux de casse', value: (e) => e.breakageRate },
 ];
 
+/** collected − broken − downgraded − toIncubation: the eggs that can be sold. */
+const marketableOf = (r: {
+  collected: number;
+  broken: number;
+  downgraded: number;
+  toIncubation: number;
+}): number => r.collected - r.broken - r.downgraded - r.toIncubation;
+
 const SORTABLE = ['date', 'collected'];
 export const NO_EGGS = "Ce lot ne produit pas d'œufs";
 const OVER =
@@ -75,6 +84,7 @@ export class EggProductionService implements BatchHistorySource {
     private readonly prisma: PrismaService,
     private readonly ledger: HerdLedgerService,
     private readonly audit: AuditService,
+    private readonly stock: EggStockService,
     history: BatchHistoryRegistry,
   ) {
     history.register(this);
@@ -120,7 +130,7 @@ export class EggProductionService implements BatchHistorySource {
       broken: r.broken,
       downgraded: r.downgraded,
       toIncubation: r.toIncubation,
-      marketable: r.collected - r.broken - r.downgraded - r.toIncubation,
+      marketable: marketableOf(r),
       breakageRate: breakageRate(r.broken, r.collected),
       layingRate: layingRate(
         r.collected,
@@ -191,6 +201,40 @@ export class EggProductionService implements BatchHistorySource {
     }
   }
 
+  /**
+   * The lot's whole marketable production once `change` is made (a record
+   * added, replaced or removed), checked against what was sold: no day of the
+   * history may end below zero. Called under the lot lock.
+   */
+  private async assertNotSold(
+    tx: Tx,
+    batchId: string,
+    change: {
+      skipId?: string;
+      add?: { date: Date; marketable: number };
+    },
+  ): Promise<void> {
+    const rows = await tx.eggProduction.findMany({
+      where: {
+        batchId,
+        ...(change.skipId ? { id: { not: change.skipId } } : {}),
+      },
+      select: {
+        date: true,
+        collected: true,
+        broken: true,
+        downgraded: true,
+        toIncubation: true,
+      },
+    });
+    const next = rows.map((r) => ({
+      date: r.date,
+      marketable: marketableOf(r),
+    }));
+    if (change.add) next.push(change.add);
+    await this.stock.assertProduction(tx, batchId, next);
+  }
+
   private assertDate(entryDate: Date, date: Date): void {
     assertNotFuture(date);
     assertNotBeforeEntry(entryDate, date);
@@ -211,6 +255,9 @@ export class EggProductionService implements BatchHistorySource {
         toIncubation: dto.toIncubation ?? 0,
       };
       this.assertFigures(data);
+      await this.assertNotSold(tx, batch.id, {
+        add: { date, marketable: marketableOf(data) },
+      });
       const created = await orConflict(
         () =>
           tx.eggProduction.create({
@@ -269,6 +316,10 @@ export class EggProductionService implements BatchHistorySource {
         toIncubation: dto.toIncubation ?? before.toIncubation,
       };
       this.assertFigures(next);
+      await this.assertNotSold(tx, batch.id, {
+        skipId: id,
+        add: { date, marketable: marketableOf(next) },
+      });
       const updated = await orConflict(
         () =>
           tx.eggProduction.update({
@@ -302,6 +353,7 @@ export class EggProductionService implements BatchHistorySource {
       const batch = await this.ledger.lockBatch(tx, found.batchId, ctx.farmIds);
       this.ledger.assertOpen(batch);
       const [before] = await this.toItems([await this.find(tx, ctx, id)], tx);
+      await this.assertNotSold(tx, batch.id, { skipId: id });
       await tx.eggProduction.delete({ where: { id } });
       await this.audit.log(
         {

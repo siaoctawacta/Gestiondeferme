@@ -51,7 +51,8 @@ const BATCH_LABEL: Record<BatchType, string> = {
   ENGRAISSEMENT: 'Porcs',
 };
 
-const ANIMAL_LABEL: Record<AnimalCategory, string> = {
+/** What an animal of each category is called on a document. */
+export const ANIMAL_LABEL: Record<AnimalCategory, string> = {
   TRUIE: 'Truie',
   VERRAT: 'Verrat',
   COCHETTE: 'Cochette',

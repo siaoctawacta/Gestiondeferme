@@ -527,37 +527,41 @@ model Incubation {
 }
 
 model Animal {
-  id          String            @id @default(cuid())
-  farmId      String
-  farm        Farm              @relation(fields: [farmId], references: [id])
-  tag         String
-  category    AnimalCategory
-  breedId     String?
-  breed       Breed?            @relation(fields: [breedId], references: [id], onDelete: Restrict)
-  sex         AnimalSex
-  birthDate   DateTime?         @db.Date
-  sireId      String?
-  sire        Animal?           @relation("Sire", fields: [sireId], references: [id], onDelete: Restrict)
-  damId       String?
-  dam         Animal?           @relation("Dam", fields: [damId], references: [id], onDelete: Restrict)
-  buildingId  String
-  building    Building          @relation(fields: [buildingId], references: [id])
-  status      AnimalStatus      @default(ACTIF)
-  exitDate    DateTime?         @db.Date
-  exitReason  AnimalExitReason?
-  notes       String?
-  createdAt   DateTime          @default(now())
-  updatedAt   DateTime          @updatedAt
-  sired       Animal[]          @relation("Sire")
-  born        Animal[]          @relation("Dam")
-  weighings   AnimalWeighing[]
-  heats       Heat[]
-  breedings   BreedingRecord[]  @relation("BreedingSow")
-  services    BreedingRecord[]  @relation("BreedingBoar")
-  litters     AnimalBatch[]     @relation("SowLitters")
-  healthActs  HealthAct[]
-  quarantines Quarantine[]
-  quoteLines  QuoteLine[]
+  id              String            @id @default(cuid())
+  farmId          String
+  farm            Farm              @relation(fields: [farmId], references: [id])
+  tag             String
+  category        AnimalCategory
+  breedId         String?
+  breed           Breed?            @relation(fields: [breedId], references: [id], onDelete: Restrict)
+  sex             AnimalSex
+  birthDate       DateTime?         @db.Date
+  sireId          String?
+  sire            Animal?           @relation("Sire", fields: [sireId], references: [id], onDelete: Restrict)
+  damId           String?
+  dam             Animal?           @relation("Dam", fields: [damId], references: [id], onDelete: Restrict)
+  buildingId      String
+  building        Building          @relation(fields: [buildingId], references: [id])
+  status          AnimalStatus      @default(ACTIF)
+  exitDate        DateTime?         @db.Date
+  exitReason      AnimalExitReason?
+  /// What sold the animal (`SALE` + the invoice id, `exitSourceLabel` = its number): set only with `exitReason = VENDU`, together or not at all.
+  exitSourceType  String?
+  exitSourceId    String?
+  exitSourceLabel String?
+  notes           String?
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  sired           Animal[]          @relation("Sire")
+  born            Animal[]          @relation("Dam")
+  weighings       AnimalWeighing[]
+  heats           Heat[]
+  breedings       BreedingRecord[]  @relation("BreedingSow")
+  services        BreedingRecord[]  @relation("BreedingBoar")
+  litters         AnimalBatch[]     @relation("SowLitters")
+  healthActs      HealthAct[]
+  quarantines     Quarantine[]
+  quoteLines      QuoteLine[]
 
   @@unique([farmId, tag])
   @@index([farmId])
@@ -565,6 +569,7 @@ model Animal {
   @@index([sireId])
   @@index([damId])
   @@index([buildingId])
+  @@index([exitSourceType, exitSourceId])
 }
 
 model AnimalWeighing {
@@ -761,6 +766,10 @@ enum StockReason {
   INVENTAIRE
   PERTE
   AUTRE
+  /// A sale of stock (invoice line): an exit at the running average cost.
+  VENTE
+  /// Goods returned by a customer (credit note with return): an entry at the sale's cost.
+  RETOUR
 }
 
 enum InventoryStatus {

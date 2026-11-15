@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { HerdModule } from '../herd/herd.module';
+import { AnimalSales } from './animal-sales';
 import { AnimalTargets } from './animal-targets';
 import { AnimalsController } from './animals.controller';
 import { AnimalsService } from './animals.service';
@@ -10,7 +11,7 @@ import { HerdListService } from './herd-list.service';
 @Module({
   imports: [HerdModule],
   controllers: [AnimalsController, HerdListController],
-  providers: [AnimalsService, AnimalTargets, HerdListService],
-  exports: [AnimalsService, HerdListService],
+  providers: [AnimalsService, AnimalSales, AnimalTargets, HerdListService],
+  exports: [AnimalsService, AnimalSales, HerdListService],
 })
 export class PigsModule {}

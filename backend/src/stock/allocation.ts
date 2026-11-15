@@ -79,8 +79,9 @@ export function headrooms(
 /**
  * Splits an exit of `needed` units at `date` across the lots. Lots are served
  * earliest expiry first (no expiry last), then the stock held in no lot. A
- * consumption never touches an expired lot (expiry before `date`); any other
- * exit writes expired lots off first. `batchId` names the only lot to use. Each
+ * exit that `consumption` flags (a consumption, a treatment or a sale: the
+ * ledger's `REFUSES_EXPIRED_LOTS`) never touches an expired lot (expiry before
+ * `date`); any other exit writes expired lots off first. `batchId` names the only lot to use. Each
  * bucket gives at most its headroom at the exit's position (`anchor`: the
  * creation time an edited exit keeps in its day; absent: the end of the day).
  */

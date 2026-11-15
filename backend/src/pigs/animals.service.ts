@@ -44,8 +44,11 @@ export const PREGNANT_OR_NURSING = 'Cette truie est gestante ou allaitante';
 const BEFORE_BIRTH = "La date est antérieure à la naissance de l'animal";
 const HISTORY = 'Cet animal a un historique ; déclarez sa sortie plutôt';
 const NOT_EXITED = "Cet animal n'est pas sorti du cheptel";
-const RECORDED_AFTER_EXIT =
+export const RECORDED_AFTER_EXIT =
   'Des données ont été enregistrées après la sortie de cet animal';
+/** A sale document owns the exit: only cancelling it (or a credit note) undoes it. */
+export const soldByDocument = (label: string): string =>
+  `Cet animal a été vendu par la facture ${label} : annulez la facture ou établissez un avoir`;
 
 /** Statuses of an animal that is still on the farm (and so housed in its building). */
 export const LIVE_STATUSES: AnimalStatus[] = [
@@ -127,6 +130,84 @@ export async function latestWeights(
     select: { animalId: true, weightKg: true },
   });
   return new Map(rows.map((r) => [r.animalId, r.weightKg.toNumber()]));
+}
+
+/** The exit may not predate the animal's last breeding step, weighing or heat. */
+export async function assertAfterLastRecord(
+  tx: Tx,
+  id: string,
+  date: Date,
+): Promise<void> {
+  const events = await tx.breedingRecord.findMany({
+    where: { sowId: id },
+    select: {
+      serviceDate: true,
+      farrowingDate: true,
+      weaningDate: true,
+      failureDate: true,
+    },
+  });
+  const last = events
+    .flatMap((e) => [
+      e.serviceDate,
+      e.farrowingDate,
+      e.weaningDate,
+      e.failureDate,
+    ])
+    .filter((d) => d !== null)
+    .reduce((max, d) => Math.max(max, d.getTime()), 0);
+  if (date.getTime() < last) {
+    throw new BadRequestException(
+      'La date de sortie est antérieure au dernier événement de reproduction',
+    );
+  }
+  const weighing = await tx.animalWeighing.aggregate({
+    where: { animalId: id },
+    _max: { date: true },
+  });
+  if (weighing._max.date && date < weighing._max.date) {
+    throw new BadRequestException(
+      'La date de sortie est antérieure à la dernière pesée',
+    );
+  }
+  const heat = await tx.heat.aggregate({
+    where: { animalId: id },
+    _max: { date: true },
+  });
+  if (heat._max.date && date < heat._max.date) {
+    throw new BadRequestException(
+      'La date de sortie est antérieure à la dernière chaleur',
+    );
+  }
+}
+
+/** Anything recorded for the animal strictly after `date`: weighing, heat, breeding step. */
+export async function hasRecordAfter(
+  tx: Tx,
+  id: string,
+  date: Date,
+): Promise<boolean> {
+  const later = { gt: date };
+  const counts = [
+    await tx.animalWeighing.count({ where: { animalId: id, date: later } }),
+    await tx.heat.count({ where: { animalId: id, date: later } }),
+    await tx.breedingRecord.count({
+      where: {
+        OR: [{ sowId: id }, { boarId: id }],
+        AND: [
+          {
+            OR: [
+              { serviceDate: later },
+              { farrowingDate: later },
+              { weaningDate: later },
+              { failureDate: later },
+            ],
+          },
+        ],
+      },
+    }),
+  ];
+  return counts.some((n) => n > 0);
 }
 
 @Injectable()
@@ -454,6 +535,9 @@ export class AnimalsService implements OccupationSource {
     try {
       await this.prisma.$transaction(async (tx) => {
         const row = await this.lock(tx, ctx, id);
+        if (row.exitSourceLabel) {
+          throw new ConflictException(soldByDocument(row.exitSourceLabel));
+        }
         // One query at a time: the transaction owns a single connection.
         const counts = [
           await tx.animalWeighing.count({ where: { animalId: id } }),
@@ -501,7 +585,7 @@ export class AnimalsService implements OccupationSource {
       if (row.birthDate && date < row.birthDate) {
         throw new BadRequestException(BEFORE_BIRTH);
       }
-      await this.assertAfterLastRecord(tx, id, date);
+      await assertAfterLastRecord(tx, id, date);
       if (
         dto.reason !== 'MORT' &&
         (row.status === 'GESTANTE' || row.status === 'ALLAITANTE')
@@ -544,55 +628,6 @@ export class AnimalsService implements OccupationSource {
     });
   }
 
-  /** The exit may not predate the animal's last breeding step, weighing or heat. */
-  private async assertAfterLastRecord(
-    tx: Tx,
-    id: string,
-    date: Date,
-  ): Promise<void> {
-    const events = await tx.breedingRecord.findMany({
-      where: { sowId: id },
-      select: {
-        serviceDate: true,
-        farrowingDate: true,
-        weaningDate: true,
-        failureDate: true,
-      },
-    });
-    const last = events
-      .flatMap((e) => [
-        e.serviceDate,
-        e.farrowingDate,
-        e.weaningDate,
-        e.failureDate,
-      ])
-      .filter((d) => d !== null)
-      .reduce((max, d) => Math.max(max, d.getTime()), 0);
-    if (date.getTime() < last) {
-      throw new BadRequestException(
-        'La date de sortie est antérieure au dernier événement de reproduction',
-      );
-    }
-    const weighing = await tx.animalWeighing.aggregate({
-      where: { animalId: id },
-      _max: { date: true },
-    });
-    if (weighing._max.date && date < weighing._max.date) {
-      throw new BadRequestException(
-        'La date de sortie est antérieure à la dernière pesée',
-      );
-    }
-    const heat = await tx.heat.aggregate({
-      where: { animalId: id },
-      _max: { date: true },
-    });
-    if (heat._max.date && date < heat._max.date) {
-      throw new BadRequestException(
-        'La date de sortie est antérieure à la dernière chaleur',
-      );
-    }
-  }
-
   /**
    * Undoes a mistaken exit. Refused (409) when the animal is still on the farm
    * or when anything was recorded for it after the exit date. The status goes
@@ -606,8 +641,11 @@ export class AnimalsService implements OccupationSource {
       const row = await this.lock(tx, ctx, id);
       if (LIVE_STATUSES.includes(row.status))
         throw new ConflictException(NOT_EXITED);
+      if (row.exitSourceLabel) {
+        throw new ConflictException(soldByDocument(row.exitSourceLabel));
+      }
       const exitDate = row.exitDate;
-      if (exitDate && (await this.hasRecordAfter(tx, id, exitDate))) {
+      if (exitDate && (await hasRecordAfter(tx, id, exitDate))) {
         throw new ConflictException(RECORDED_AFTER_EXIT);
       }
       // The building may have changed type since the animal left.
@@ -657,35 +695,6 @@ export class AnimalsService implements OccupationSource {
       await this.log(tx, ctx, 'UPDATE', id, after.tag, before, after);
       return after;
     });
-  }
-
-  /** Anything recorded for the animal strictly after `date`: weighing, heat, breeding step. */
-  private async hasRecordAfter(
-    tx: Tx,
-    id: string,
-    date: Date,
-  ): Promise<boolean> {
-    const later = { gt: date };
-    const counts = [
-      await tx.animalWeighing.count({ where: { animalId: id, date: later } }),
-      await tx.heat.count({ where: { animalId: id, date: later } }),
-      await tx.breedingRecord.count({
-        where: {
-          OR: [{ sowId: id }, { boarId: id }],
-          AND: [
-            {
-              OR: [
-                { serviceDate: later },
-                { farrowingDate: later },
-                { weaningDate: later },
-                { failureDate: later },
-              ],
-            },
-          ],
-        },
-      }),
-    ];
-    return counts.some((n) => n > 0);
   }
 
   /** Audits a breeding record changed as a side effect of an animal operation. */

@@ -44,6 +44,12 @@ describe('operationCosts', () => {
       sourceIds: ['a', 'b', 'c'],
     });
     expect(client.stockMovement.findMany).toHaveBeenCalledTimes(1);
+    // Exits only: a source that also writes entries (a credit note's return) is not charged for them.
+    expect(client.stockMovement.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ quantity: { lt: 0 } }) as unknown,
+      }),
+    );
     expect(costs.get('a')?.toString()).toBe('13363.64');
     expect(costs.get('b')?.toString()).toBe('6000.3');
     expect(costs.has('c')).toBe(false);

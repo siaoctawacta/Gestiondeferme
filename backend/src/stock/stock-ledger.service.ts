@@ -42,8 +42,16 @@ const INVALID_ITEM = 'Article invalide pour cette ferme';
 export const INVALID_BATCH = 'Lot invalide pour cet article';
 export const MOVEMENT_NOT_FOUND = 'Mouvement introuvable';
 
-/** Reasons that consume stock for production: they may not draw on an expired lot. */
+/** Reasons that consume stock for production (the daily consumption, alerts). */
 const CONSUMPTION_REASONS: StockReason[] = ['CONSOMMATION', 'TRAITEMENT'];
+
+/**
+ * The expiry rule per reason: an exit for one of these may not draw on an
+ * expired lot (`Lot périmé`), because the goods leave to be used or sold.
+ * Every other reason (a loss, a count, a correction) may take expired stock
+ * out of the books.
+ */
+const REFUSES_EXPIRED_LOTS: StockReason[] = [...CONSUMPTION_REASONS, 'VENTE'];
 
 /** The operations that write ledger movements (`sourceType`); each task that adds one adds it here. */
 export const STOCK_SOURCES = [
@@ -51,6 +59,8 @@ export const STOCK_SOURCES = [
   'FEED_DISTRIBUTION',
   'HEALTH_ACT',
   'PURCHASE',
+  'SALE',
+  'CREDIT_NOTE',
 ] as const;
 export type StockSourceType = (typeof STOCK_SOURCES)[number];
 
@@ -1078,7 +1088,7 @@ export class StockLedgerService {
         batches: [...state.batches.values()],
         date: opts.date,
         needed: opts.needed,
-        consumption: CONSUMPTION_REASONS.includes(opts.reason),
+        consumption: REFUSES_EXPIRED_LOTS.includes(opts.reason),
         batchId: opts.batchId,
         anchor: opts.anchor,
       });
@@ -1195,7 +1205,7 @@ export class StockLedgerService {
       if (
         touched &&
         r.quantity.lt(0) &&
-        CONSUMPTION_REASONS.includes(r.reason)
+        REFUSES_EXPIRED_LOTS.includes(r.reason)
       ) {
         this.assertNotExpired(
           r.stockBatchId ? state.batches.get(r.stockBatchId) : undefined,

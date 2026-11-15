@@ -2,6 +2,7 @@ import type { Decimal as DecimalType } from '@prisma/client/runtime/client';
 import { Decimal } from '@prisma/client/runtime/client';
 import type { Prisma } from '../generated/prisma/client';
 import type { PrismaService } from '../prisma/prisma.service';
+import type { StockSourceType } from './stock-ledger.service';
 
 /** One exit of the ledger as stored (a FEFO exit may be split across lots: several pieces, one operation). */
 export interface ExitPiece {
@@ -29,12 +30,17 @@ export const operationCost = (pieces: ExitPiece[]): DecimalType =>
  */
 export async function operationCosts(
   client: Prisma.TransactionClient | PrismaService,
-  of: { sourceType: string; sourceIds: string[] },
+  of: { sourceType: StockSourceType; sourceIds: string[] },
 ): Promise<Map<string, DecimalType>> {
   const result = new Map<string, DecimalType>();
   if (of.sourceIds.length === 0) return result;
   const exits = await client.stockMovement.findMany({
-    where: { sourceType: of.sourceType, sourceId: { in: of.sourceIds } },
+    // Exits only: a source may also write entries (a credit note returns goods), which are not a cost.
+    where: {
+      sourceType: of.sourceType,
+      sourceId: { in: of.sourceIds },
+      quantity: { lt: 0 },
+    },
     select: {
       sourceId: true,
       operationId: true,
