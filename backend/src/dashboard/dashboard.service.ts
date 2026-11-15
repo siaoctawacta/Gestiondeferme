@@ -4,10 +4,7 @@ import { SettingsService } from '../admin/settings/settings.service';
 import { BuildingStatus } from '../generated/prisma/enums';
 import { formatDay } from '../common/days';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
-import {
-  ALERT_SETTING_KEYS,
-  type AlertSettings,
-} from '../indicators/alerts/alert.types';
+import type { AlertSettings } from '../indicators/alerts/alert.types';
 import { AlertsRegistry } from '../indicators/alerts/alerts-registry';
 import { layingRate, mortalityRate } from '../indicators/indicators';
 import { HerdListService } from '../pigs/herd-list.service';
@@ -242,10 +239,11 @@ export class DashboardService {
 
   /** Every open alert (the dashboard list shows the first few); thresholds are read once for all rules. */
   async alerts(ctx: RequestContext): Promise<AlertsDto> {
-    const stored = await this.settings.getAll(ctx);
-    const thresholds = Object.fromEntries(
-      ALERT_SETTING_KEYS.map((key) => [key, Number(stored[key])]),
-    ) as unknown as AlertSettings;
+    const thresholds: AlertSettings = Object.fromEntries(
+      Object.entries(await this.settings.getAll(ctx)).filter(
+        (entry): entry is [string, number] => typeof entry[1] === 'number',
+      ),
+    );
     const items = await this.alertsRegistry.run(ctx, thresholds);
     return { total: items.length, items };
   }

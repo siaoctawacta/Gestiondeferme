@@ -2,7 +2,7 @@ import type { RequestContext } from '../access/decorators';
 import type { BatchPerformanceRegistry } from '../herd/batch-performance';
 import type { BatchesService } from '../herd/batches.service';
 import type { PrismaService } from '../prisma/prisma.service';
-import { FeedRegistry } from './feed-source';
+import { LotCostRegistry } from './lot-cost';
 import { IndicatorsService } from './indicators.service';
 
 // The real services pull in the Prisma client; only their shape matters here.
@@ -13,7 +13,10 @@ describe('IndicatorsService.batchPerformance', () => {
   const ctx = { farmIds: ['f1'] } as RequestContext;
   const day = (d: string) => new Date(`${d}T00:00:00Z`);
 
-  function service(weighings: { date: Date; averageWeightG: number }[]) {
+  function service(
+    weighings: { date: Date; averageWeightG: number }[],
+    costs = new LotCostRegistry(),
+  ) {
     const prisma = {
       weighing: { findMany: () => Promise.resolve(weighings) },
     } as unknown as PrismaService;
@@ -29,7 +32,7 @@ describe('IndicatorsService.batchPerformance', () => {
     return new IndicatorsService(
       prisma,
       batches,
-      new FeedRegistry(),
+      costs,
       {} as BatchPerformanceRegistry,
     );
   }
@@ -45,6 +48,39 @@ describe('IndicatorsService.batchPerformance', () => {
       dailyGainG: null,
       feedConversion: null,
     });
+  });
+
+  it('takes feedKg and feedCost from the aliment category of the lot costs', async () => {
+    const costs = new LotCostRegistry();
+    costs.register({
+      costsFor: (ids) =>
+        Promise.resolve(
+          new Map([
+            [
+              ids[0],
+              [
+                { category: 'aliment', amount: 300, quantity: 100 },
+                { category: 'aliment', amount: 50, quantity: 20 },
+                { category: 'sante', amount: 999, quantity: 5 },
+              ],
+            ],
+          ]),
+        ),
+    });
+    const p = await service(
+      [
+        { date: day('2026-11-01'), averageWeightG: 500 },
+        { date: day('2026-11-11'), averageWeightG: 1500 },
+      ],
+      costs,
+    ).batchPerformance(ctx, 'b1');
+    expect(p).toMatchObject({ feedKg: 120, feedCost: 350 });
+    expect(p.feedConversion).toBe(1.2);
+  });
+
+  it('reports no feed when no source knows the lot', async () => {
+    const p = await service([]).batchPerformance(ctx, 'b1');
+    expect(p).toMatchObject({ feedKg: 0, feedCost: 0, feedConversion: null });
   });
 
   it('has no daily gain with a single weighing', async () => {

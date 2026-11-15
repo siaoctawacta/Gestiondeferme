@@ -433,6 +433,8 @@ export const alimentation: ModuleConfig<FeedDistribution> = {
     { key: 'cost', header: 'COÛT', sortable: true, render: (d) => formatMoney(d.cost) },
   ],
   rowLabel: (d) => `${d.target} du ${d.date}`,
+  editPermission: 'create',
+  deletePermission: 'create',
   form: DistributionForm,
   tabs: [
     { key: 'aliments', label: 'Aliments', config: feedProducts },

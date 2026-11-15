@@ -129,6 +129,79 @@ describe('Alert visibility and litter mortality (e2e)', () => {
     });
   });
 
+  describe('consumption alerts and the species split', () => {
+    const feed = async (target: { batchId?: string; buildingId?: string }) => {
+      const product = await prisma.feedProduct.create({
+        data: {
+          organizationId: world.orgId,
+          name: `Aliment ${Math.random()}`,
+          kind: 'ALIMENT_COMPLET',
+          unitCost: 300,
+        },
+      });
+      for (const [ago, kg] of [
+        [5, 100],
+        [4, 100],
+        [3, 100],
+        [1, 400],
+      ]) {
+        await prisma.feedDistribution.create({
+          data: {
+            farmId: world.farmId,
+            ...target,
+            date: new Date(daysAgo(ago)),
+            feedProductId: product.id,
+            quantityKg: kg,
+            unitCost: 300,
+            cost: kg * 300,
+          },
+        });
+      }
+    };
+
+    it('shows a pig lot consumption alert only to roles that read pigs, and a building one to any alimentation reader', async () => {
+      const pigLot = await world.pigLot(director);
+      const poultryLot = await world.lot(director);
+      await feed({ batchId: pigLot.id });
+      await feed({ batchId: poultryLot.id });
+      await feed({ buildingId: world.otherBld });
+      const consumption = async (headers: Headers) =>
+        (await alerts(headers)).items
+          .filter((i) => i.key.startsWith('consumption:'))
+          .map((i) => i.title)
+          .sort();
+      const avicole = await consumption(await world.actor('RESP_AVICOLE'));
+      expect(avicole).toEqual(
+        [
+          `Consommation anormale ${poultryLot.code}`,
+          'Consommation anormale Magasin',
+        ].sort(),
+      );
+      const porcin = await consumption(await world.actor('RESP_PORCIN'));
+      expect(porcin).toEqual(
+        [
+          'Consommation anormale Magasin',
+          `Consommation anormale ${pigLot.code}`,
+        ].sort(),
+      );
+      expect(await consumption(director)).toHaveLength(3);
+      // A role that reads alimentation but neither species sees buildings only.
+      const stock = await consumption(await world.actor('RESP_STOCK'));
+      expect(stock).toEqual(['Consommation anormale Magasin']);
+    });
+
+    it('counts the dashboard alerts with the same filter', async () => {
+      const pigLot = await world.pigLot(director);
+      await feed({ batchId: pigLot.id });
+      const headers = await world.actor('RESP_AVICOLE');
+      const dash = await http().get('/api/dashboard').set(headers).expect(200);
+      expect((dash.body as { alerts: Alerts }).alerts).toEqual({
+        total: 0,
+        items: [],
+      });
+    });
+  });
+
   describe('litter mortality (C8)', () => {
     async function litter() {
       const sow = await world.animal(director);

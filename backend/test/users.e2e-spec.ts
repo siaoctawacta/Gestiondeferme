@@ -729,6 +729,8 @@ describe('Users and settings (e2e)', () => {
         consumptionDeviationPct: 25,
         expiryWarningDays: 30,
         farrowingWarningDays: 7,
+        vaccinationWarningDays: 3,
+        biosecurityWarningDays: 0,
         gestationDays: 114,
         legal: { name: '', address: '', nif: '', rccm: '' },
       });
@@ -782,6 +784,7 @@ describe('Users and settings (e2e)', () => {
       for (const key of [
         'expiryWarningDays',
         'farrowingWarningDays',
+        'vaccinationWarningDays',
         'gestationDays',
       ]) {
         for (const bad of [1.5, 0.5, -3, 0, '7', null]) {
@@ -789,6 +792,12 @@ describe('Users and settings (e2e)', () => {
         }
         await put(key, 21).expect(200);
       }
+      // Days of tolerated delay: 0 is a valid value (and the default).
+      for (const bad of [1.5, 0.5, -1, '7', null]) {
+        await put('biosecurityWarningDays', bad).expect(400);
+      }
+      await put('biosecurityWarningDays', 0).expect(200);
+      await put('biosecurityWarningDays', 2).expect(200);
       for (const key of [
         'mortalityDailyPct',
         'mortalityCumulPct',

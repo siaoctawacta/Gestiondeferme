@@ -58,6 +58,7 @@ export const BUILDING_COLUMNS: ExportColumn<BuildingItem>[] = [
   { header: 'Taux occ.', value: (b) => b.occupationRate },
 ];
 
+const TYPE_LOCKED = 'Ce bâtiment est occupé : son type ne peut pas changer';
 const SORTABLE = ['name', 'type', 'capacity', 'status', 'createdAt'];
 
 @Injectable()
@@ -197,10 +198,17 @@ export class BuildingsService implements AuditableService {
     if (dto.siteId) await this.assertSiteInFarm(dto.siteId, ctx.farmId!);
     const updated = await orConflict(() =>
       this.prisma.$transaction(async (tx) => {
-        if (dto.capacity !== undefined) {
+        const typeChanged = dto.type !== undefined && dto.type !== current.type;
+        if (dto.capacity !== undefined || typeChanged) {
           // Same lock the herd ledger takes before its capacity check, so a
-          // concurrent lot creation or transfer cannot slip past the new floor.
+          // concurrent lot creation or transfer cannot slip past the new floor
+          // (or into a building whose type is changing).
           await this.ledger.lockBuilding(tx, id);
+        }
+        if (typeChanged && (await this.houses(tx, current))) {
+          throw new ConflictException(TYPE_LOCKED);
+        }
+        if (dto.capacity !== undefined) {
           const occupied =
             (
               await this.occupation.occupationByBuilding(
@@ -219,6 +227,28 @@ export class BuildingsService implements AuditableService {
       }),
     );
     return (await this.toItems([updated]))[0];
+  }
+
+  /**
+   * Whether lots or animals are housed here: current occupation (every source),
+   * or an open lot even when it has lost all its animals, which still belongs
+   * to the building's species until it is closed.
+   */
+  private async houses(tx: Prisma.TransactionClient, building: BuildingRow) {
+    const occupied =
+      (
+        await this.occupation.occupationByBuilding(
+          [building.farmId],
+          [building.id],
+          tx,
+        )
+      ).get(building.id) ?? 0;
+    if (occupied > 0) return true;
+    return (
+      (await tx.animalBatch.count({
+        where: { buildingId: building.id, status: 'EN_COURS' },
+      })) > 0
+    );
   }
 
   async remove(ctx: RequestContext, id: string): Promise<void> {

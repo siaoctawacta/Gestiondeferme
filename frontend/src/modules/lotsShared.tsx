@@ -149,6 +149,9 @@ export function batchEvents(batchId: string, slug: ModuleKey = 'lots'): ModuleCo
       { name: 'note', label: 'Note', type: 'textarea' },
     ],
     rowLabel: (e) => `${EVENT_LABELS[e.type]?.label ?? e.type} du ${e.date}`,
+    // Daily entries: whoever may enter one may correct or delete it.
+    editPermission: 'create',
+    deletePermission: 'create',
     // Transfers are written by the transfer action only.
     canEdit: (e) => (MANUAL_EVENTS as readonly string[]).includes(e.type),
     canDelete: (e) => (MANUAL_EVENTS as readonly string[]).includes(e.type),
@@ -189,6 +192,8 @@ export function batchWeighings(batchId: string, slug: ModuleKey = 'lots', specie
       { name: 'note', label: 'Note', type: 'textarea' },
     ],
     rowLabel: (w) => `Pesée du ${w.date}`,
+    editPermission: 'create',
+    deletePermission: 'create',
     toForm: (w) => ({ ...w, averageWeightKg: w.averageWeightG / 1000 }),
     toPayload: (v) => ({
       date: v.date,

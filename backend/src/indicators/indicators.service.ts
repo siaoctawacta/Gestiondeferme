@@ -7,15 +7,15 @@ import {
 import { BatchesService } from '../herd/batches.service';
 import { daysBetween } from '../common/days';
 import { PrismaService } from '../prisma/prisma.service';
-import { FeedRegistry } from './feed-source';
 import { dailyGain, feedConversion } from './indicators';
+import { FEED_COST, LotCostRegistry } from './lot-cost';
 
 @Injectable()
 export class IndicatorsService implements OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
     private readonly batches: BatchesService,
-    private readonly feed: FeedRegistry,
+    private readonly costs: LotCostRegistry,
     private readonly performance: BatchPerformanceRegistry,
   ) {}
 
@@ -44,7 +44,11 @@ export class IndicatorsService implements OnModuleInit {
     const firstWeightG = first?.averageWeightG ?? null;
     const lastWeightG = last?.averageWeightG ?? null;
     const days = hasRange ? daysBetween(first.date, last.date) : null;
-    const feed = await this.feed.feedForBatch(batchId);
+    const feed = (
+      (await this.costs.costsFor([batchId])).get(batchId) ?? []
+    ).filter((c) => c.category === FEED_COST);
+    const feedKg = feed.reduce((sum, c) => sum + (c.quantity ?? 0), 0);
+    const feedCost = feed.reduce((sum, c) => sum + c.amount, 0);
     const lotGainKg = hasRange
       ? ((lastWeightG - firstWeightG) / 1000) * batch.alive
       : null;
@@ -56,9 +60,9 @@ export class IndicatorsService implements OnModuleInit {
       firstWeightG,
       lastWeightG,
       dailyGainG: hasRange ? dailyGain(firstWeightG, lastWeightG, days) : null,
-      feedKg: feed.kg,
-      feedConversion: feed.kg > 0 ? feedConversion(feed.kg, lotGainKg) : null,
-      feedCost: feed.cost,
+      feedKg,
+      feedConversion: feedKg > 0 ? feedConversion(feedKg, lotGainKg) : null,
+      feedCost,
     };
   }
 }

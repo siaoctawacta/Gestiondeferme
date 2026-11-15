@@ -8,6 +8,10 @@ import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
 import type { IncubationStatus } from '../generated/prisma/enums';
+import {
+  BatchHistoryRegistry,
+  type BatchHistorySource,
+} from '../herd/batch-history';
 import { BatchesService } from '../herd/batches.service';
 import {
   addDays,
@@ -95,12 +99,25 @@ function toItem(r: RowWithSource): IncubationItem {
 const expectedHatch = (start: Date) => addDays(start, INCUBATION_DAYS);
 
 @Injectable()
-export class IncubationsService {
+export class IncubationsService implements BatchHistorySource {
   constructor(
     private readonly prisma: PrismaService,
     private readonly batches: BatchesService,
     private readonly audit: AuditService,
-  ) {}
+    history: BatchHistoryRegistry,
+  ) {
+    history.register(this);
+  }
+
+  /** Earliest incubation set from the lot's eggs: moving the lot's entry date past it is refused. */
+  async earliestDate(tx: Tx, batchId: string): Promise<Date | null> {
+    const first = await tx.incubation.findFirst({
+      where: { sourceBatchId: batchId },
+      orderBy: { startDate: 'asc' },
+      select: { startDate: true },
+    });
+    return first?.startDate ?? null;
+  }
 
   listArgs(ctx: RequestContext, q: IncubationListQueryDto) {
     if (q.status && !STATUSES.includes(q.status as IncubationStatus)) {

@@ -1,4 +1,5 @@
 import type { RequestContext } from '../../access/decorators';
+import type { ModuleKey } from '../../access/permissions';
 import type { Species } from '../../generated/prisma/enums';
 import { speciesModule } from '../../herd/species';
 import { signedDaysBetween, today } from '../../common/days';
@@ -41,6 +42,9 @@ export interface Gestation {
 
 export interface ConsumptionSeries {
   kind: 'feed' | 'water';
+  /** What the series belongs to: a lot (of `species`) or a building (no species). */
+  target: 'LOT' | 'BATIMENT';
+  species?: Species;
   targetId: string;
   /** Lot code or building name. */
   label: string;
@@ -80,10 +84,12 @@ export function mortalityAlerts(
   const alerts: AlertItem[] = [];
   for (const lot of lots) {
     if (lot.litter && !lot.litter.weaned) continue;
-    const base: Pick<AlertItem, 'key' | 'title' | 'module'> = {
+    const module = speciesModule(lot.species);
+    const base: Pick<AlertItem, 'key' | 'title' | 'module' | 'modules'> = {
       key: `mortality:${lot.id}`,
       title: `Mortalité élevée ${lot.code}`,
-      module: speciesModule(lot.species),
+      module,
+      modules: [module],
     };
     const bad = lot.recentDays
       .filter((d) =>
@@ -120,10 +126,11 @@ export function farrowingAlerts(
   for (const r of records) {
     const due = new Date(r.expectedFarrowingDate);
     const days = signedDaysBetween(start, due);
-    const base: Pick<AlertItem, 'key' | 'title' | 'module'> = {
+    const base: Pick<AlertItem, 'key' | 'title' | 'module' | 'modules'> = {
       key: `farrowing:${r.id}`,
       title: `Mise bas ${r.sowTag}`,
       module: 'reproduction',
+      modules: ['reproduction'],
     };
     if (days < 0) {
       alerts.push({
@@ -164,6 +171,11 @@ export function consumptionAlerts(
       continue;
     }
     const [x, y] = [ratio(s.value, 1), ratio(average, 1)];
+    // A lot's consumption is only visible to roles that also read its species.
+    const modules: ModuleKey[] =
+      s.target === 'LOT' && s.species
+        ? ['alimentation', speciesModule(s.species)]
+        : ['alimentation'];
     alerts.push({
       key: `consumption:${s.targetId}:${s.date}:${s.kind}`,
       title: `Consommation anormale ${s.label}`,
@@ -173,6 +185,7 @@ export function consumptionAlerts(
           : `Eau : ${x} L (moyenne ${y} L)`,
       level: 'A_VOIR',
       module: 'alimentation',
+      modules,
     });
   }
   return alerts;

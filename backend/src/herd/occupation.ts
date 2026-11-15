@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { SourceRegistry } from '../common/source-registry';
 import type { Prisma } from '../generated/prisma/client';
 
 /**
@@ -15,11 +16,9 @@ export interface OccupationSource {
 }
 
 @Injectable()
-export class OccupationRegistry {
-  private readonly sources: OccupationSource[] = [];
-
-  register(source: OccupationSource): void {
-    if (!this.sources.includes(source)) this.sources.push(source);
+export class OccupationRegistry extends SourceRegistry<OccupationSource> {
+  constructor() {
+    super('occupation', { mandatory: true });
   }
 
   /** Sum over every registered source; every requested building is present in the result. */
@@ -31,7 +30,7 @@ export class OccupationRegistry {
     const total = new Map(buildingIds.map((id) => [id, 0]));
     if (buildingIds.length === 0) return total;
     const parts = await Promise.all(
-      this.sources.map((s) => s.occupationByBuilding(farmIds, buildingIds, tx)),
+      this.all().map((s) => s.occupationByBuilding(farmIds, buildingIds, tx)),
     );
     for (const part of parts) {
       for (const [id, n] of part) total.set(id, (total.get(id) ?? 0) + n);

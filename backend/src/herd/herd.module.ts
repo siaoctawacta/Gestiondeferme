@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AnimalTargetRegistry } from './animal-target';
 import { BatchHistoryRegistry } from './batch-history';
 import { BatchPerformanceRegistry } from './batch-performance';
 import { BatchEventsService } from './batch-events.service';
@@ -8,6 +9,7 @@ import { BreedsController } from './breeds.controller';
 import { BreedsService } from './breeds.service';
 import { HerdLedgerService } from './herd-ledger.service';
 import { OccupationRegistry } from './occupation';
+import { OperationTargets } from './operation-targets';
 import { WeighingsController } from './weighings.controller';
 import { WeighingsService } from './weighings.service';
 
@@ -22,6 +24,8 @@ import { WeighingsService } from './weighings.service';
     OccupationRegistry,
     BatchHistoryRegistry,
     BatchPerformanceRegistry,
+    AnimalTargetRegistry,
+    OperationTargets,
     HerdLedgerService,
     BatchesService,
     BatchEventsService,
@@ -32,6 +36,8 @@ import { WeighingsService } from './weighings.service';
     OccupationRegistry,
     BatchHistoryRegistry,
     BatchPerformanceRegistry,
+    AnimalTargetRegistry,
+    OperationTargets,
     HerdLedgerService,
     BatchesService,
   ],

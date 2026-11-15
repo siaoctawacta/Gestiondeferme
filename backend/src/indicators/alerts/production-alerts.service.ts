@@ -2,6 +2,7 @@ import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { RequestContext } from '../../access/decorators';
 import { addDays, formatDay, today } from '../../common/days';
 import { HerdLedgerService } from '../../herd/herd-ledger.service';
+import type { Species } from '../../generated/prisma/enums';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AlertsRegistry } from './alerts-registry';
 import {
@@ -24,6 +25,13 @@ interface DayTotal {
   targetId: string;
   date: Date;
   total: number;
+}
+
+/** What a target id of the consumption totals is: a lot of a species, or a building. */
+interface Label {
+  label: string;
+  target: 'LOT' | 'BATIMENT';
+  species?: Species;
 }
 
 /**
@@ -295,13 +303,13 @@ export class ProductionAlertsService implements AlertData, OnModuleInit {
     ];
   }
 
-  /** Lot codes and building names for every target of the totals, in two queries. */
-  private async labels(totals: DayTotal[]): Promise<Map<string, string>> {
+  /** Lot codes (with species) and building names for every target of the totals, in two queries. */
+  private async labels(totals: DayTotal[]): Promise<Map<string, Label>> {
     const ids = [...new Set(totals.map((t) => t.targetId))];
     const [batches, buildings] = await Promise.all([
       this.prisma.animalBatch.findMany({
         where: { id: { in: ids } },
-        select: { id: true, code: true },
+        select: { id: true, code: true, species: true },
       }),
       this.prisma.building.findMany({
         where: { id: { in: ids } },
@@ -309,8 +317,14 @@ export class ProductionAlertsService implements AlertData, OnModuleInit {
       }),
     ]);
     return new Map([
-      ...batches.map((b): [string, string] => [b.id, b.code]),
-      ...buildings.map((b): [string, string] => [b.id, b.name]),
+      ...batches.map((b): [string, Label] => [
+        b.id,
+        { label: b.code, target: 'LOT', species: b.species },
+      ]),
+      ...buildings.map((b): [string, Label] => [
+        b.id,
+        { label: b.name, target: 'BATIMENT' },
+      ]),
     ]);
   }
 
@@ -319,7 +333,7 @@ export class ProductionAlertsService implements AlertData, OnModuleInit {
     kind: ConsumptionSeries['kind'],
     latestByFarm: Map<string, Date>,
     totals: DayTotal[],
-    labels: Map<string, string>,
+    labels: Map<string, Label>,
   ): ConsumptionSeries[] {
     const byTarget = new Map<
       string,
@@ -342,7 +356,9 @@ export class ProductionAlertsService implements AlertData, OnModuleInit {
       result.push({
         kind,
         targetId,
-        label: labels.get(targetId) ?? targetId,
+        target: labels.get(targetId)?.target ?? 'BATIMENT',
+        species: labels.get(targetId)?.species,
+        label: labels.get(targetId)?.label ?? targetId,
         date: formatDay(latest),
         value,
         previous: [...days]

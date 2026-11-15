@@ -197,6 +197,15 @@ type ModuleConfigBase<T extends { id: string }> = {
    */
   createPermission?: Action;
   /**
+   * Permission that shows the built-in edit button (default `update`), on top of `canEdit`. A list of daily
+   * entries (movements, weighings, heats, egg records, distributions) whose API routes accept `create` for
+   * corrections sets `create`, so the agent who may enter a record also sees how to correct it. Master-data
+   * lists keep the default. Never shown under "all farms", whatever the permission.
+   */
+  editPermission?: Action;
+  /** Permission that shows the built-in delete button (default `delete`), on top of `canDelete`; same use as `editPermission`. */
+  deletePermission?: Action;
+  /**
    * Fixed query parameters for a list embedded in a detail page (e.g. `{ batchId }`): sent with the list
    * request and the unfiltered-count request, and merged into every create payload after `toPayload` (a custom `form` receives it as a prop and must
    * merge it itself). It wins over a filter or form field of the same name. Never shown as filters.

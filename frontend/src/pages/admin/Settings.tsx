@@ -30,6 +30,8 @@ const GROUPS: { title: string; fields: SettingField[] }[] = [
       { key: 'mortalityCumulPct', label: 'Mortalité cumulée (%)', kind: 'number' },
       { key: 'consumptionDeviationPct', label: 'Écart de consommation (%)', kind: 'number' },
       { key: 'expiryWarningDays', label: 'Alerte de péremption (jours)', kind: 'number' },
+      { key: 'vaccinationWarningDays', label: 'Alerte vaccination (jours avant)', kind: 'number' },
+      { key: 'biosecurityWarningDays', label: 'Alerte biosécurité (jours de retard tolérés)', kind: 'number' },
     ],
   },
   {

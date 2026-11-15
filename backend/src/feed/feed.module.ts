@@ -12,7 +12,7 @@ import { FeedService } from './feed.service';
 import { WaterController } from './water.controller';
 import { WaterService } from './water.service';
 
-/** Feed products, formulas, distributions and water; registers a `FeedSource` with the indicators. */
+/** Feed products, formulas, distributions and water; registers a `LotCostSource` with the indicators. */
 @Module({
   imports: [HerdModule, IndicatorsModule],
   controllers: [

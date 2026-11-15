@@ -1,11 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
-import { AccessService } from '../access/access.service';
 import type { RequestContext } from '../access/decorators';
 import { can } from '../access/permissions';
 import type { Prisma } from '../generated/prisma/client';
 import { Species } from '../generated/prisma/enums';
-import { assertNotBeforeEntry, assertNotFuture } from '../common/days';
-import { HerdLedgerService } from '../herd/herd-ledger.service';
+import { OperationTargets, type Target } from '../herd/operation-targets';
 import { speciesModule } from '../herd/species';
 
 type Tx = Prisma.TransactionClient;
@@ -23,13 +21,23 @@ export interface FeedTarget {
   entryDate: Date | null;
 }
 
-/** Loads and guards the lot or building a feed/water record points at. */
+const toFeedTarget = (t: Target): FeedTarget => ({
+  farmId: t.farmId,
+  batchId: t.kind === 'LOT' ? t.id : null,
+  buildingId: t.kind === 'BATIMENT' ? t.id : null,
+  label: t.label,
+  entryDate: t.entryDate,
+});
+
+const FEED = { module: 'alimentation' } as const;
+
+/**
+ * Feed and water go to a lot or a building, never to an animal: this is
+ * `OperationTargets` restricted to those two kinds, in the feed's words.
+ */
 @Injectable()
 export class FeedTargets {
-  constructor(
-    private readonly ledger: HerdLedgerService,
-    private readonly access: AccessService,
-  ) {}
+  constructor(private readonly targets: OperationTargets) {}
 
   /**
    * Rows of a distribution or water list the caller may see: those aimed at a
@@ -53,79 +61,44 @@ export class FeedTargets {
     };
   }
 
-  /** For a new record: exactly one of the ids, in the caller's farm, lot open (and locked). */
+  /** For a new record: exactly one of the ids, in the caller's farm, lot open (and locked), `date` valid for it. */
   async resolve(
     tx: Tx,
     ctx: RequestContext,
     ids: { batchId?: string | null; buildingId?: string | null },
+    date: Date,
   ): Promise<FeedTarget> {
     if (!ids.batchId === !ids.buildingId) {
       throw new BadRequestException(NEED_TARGET);
     }
-    if (!ctx.farmId) throw new BadRequestException(NEED_TARGET);
-    if (ids.batchId) {
-      const found = await tx.animalBatch.findFirst({
-        where: { id: ids.batchId, farmId: ctx.farmId },
-        select: { id: true },
-      });
-      if (!found) throw new BadRequestException('Lot invalide');
-      return this.lot(tx, ctx, ids.batchId, [ctx.farmId]);
-    }
-    const building = await tx.building.findFirst({
-      where: { id: ids.buildingId ?? '', farmId: ctx.farmId },
-      select: { id: true, name: true, farmId: true },
-    });
-    if (!building) throw new BadRequestException('Bâtiment invalide');
-    return {
-      farmId: building.farmId,
-      batchId: null,
-      buildingId: building.id,
-      label: building.name,
-      entryDate: null,
-    };
+    return toFeedTarget(
+      await this.targets.resolve(
+        tx,
+        ctx,
+        { batchId: ids.batchId, buildingId: ids.buildingId },
+        date,
+        FEED,
+      ),
+    );
   }
 
   /** For an existing record: its lot is locked and must be open (a 409 otherwise). */
   async forRow(
     tx: Tx,
     ctx: RequestContext,
-    row: { farmId: string; batchId: string | null; buildingId: string | null },
+    row: { batchId: string | null; buildingId: string | null },
   ): Promise<FeedTarget> {
-    if (row.batchId) return this.lot(tx, ctx, row.batchId, ctx.farmIds);
-    const building = await tx.building.findUniqueOrThrow({
-      where: { id: row.buildingId ?? '' },
-      select: { name: true },
-    });
-    return {
-      farmId: row.farmId,
-      batchId: null,
-      buildingId: row.buildingId,
-      label: building.name,
-      entryDate: null,
-    };
-  }
-
-  private async lot(
-    tx: Tx,
-    ctx: RequestContext,
-    batchId: string,
-    farmIds: string[],
-  ): Promise<FeedTarget> {
-    const batch = await this.ledger.lockBatch(tx, batchId, farmIds);
-    this.access.assertCan(ctx, speciesModule(batch.species), 'read');
-    this.ledger.assertOpen(batch);
-    return {
-      farmId: batch.farmId,
-      batchId: batch.id,
-      buildingId: null,
-      label: batch.code,
-      entryDate: batch.entryDate,
-    };
+    return toFeedTarget(await this.targets.forRow(tx, ctx, row, FEED));
   }
 
   /** Not in the future, and not before the lot entered. */
   assertDate(target: FeedTarget, date: Date): void {
-    assertNotFuture(date);
-    if (target.entryDate) assertNotBeforeEntry(target.entryDate, date);
+    this.targets.assertDate(
+      {
+        kind: target.batchId ? 'LOT' : 'BATIMENT',
+        entryDate: target.entryDate,
+      },
+      date,
+    );
   }
 }

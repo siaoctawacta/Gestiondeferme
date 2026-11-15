@@ -414,6 +414,38 @@ describe('ModulePage kit extensions', () => {
     expect(screen.queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
   });
 
+  it('gates the built-in edit and delete icons on update and delete by default', async () => {
+    setup({ perms: ['read', 'create'] });
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
+  });
+
+  it('gates the icons on editPermission and deletePermission when set, whatever update and delete say', async () => {
+    const daily = { ...batiments, editPermission: 'create', deletePermission: 'create' } as const;
+    setup({ perms: ['read', 'create'], config: daily });
+    await screen.findByText('Poulailler A');
+    expect(screen.getAllByRole('button', { name: 'Modifier' })).toHaveLength(2);
+    expect(screen.getAllByRole('button', { name: 'Supprimer' })).toHaveLength(2);
+  });
+
+  it('keeps editPermission and deletePermission independent, and the row gates on top', async () => {
+    setup({
+      perms: ['read', 'create'],
+      config: { ...batiments, editPermission: 'create', canEdit: (b) => b.id === 'b1' },
+    });
+    await screen.findByText('Poulailler A');
+    expect(screen.getAllByRole('button', { name: 'Modifier' })).toHaveLength(1);
+    expect(screen.queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
+  });
+
+  it('never shows the icons under all farms, whatever the permission named', async () => {
+    setup({ perms: ['read', 'create'], farm: 'all', config: { ...batiments, editPermission: 'create', deletePermission: 'create' } });
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
+  });
+
   it('shows Ajouter on the permission named by createPermission (default create)', async () => {
     setup({ perms: ['read', 'create'], config: { ...batiments, createPermission: 'update' } });
     await screen.findByText('Poulailler A');

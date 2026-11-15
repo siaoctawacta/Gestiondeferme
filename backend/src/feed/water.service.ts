@@ -188,9 +188,8 @@ export class WaterService {
 
   create(ctx: RequestContext, dto: CreateWaterDto): Promise<WaterItem> {
     return this.prisma.$transaction(async (tx) => {
-      const target = await this.targets.resolve(tx, ctx, dto);
       const date = requireDay(dto.date);
-      this.targets.assertDate(target, date);
+      const target = await this.targets.resolve(tx, ctx, dto, date);
       const created = await orConflict(
         () =>
           tx.waterConsumption.create({

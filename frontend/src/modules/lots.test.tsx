@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -238,6 +238,50 @@ describe('lots list', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Supprimer' }));
     expect(await within(dialog).findByText('Ce lot a un historique ; clôturez-le plutôt')).toBeInTheDocument();
     expect(writes()[0]).toMatchObject({ method: 'DELETE', url: '/api/batches/l1' });
+  });
+});
+
+describe('row icons follow the kind of list', () => {
+  const rowIcons = (row: HTMLElement) =>
+    ['Modifier', 'Supprimer'].map((name) => within(row).queryByRole('button', { name }) !== null);
+
+  it('shows edit and delete on the movements of a role that can only read and create, and none on the lots list', async () => {
+    mountDetail('l1', { perms: ['read', 'create'] });
+    const movement = (await screen.findByText('Chaleur')).closest('tr')!;
+    expect(rowIcons(movement)).toEqual([true, true]);
+    cleanup();
+    mount(
+      <Routes>
+        <Route path="*" element={<ModulePage config={lots} />} />
+      </Routes>,
+      { perms: ['read', 'create'] },
+    );
+    const lot = (await screen.findByText('LC-2026-14')).closest('tr')!;
+    expect(rowIcons(lot)).toEqual([false, false]);
+  });
+
+  it('hides them on the movements when the role has update and delete but cannot create', async () => {
+    mountDetail('l1', { perms: ['read', 'update', 'delete'] });
+    const movement = (await screen.findByText('Chaleur')).closest('tr')!;
+    expect(rowIcons(movement)).toEqual([false, false]);
+  });
+
+  it('still lets a master-data list use update and delete', async () => {
+    mount(
+      <Routes>
+        <Route path="*" element={<ModulePage config={lots} />} />
+      </Routes>,
+      { perms: ['read', 'update', 'delete'] },
+    );
+    const lot = (await screen.findByText('LC-2026-14')).closest('tr')!;
+    expect(rowIcons(lot)).toEqual([true, true]);
+  });
+
+  it('keeps the row gates on top: a closed lot has no editable movement for the daily role either', async () => {
+    mountDetail('l2', { perms: ['read', 'create'] });
+    // The closed lot's movements are listed read-only through the detail page (no icons without an editable lot).
+    await screen.findByText('Chaleur');
+    expect(screen.queryAllByRole('button', { name: 'Modifier' }).filter((b) => b.closest('tr'))).toHaveLength(0);
   });
 });
 

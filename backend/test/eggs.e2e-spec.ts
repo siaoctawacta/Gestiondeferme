@@ -483,6 +483,28 @@ describe('Egg production and incubation (e2e)', () => {
           .expect(201)
       ).body as IncItem;
 
+    it('refuses moving the source lot entry date after an incubation start', async () => {
+      const { headers } = await actor('DIRECTEUR_FERME');
+      const source = await lot(headers, { type: 'REPRODUCTEUR' });
+      await create(headers, {
+        sourceBatchId: source.id,
+        startDate: daysAgo(10),
+      });
+      const res = await http()
+        .patch(`/api/batches/${source.id}`)
+        .set(headers)
+        .send({ entryDate: daysAgo(5) })
+        .expect(400);
+      expect((res.body as Msg).message).toBe(
+        "La date est antérieure à l'entrée du lot",
+      );
+      await http()
+        .patch(`/api/batches/${source.id}`)
+        .set(headers)
+        .send({ entryDate: daysAgo(10) })
+        .expect(200);
+    });
+
     it('generates INC-YYYY-NN and computes the expected hatch date', async () => {
       const { headers } = await actor('DIRECTEUR_FERME');
       const start = daysAgo(10);

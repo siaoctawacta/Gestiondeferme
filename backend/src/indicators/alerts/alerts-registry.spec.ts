@@ -16,6 +16,7 @@ const item = (key: string, level: AlertItem['level']): AlertItem => ({
   detail: '',
   level,
   module: 'lots',
+  modules: ['lots'],
 });
 
 describe('AlertsRegistry', () => {
@@ -37,6 +38,7 @@ describe('AlertsRegistry', () => {
     const of = (module: AlertItem['module'], key: string): AlertItem => ({
       ...item(key, 'A_VOIR'),
       module,
+      modules: [module],
     });
     registry.register(() =>
       Promise.resolve([
@@ -54,6 +56,30 @@ describe('AlertsRegistry', () => {
       'm:1',
     ]);
     expect(await as('COMPTABLE')).toEqual([]);
+  });
+
+  it('needs every module of an alert to be readable by the role', async () => {
+    const registry = new AlertsRegistry();
+    const both: AlertItem = {
+      ...item('c:both', 'A_VOIR'),
+      module: 'alimentation',
+      modules: ['alimentation', 'porcs'],
+    };
+    const building: AlertItem = {
+      ...both,
+      key: 'c:building',
+      modules: ['alimentation'],
+    };
+    registry.register(() => Promise.resolve([both, building]));
+    const as = (role: Role) =>
+      registry.run({ user: { role } } as RequestContext, SETTINGS);
+    expect((await as('RESP_AVICOLE')).map((i) => i.key)).toEqual([
+      'c:building',
+    ]);
+    expect((await as('RESP_PORCIN')).map((i) => i.key)).toEqual([
+      'c:both',
+      'c:building',
+    ]);
   });
 
   it('is empty without rules', async () => {

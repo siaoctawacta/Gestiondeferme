@@ -717,19 +717,23 @@ describe('Feed and water (e2e)', () => {
         .expect(200);
       expect((upd.body as Dist).waterLiters).toBe(1100);
       expect(await prisma.waterConsumption.count()).toBe(1);
-      const second = (
-        await distribute(headers, {
-          batchId: l.id,
-          feedProductId: p.id,
-          waterLiters: 1300,
-        })
-      ).body as Dist;
-      expect(second.waterLiters).toBeNull();
-      expect(await prisma.waterConsumption.count()).toBe(1);
+      // A later row of the same lot and day may not overwrite the day's water.
+      const second = await distribute(
+        headers,
+        { batchId: l.id, feedProductId: p.id, waterLiters: 1300 },
+        400,
+      );
+      expect((second.body as { message: string }).message).toBe(
+        "La consommation d'eau du jour est portée par la première distribution",
+      );
+      expect(await prisma.feedDistribution.count()).toBe(1);
+      expect(
+        (await prisma.waterConsumption.findMany()).map((w) => Number(w.liters)),
+      ).toEqual([1100]);
       const audits = await prisma.auditLog.findMany({
         where: { module: 'alimentation' },
       });
-      expect(audits.length).toBe(7); // product + 2 distributions, water create + 2 updates + distribution update
+      expect(audits.length).toBe(5); // product + distribution, water create + water update + distribution update
     });
 
     it('filters, searches, sorts and exports', async () => {

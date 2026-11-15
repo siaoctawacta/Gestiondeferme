@@ -22,6 +22,22 @@ const positiveInteger =
     return value;
   };
 
+/** A whole number of days that may be 0: 0, 1, 2... */
+const nonNegativeInteger =
+  (label: string) =>
+  (value: unknown): number => {
+    if (
+      typeof value !== 'number' ||
+      !Number.isSafeInteger(value) ||
+      value < 0
+    ) {
+      throw new BadRequestException(
+        `${label} doit être un nombre entier supérieur ou égal à 0`,
+      );
+    }
+    return value;
+  };
+
 /** A percentage in ]0, 100]. */
 const percentage =
   (label: string) =>
@@ -96,6 +112,14 @@ const SETTINGS: Record<string, SettingDefinition> = {
   farrowingWarningDays: {
     default: 7,
     parse: positiveInteger("Le délai d'alerte de mise bas"),
+  },
+  vaccinationWarningDays: {
+    default: 3,
+    parse: positiveInteger("Le délai d'alerte de vaccination"),
+  },
+  biosecurityWarningDays: {
+    default: 0,
+    parse: nonNegativeInteger('Le retard toléré avant alerte de biosécurité'),
   },
   gestationDays: {
     default: 114,

@@ -212,6 +212,8 @@ export const ponte: ModuleConfig<EggRecord> = {
     },
   ],
   rowLabel: (e) => `${e.batchCode} du ${e.date}`,
+  editPermission: 'create',
+  deletePermission: 'create',
   form: EggForm,
   tabs: [{ key: 'incubation', label: 'Incubation', config: incubations }],
 };

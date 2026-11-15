@@ -132,6 +132,28 @@ describe('Water rows and incubation list (e2e)', () => {
       expect(await prisma.waterConsumption.count()).toBe(0);
     });
 
+    it('refuses water on a POST that is not the first row of its target and day, and keeps the day water', async () => {
+      await distribute({ waterLiters: 800 });
+      const res = await http()
+        .post('/api/feed-distributions')
+        .set(h)
+        .send({
+          batchId: lotId,
+          date: daysAgo(1),
+          feedProductId: productId,
+          quantityKg: 20,
+          waterLiters: 100,
+        })
+        .expect(400);
+      expect((res.body as Msg).message).toBe(
+        "La consommation d'eau du jour est portée par la première distribution",
+      );
+      expect(
+        (await prisma.waterConsumption.findMany()).map((w) => Number(w.liters)),
+      ).toEqual([800]);
+      expect(await prisma.feedDistribution.count()).toBe(1);
+    });
+
     it('deletes the water record when the water row is sent null', async () => {
       const d = await distribute({ waterLiters: 800 });
       const res = await http()

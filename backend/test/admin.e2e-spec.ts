@@ -156,6 +156,120 @@ describe('Administration resources (e2e)', () => {
         .expect(200);
     });
 
+    describe('type of a building that houses animals', () => {
+      const CONFLICT = 'Ce bâtiment est occupé : son type ne peut pas changer';
+      const lotIn = (headers: Record<string, string>, buildingId: string) =>
+        http()
+          .post('/api/batches')
+          .set(headers)
+          .send({
+            species: 'AVICOLE',
+            type: 'CHAIR',
+            buildingId,
+            entryDate: '2026-01-01',
+            initialCount: 50,
+          })
+          .expect(201);
+
+      it('refuses a type change while a lot is housed there, whatever the new type', async () => {
+        const { headers } = await actor('DIRECTEUR_FERME');
+        const b = (
+          await http().post('/api/buildings').set(headers).send(building())
+        ).body as BuildingItem;
+        await lotIn(headers, b.id);
+        for (const type of ['PORCIN', 'AUTRE']) {
+          const res = await http()
+            .patch(`/api/buildings/${b.id}`)
+            .set(headers)
+            .send({ type })
+            .expect(409);
+          expect((res.body as { message: string }).message).toBe(CONFLICT);
+        }
+        // The same type is not a change.
+        await http()
+          .patch(`/api/buildings/${b.id}`)
+          .set(headers)
+          .send({ type: 'AVICOLE', capacity: 2000 })
+          .expect(200);
+        expect(
+          (await prisma.building.findUniqueOrThrow({ where: { id: b.id } }))
+            .type,
+        ).toBe('AVICOLE');
+      });
+
+      it('still refuses once the lot has lost all its animals but is open', async () => {
+        const { headers } = await actor('DIRECTEUR_FERME');
+        const b = (
+          await http().post('/api/buildings').set(headers).send(building())
+        ).body as BuildingItem;
+        const lot = (await lotIn(headers, b.id)).body as { id: string };
+        await http()
+          .post(`/api/batches/${lot.id}/events`)
+          .set(headers)
+          .send({ type: 'MORTALITE', date: '2026-01-02', quantity: 50 })
+          .expect(201);
+        await http()
+          .patch(`/api/buildings/${b.id}`)
+          .set(headers)
+          .send({ type: 'PORCIN' })
+          .expect(409);
+        await http()
+          .post(`/api/batches/${lot.id}/close`)
+          .set(headers)
+          .expect(200);
+        await http()
+          .patch(`/api/buildings/${b.id}`)
+          .set(headers)
+          .send({ type: 'PORCIN' })
+          .expect(200);
+      });
+
+      it('refuses it while an active animal is assigned, and allows it once the animal left', async () => {
+        const { headers } = await actor('DIRECTEUR_FERME');
+        const b = (
+          await http()
+            .post('/api/buildings')
+            .set(headers)
+            .send(building({ name: 'Porcherie', type: 'PORCIN' }))
+        ).body as BuildingItem;
+        const animal = (
+          await http()
+            .post('/api/animals')
+            .set(headers)
+            .send({ category: 'TRUIE', buildingId: b.id })
+            .expect(201)
+        ).body as { id: string };
+        await http()
+          .patch(`/api/buildings/${b.id}`)
+          .set(headers)
+          .send({ type: 'AUTRE' })
+          .expect(409);
+        await http()
+          .post(`/api/animals/${animal.id}/exit`)
+          .set(headers)
+          .send({ date: '2026-01-05', reason: 'VENDU' })
+          .expect(200);
+        await http()
+          .patch(`/api/buildings/${b.id}`)
+          .set(headers)
+          .send({ type: 'AUTRE' })
+          .expect(200);
+      });
+
+      it('lets an empty building change type', async () => {
+        const { headers } = await actor('DIRECTEUR_FERME');
+        const b = (
+          await http().post('/api/buildings').set(headers).send(building())
+        ).body as BuildingItem;
+        const res = await http()
+          .patch(`/api/buildings/${b.id}`)
+          .set(headers)
+          .send({ type: 'PORCIN' })
+          .expect(200);
+        expect(res.body).toMatchObject({ type: 'PORCIN' });
+      });
+    });
+
     it('keeps capacity >= occupation when a capacity cut races a lot creation', async () => {
       const { headers } = await actor('DIRECTEUR_FERME');
       const b = (

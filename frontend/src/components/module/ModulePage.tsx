@@ -123,8 +123,8 @@ function ModuleView<T extends { id: string }>({
   const scoped = config.farmScoped !== false;
   const writable = !scoped || farmId !== 'all';
   const canCreate = !readOnly && can(config.slug, config.createPermission ?? 'create') && writable;
-  const canUpdate = !readOnly && can(config.slug, 'update') && writable;
-  const canDelete = !readOnly && can(config.slug, 'delete') && writable;
+  const canEditRows = !readOnly && can(config.slug, config.editPermission ?? 'update') && writable;
+  const canDeleteRows = !readOnly && can(config.slug, config.deletePermission ?? 'delete') && writable;
   const readOnlyBecauseAllFarms =
     !writable && (can(config.slug, 'create') || can(config.slug, 'update') || can(config.slug, 'delete'));
 
@@ -246,8 +246,8 @@ function ModuleView<T extends { id: string }>({
               detailPath={detailPath}
               qr={config.qr}
               actions={tableActions}
-              onEdit={canUpdate ? setEditing : undefined}
-              onDelete={canDelete ? setDeleting : undefined}
+              onEdit={canEditRows ? setEditing : undefined}
+              onDelete={canDeleteRows ? setDeleting : undefined}
               canEdit={config.canEdit}
               canDelete={config.canDelete}
             />

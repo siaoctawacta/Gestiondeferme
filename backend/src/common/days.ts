@@ -5,6 +5,7 @@ const MS_PER_DAY = 86_400_000;
 
 export const FUTURE_DATE = 'La date ne peut pas être dans le futur';
 export const BEFORE_ENTRY = "La date est antérieure à l'entrée du lot";
+export const BEFORE_BIRTH = "La date est antérieure à la naissance de l'animal";
 
 /** `YYYY-MM-DD` → that calendar day at 00:00 UTC (how Prisma stores a DATE), or null when it is not a real date. */
 export function parseDay(value: string): Date | null {
@@ -53,6 +54,12 @@ export const signedDaysBetween = (a: Date, b: Date): number =>
 export function assertNotBeforeEntry(entryDate: Date, date: Date): void {
   if (date.getTime() < entryDate.getTime()) {
     throw new BadRequestException(BEFORE_ENTRY);
+  }
+}
+
+export function assertNotBeforeBirth(birthDate: Date, date: Date): void {
+  if (date.getTime() < birthDate.getTime()) {
+    throw new BadRequestException(BEFORE_BIRTH);
   }
 }
 

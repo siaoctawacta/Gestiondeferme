@@ -448,7 +448,7 @@ describe('production : lots, ponte, porcs, reproduction et alimentation de bout 
     await mainShows(page, /Poids moyen 6\.5 kg/);
   });
 
-  it('un agent d’élevage ajoute une mortalité mais ne voit aucune suppression', async () => {
+  it('un agent d’élevage ajoute une mortalité, la corrige puis la supprime : les taux suivent, sans accès aux listes maîtres', async () => {
     await api('/users', {
       method: 'POST',
       token: admin.token,
@@ -465,18 +465,48 @@ describe('production : lots, ponte, porcs, reproduction et alimentation de bout 
     await agent.goto(`${WEB_URL}/m/lots/${lotId}`);
     await agent.getByRole('heading', { name: lotCode }).waitFor();
     await agent.getByRole('button', { name: 'Ajouter' }).click();
-    const dialog = agent.getByRole('dialog');
+    let dialog = agent.getByRole('dialog');
     await dialog.getByLabel('Type').selectOption({ label: 'Mortalité' });
     await dialog.getByLabel('Quantité').fill('5');
     await dialog.getByRole('button', { name: 'Enregistrer' }).click();
     await dialog.waitFor({ state: 'detached' });
-    await agent.getByRole('row', { name: /Mortalité\s+5\b/ }).waitFor();
+    // A daily entry: the agent who may enter it sees how to correct or delete it (the edit and delete icons follow `create`).
+    const mine = agent.getByRole('row', { name: /Mortalité\s+5\b/ });
+    await mine.waitFor();
+    await mine.getByRole('button', { name: 'Supprimer' }).waitFor();
+    // The lot itself is master data: no Modifier / Clôturer header buttons for this role.
+    assert.equal(await agent.getByRole('button', { name: 'Modifier' }).filter({ hasText: 'Modifier' }).count(), 0);
+    assert.equal(await agent.getByRole('button', { name: 'Clôturer' }).count(), 0);
+
+    await mine.getByRole('button', { name: 'Modifier' }).click();
+    dialog = agent.getByRole('dialog');
+    await dialog.getByLabel('Quantité').fill('8');
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await agent.getByRole('row', { name: /Mortalité\s+8\b/ }).waitFor();
+
+    // 180 + 8 deaths: the list recomputes the headcount and the rate (188 / 5000 = 3.8 %).
+    await agent.goto(`${WEB_URL}/m/lots`);
+    const listed = agent.getByRole('row', { name: new RegExp(lotCode) });
+    await listed.waitFor();
+    assert.match(flat(await listed.innerText()), /4 812/);
+    assert.match(flat(await listed.innerText()), /3\.8%/);
+    // No icon on the lots list: lots are master data.
     assert.equal(await agent.getByRole('button', { name: 'Supprimer' }).count(), 0);
     assert.equal(await agent.getByRole('button', { name: 'Modifier' }).count(), 0);
 
+    // Deleting the correction puts the figures back.
+    await agent.goto(`${WEB_URL}/m/lots/${lotId}`);
+    await agent.getByRole('row', { name: /Mortalité\s+8\b/ }).getByRole('button', { name: 'Supprimer' }).click();
+    dialog = agent.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Supprimer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await agent.getByRole('row', { name: /Mortalité\s+8\b/ }).waitFor({ state: 'detached' });
     await agent.goto(`${WEB_URL}/m/lots`);
-    await agent.getByRole('row', { name: new RegExp(lotCode) }).waitFor();
-    assert.equal(await agent.getByRole('button', { name: 'Supprimer' }).count(), 0);
+    const back = agent.getByRole('row', { name: new RegExp(lotCode) });
+    await back.waitFor();
+    assert.match(flat(await back.innerText()), /4 820/);
+    assert.match(flat(await back.innerText()), /3\.6%/);
     await context.close();
   });
 

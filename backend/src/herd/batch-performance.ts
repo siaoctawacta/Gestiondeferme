@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
+import { SourceRegistry } from '../common/source-registry';
 
 /** The `performance` block of `GET /batches/:id`. */
 export interface BatchPerformance {
@@ -27,18 +28,13 @@ export interface BatchPerformanceProvider {
 }
 
 @Injectable()
-export class BatchPerformanceRegistry {
-  private provider: BatchPerformanceProvider | null = null;
-
-  register(provider: BatchPerformanceProvider): void {
-    this.provider = provider;
+export class BatchPerformanceRegistry extends SourceRegistry<BatchPerformanceProvider> {
+  constructor() {
+    super('performance des lots', { mandatory: true });
   }
 
-  /** `null` when no provider is registered. */
-  async get(
-    ctx: RequestContext,
-    batchId: string,
-  ): Promise<BatchPerformance | null> {
-    return this.provider ? this.provider.batchPerformance(ctx, batchId) : null;
+  /** The caller must check the species permission (`lots` / `porcs`) itself. */
+  get(ctx: RequestContext, batchId: string): Promise<BatchPerformance> {
+    return this.single().batchPerformance(ctx, batchId);
   }
 }

@@ -191,6 +191,90 @@ describe('Route permissions walk (e2e)', () => {
     expect((await walkHerd('PORCIN', 'RESP_AVICOLE', fx)).wrong).toEqual([]);
   });
 
+  describe('breeds', () => {
+    const breedRoutes = () =>
+      routes.filter((r) => r.controller === 'BreedsController');
+
+    it('covers every route of the controller', () => {
+      expect(
+        breedRoutes()
+          .map((r) => `${r.method} ${r.path}`)
+          .sort(),
+      ).toEqual([
+        'delete /breeds/:id',
+        'get /breeds',
+        'patch /breeds/:id',
+        'post /breeds',
+      ]);
+    });
+
+    async function breeds() {
+      const director = await world.actor('DIRECTEUR_FERME');
+      const poultry = await world.post<Id>(director, '/breeds', {
+        name: 'Isa Brown',
+        species: 'AVICOLE',
+      });
+      const pig = await world.post<Id>(director, '/breeds', {
+        name: 'Large White',
+        species: 'PORCIN',
+      });
+      return { poultry, pig };
+    }
+
+    const call = (
+      headers: Headers,
+      r: Route,
+      ids: { poultry: Id; pig: Id },
+      species: 'AVICOLE' | 'PORCIN',
+    ) => {
+      const id = species === 'AVICOLE' ? ids.poultry.id : ids.pig.id;
+      const body =
+        r.method === 'post'
+          ? { name: 'Autre', species }
+          : r.method === 'patch'
+            ? { name: 'Renommée' }
+            : undefined;
+      let req = world
+        .http()
+        [r.method](`/api${r.path.replace(':id', id)}`)
+        .set(headers);
+      if (body) req = req.send(body);
+      return req;
+    };
+
+    it('refuses a role that reads neither species on every route', async () => {
+      const ids = await breeds();
+      const headers = await world.actor('COMPTABLE');
+      const wrong: string[] = [];
+      for (const r of breedRoutes()) {
+        const res = await call(headers, r, ids, 'AVICOLE');
+        if (res.status !== 403)
+          wrong.push(`${r.method} ${r.path} ${res.status}`);
+      }
+      expect(wrong).toEqual([]);
+    });
+
+    it("refuses writes on the other species' breeds, while reading stays open", async () => {
+      const ids = await breeds();
+      const cases: [Role, 'AVICOLE' | 'PORCIN'][] = [
+        ['RESP_PORCIN', 'AVICOLE'],
+        ['RESP_AVICOLE', 'PORCIN'],
+      ];
+      const wrong: string[] = [];
+      for (const [role, species] of cases) {
+        const headers = await world.actor(role);
+        for (const r of breedRoutes()) {
+          const res = await call(headers, r, ids, species);
+          const expected = r.method === 'get' ? 200 : 403;
+          if (res.status !== expected) {
+            wrong.push(`${role} ${r.method} ${r.path} ${res.status}`);
+          }
+        }
+      }
+      expect(wrong).toEqual([]);
+    });
+  });
+
   describe('modules of the other controllers', () => {
     const FAMILY: Record<string, ModuleKey[]> = {
       AnimalsController: ['porcs'],

@@ -302,6 +302,30 @@ describe('Pig and breeding integrity rules (e2e)', () => {
       expect(msg(res.body)).toBe("Cet animal n'est pas sorti du cheptel");
     });
 
+    it('applies the species fit again: the building turned into a poultry house meanwhile', async () => {
+      const boar = await world.animal(h, { category: 'VERRAT' });
+      await http()
+        .post(`/api/animals/${boar.id}/exit`)
+        .set(h)
+        .send({ date: daysAgo(3), reason: 'VENDU' })
+        .expect(200);
+      await prisma.building.update({
+        where: { id: world.pigBld },
+        data: { type: 'AVICOLE' },
+      });
+      const res = await http()
+        .post(`/api/animals/${boar.id}/reinstate`)
+        .set(h)
+        .expect(400);
+      expect(msg(res.body)).toBe('Ce bâtiment est réservé à une autre espèce');
+      expect((await getAnimal(boar.id)).status).toBe('VENDU');
+      await prisma.building.update({
+        where: { id: world.pigBld },
+        data: { type: 'AUTRE' },
+      });
+      await http().post(`/api/animals/${boar.id}/reinstate`).set(h).expect(200);
+    });
+
     it('puts a sold animal back, clears the exit and audits it', async () => {
       const boar = await world.animal(h, { category: 'VERRAT' });
       await http()

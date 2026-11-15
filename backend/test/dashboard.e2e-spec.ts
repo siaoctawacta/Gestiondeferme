@@ -416,6 +416,7 @@ describe('Dashboard (e2e)', () => {
           detail: 'Aliment : 140 kg (moyenne 100 kg)',
           level: 'A_VOIR',
           module: 'alimentation',
+          modules: ['alimentation', 'lots'],
         },
       ]);
     });
@@ -573,6 +574,7 @@ describe('Dashboard (e2e)', () => {
           detail: 'Eau : 140 L (moyenne 100 L)',
           level: 'A_VOIR',
           module: 'alimentation',
+          modules: ['alimentation', 'lots'],
         },
       ]);
     });

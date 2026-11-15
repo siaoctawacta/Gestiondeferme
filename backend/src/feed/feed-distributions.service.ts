@@ -309,9 +309,8 @@ export class FeedDistributionsService {
     dto: CreateFeedDistributionDto,
   ): Promise<FeedDistributionItem> {
     return this.prisma.$transaction(async (tx) => {
-      const target = await this.targets.resolve(tx, ctx, dto);
       const date = requireDay(dto.date);
-      this.targets.assertDate(target, date);
+      const target = await this.targets.resolve(tx, ctx, dto, date);
       const feed = await this.resolveFeed(tx, ctx, dto);
       const created = await tx.feedDistribution.create({
         data: {
@@ -328,6 +327,10 @@ export class FeedDistributionsService {
         relationLoadStrategy: 'join',
       });
       if (dto.waterLiters !== undefined) {
+        // Same rule as PATCH: the day's water belongs to the first row, so a
+        // later row may not overwrite it.
+        if (!(await this.carriesWater(tx, created)))
+          throw new BadRequestException(WATER_ROW);
         await this.water.upsertFor(tx, ctx, target, date, dto.waterLiters);
       }
       const settled = await this.settle(tx, ctx, null, created);

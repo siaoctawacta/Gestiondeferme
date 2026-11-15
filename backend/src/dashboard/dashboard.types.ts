@@ -46,6 +46,11 @@ export class AlertItemDto {
   @ApiProperty() detail!: string;
   @ApiProperty({ enum: ALERT_LEVELS }) level!: AlertLevel;
   @ApiProperty() module!: string;
+  @ApiProperty({
+    type: [String],
+    description: 'Every module the role must read to see the alert',
+  })
+  modules!: string[];
 }
 
 export class AlertsDto {

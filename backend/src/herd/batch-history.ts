@@ -1,9 +1,10 @@
 import { Injectable } from '@nestjs/common';
+import { SourceRegistry } from '../common/source-registry';
 import type { Prisma } from '../generated/prisma/client';
 
 /**
- * A module that keeps dated records against a batch (egg collections, feed and
- * water). Sources register themselves so `herd` never imports them (same
+ * A module that keeps dated records against a batch (egg collections, incubations,
+ * feed and water). Sources register themselves so `herd` never imports them (same
  * inversion as `OccupationRegistry`); moving a batch's entry date later is
  * refused when any of them holds a record before the new date.
  */
@@ -16,11 +17,9 @@ export interface BatchHistorySource {
 }
 
 @Injectable()
-export class BatchHistoryRegistry {
-  private readonly sources: BatchHistorySource[] = [];
-
-  register(source: BatchHistorySource): void {
-    if (!this.sources.includes(source)) this.sources.push(source);
+export class BatchHistoryRegistry extends SourceRegistry<BatchHistorySource> {
+  constructor() {
+    super('historique des lots');
   }
 
   /** Earliest record of the batch over every registered source, or null. */
@@ -30,7 +29,7 @@ export class BatchHistoryRegistry {
   ): Promise<Date | null> {
     let earliest: Date | null = null;
     // One query at a time: a transaction owns a single connection.
-    for (const source of this.sources) {
+    for (const source of this.all()) {
       const date = await source.earliestDate(tx, batchId);
       if (date && (!earliest || date < earliest)) earliest = date;
     }

@@ -6,22 +6,27 @@ import {
 } from '../herd/batch-history';
 import type { Prisma } from '../generated/prisma/client';
 import type { FeedDistribution } from '../generated/prisma/client';
-import { FeedRegistry, FeedSource } from '../indicators/feed-source';
+import {
+  FEED_COST,
+  LotCostRegistry,
+  type LotCost,
+  type LotCostSource,
+} from '../indicators/lot-cost';
 import { PrismaService } from '../prisma/prisma.service';
 
-/** The feed of a lot, as the indicators module sums it for the lot's performance. */
+/** The feed of a lot: its cost for the indicators, and the history that pins the lot's entry date. */
 @Injectable()
 export class FeedService
-  implements FeedSource, BatchHistorySource, OnModuleInit
+  implements LotCostSource, BatchHistorySource, OnModuleInit
 {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly registry: FeedRegistry,
+    private readonly costs: LotCostRegistry,
     private readonly history: BatchHistoryRegistry,
   ) {}
 
   onModuleInit(): void {
-    this.registry.register(this);
+    this.costs.register(this);
     this.history.register(this);
   }
 
@@ -44,19 +49,38 @@ export class FeedService
     return dates.length ? new Date(Math.min(...dates.map((d) => +d))) : null;
   }
 
-  /** Feed given to the lot itself; building-level distributions are not attributed to lots. */
-  async feedForBatch(
-    batchId: string,
+  /**
+   * Feed given to the lots themselves (`aliment`: `amount` = cost, `quantity` = kg);
+   * building-level distributions are not attributed to lots.
+   */
+  async costsFor(
+    batchIds: string[],
+    range: { from?: Date; to?: Date } = {},
     tx?: Prisma.TransactionClient,
-  ): Promise<{ kg: number; cost: number }> {
-    const sum = await (tx ?? this.prisma).feedDistribution.aggregate({
-      where: { batchId },
+  ): Promise<Map<string, LotCost[]>> {
+    const result = new Map<string, LotCost[]>();
+    if (batchIds.length === 0) return result;
+    const groups = await (tx ?? this.prisma).feedDistribution.groupBy({
+      by: ['batchId'],
+      where: {
+        batchId: { in: batchIds },
+        ...(range.from || range.to
+          ? { date: { gte: range.from, lte: range.to } }
+          : {}),
+      },
       _sum: { quantityKg: true, cost: true },
     });
-    return {
-      kg: Number(sum._sum.quantityKg ?? 0),
-      cost: Number(sum._sum.cost ?? 0),
-    };
+    for (const g of groups) {
+      if (!g.batchId) continue;
+      result.set(g.batchId, [
+        {
+          category: FEED_COST,
+          amount: Number(g._sum.cost ?? 0),
+          quantity: Number(g._sum.quantityKg ?? 0),
+        },
+      ]);
+    }
+    return result;
   }
 
   /**

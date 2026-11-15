@@ -598,7 +598,8 @@ export class AnimalsService implements OccupationSource {
    * or when anything was recorded for it after the exit date. The status goes
    * back to ACTIF; a sow whose gestation that same exit failed (a death on the
    * exit date) gets that record back and is GESTANTE again, and a sow with a
-   * litter still to wean is ALLAITANTE. The building capacity is checked again.
+   * litter still to wean is ALLAITANTE. The building's species fit and capacity
+   * are checked again (it may have changed type, or filled up, meanwhile).
    */
   reinstate(ctx: RequestContext, id: string): Promise<AnimalItem> {
     return this.prisma.$transaction(async (tx) => {
@@ -609,6 +610,8 @@ export class AnimalsService implements OccupationSource {
       if (exitDate && (await this.hasRecordAfter(tx, id, exitDate))) {
         throw new ConflictException(RECORDED_AFTER_EXIT);
       }
+      // The building may have changed type since the animal left.
+      await this.assertBuilding(tx, row.farmId, row.buildingId);
       const [before] = await this.toItems([row], tx);
       let status: AnimalStatus = 'ACTIF';
       if (row.sex === 'F') {

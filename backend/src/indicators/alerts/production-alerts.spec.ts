@@ -38,6 +38,7 @@ describe('mortalityAlerts', () => {
         detail: '3.6% sur 5000 sujets',
         level: 'A_VOIR',
         module: 'lots',
+        modules: ['lots'],
       },
     ]);
   });
@@ -82,6 +83,7 @@ describe('mortalityAlerts', () => {
       SETTINGS,
     );
     expect(alert.module).toBe('porcs');
+    expect(alert.modules).toEqual(['porcs']);
   });
 });
 
@@ -146,6 +148,7 @@ describe('farrowingAlerts', () => {
         detail: 'Prévue dans 3 j (2026-11-17)',
         level: 'A_VOIR',
         module: 'reproduction',
+        modules: ['reproduction'],
       },
     ]);
     expect(one('2026-11-14')[0]).toMatchObject({
@@ -172,6 +175,8 @@ describe('consumptionAlerts', () => {
     over: Partial<ConsumptionSeries> = {},
   ): ConsumptionSeries => ({
     kind: 'feed',
+    target: 'LOT',
+    species: 'AVICOLE',
     targetId: 't1',
     label: 'LC-0001',
     date: '2026-11-13',
@@ -188,7 +193,20 @@ describe('consumptionAlerts', () => {
         detail: 'Aliment : 140 kg (moyenne 100 kg)',
         level: 'A_VOIR',
         module: 'alimentation',
+        modules: ['alimentation', 'lots'],
       },
+    ]);
+  });
+
+  it('asks for the species module too on a lot of the other species, and only alimentation on a building', () => {
+    const modules = (over: Partial<ConsumptionSeries>) =>
+      consumptionAlerts([series(over)], SETTINGS)[0].modules;
+    expect(modules({ target: 'LOT', species: 'PORCIN' })).toEqual([
+      'alimentation',
+      'porcs',
+    ]);
+    expect(modules({ target: 'BATIMENT', species: undefined })).toEqual([
+      'alimentation',
     ]);
   });
 

@@ -165,7 +165,7 @@ describe('Users page, farm assignment', () => {
 describe('Settings page', () => {
   const SETTINGS = {
     currency: 'FCFA', mortalityDailyPct: 0.5, mortalityCumulPct: 3, consumptionDeviationPct: 25,
-    expiryWarningDays: 30, farrowingWarningDays: 7, gestationDays: 114,
+    expiryWarningDays: 30, farrowingWarningDays: 7, vaccinationWarningDays: 3, biosecurityWarningDays: 0, gestationDays: 114,
     legal: { name: 'AgriPilot SARL', address: 'Lomé', nif: '123', rccm: 'TG-LOM' },
   };
 
@@ -194,6 +194,26 @@ describe('Settings page', () => {
     fail = true;
     await user.click(within(card).getByRole('button', { name: 'Enregistrer' }));
     expect(await within(card).findByText('La durée de gestation doit être un nombre supérieur à 0')).toBeInTheDocument();
+  });
+
+  it('offers the vaccination and biosecurity thresholds in the alert card and saves them', async () => {
+    mount(<Settings />, (c) => {
+      if (c.method === 'GET' && c.url === '/api/settings') return json(200, SETTINGS);
+      if (c.method === 'PUT') return json(200, {});
+      return undefined;
+    });
+    const card = (await screen.findByRole('heading', { name: "Seuils d'alerte" })).closest('form')!;
+    expect(within(card).getByLabelText('Alerte vaccination (jours avant)')).toHaveValue(3);
+    const delay = within(card).getByLabelText('Alerte biosécurité (jours de retard tolérés)');
+    expect(delay).toHaveValue(0);
+    const user = userEvent.setup();
+    await user.clear(delay);
+    await user.type(delay, '2');
+    await user.click(within(card).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    const puts = calls.filter((c) => c.method === 'PUT').map((c) => [c.url, c.body]);
+    expect(puts).toContainEqual(['/api/settings/vaccinationWarningDays', { value: 3 }]);
+    expect(puts).toContainEqual(['/api/settings/biosecurityWarningDays', { value: 2 }]);
   });
 
   it('does not send a cleared number field as 0', async () => {

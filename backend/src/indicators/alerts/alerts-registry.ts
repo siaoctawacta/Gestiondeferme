@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { RequestContext } from '../../access/decorators';
+import { SourceRegistry } from '../../common/source-registry';
 import { can } from '../../access/permissions';
 import {
   ALERT_LEVEL_ORDER,
@@ -10,28 +11,28 @@ import {
 
 /** Modules add their alert rules here; `dashboard` reads the open alerts without importing them. */
 @Injectable()
-export class AlertsRegistry {
-  private readonly rules: AlertRule[] = [];
-
-  register(rule: AlertRule): void {
-    if (!this.rules.includes(rule)) this.rules.push(rule);
+export class AlertsRegistry extends SourceRegistry<AlertRule> {
+  constructor() {
+    super('alertes');
   }
 
   /**
-   * Only the alerts of modules the caller's role can read (an alert names
-   * sow tags, lot mortality, feed anomalies: data a role without the module
-   * may not see), URGENT first, then by rule registration order, then by key.
+   * Only the alerts whose modules the caller's role can all read (an alert
+   * names sow tags, lot mortality, feed anomalies: data a role without the
+   * module may not see), URGENT first, then by rule registration order, then by key.
    */
   async run(
     ctx: RequestContext,
     settings: AlertSettings,
   ): Promise<AlertItem[]> {
     const perRule = await Promise.all(
-      this.rules.map((rule) => rule(ctx, settings)),
+      this.all().map((rule) => rule(ctx, settings)),
     );
     const flat = perRule.flatMap((items, order) =>
       items
-        .filter((item) => can(ctx.user.role, item.module, 'read'))
+        .filter((item) =>
+          item.modules.every((m) => can(ctx.user.role, m, 'read')),
+        )
         .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
         .map((item) => ({ item, order })),
     );
