@@ -96,6 +96,11 @@ export type Field =
       minRows?: number;
       /** Label of the add button (default `Ajouter une ligne`). */
       addLabel?: string;
+      /**
+       * The rows are the given ones (`initial` / `defaultValue`), in that order: no add or remove button. For a grid
+       * over a fixed list (the lines of an order being received); a `toPayload` may then pair rows with the source by index.
+       */
+      fixed?: boolean;
       /** Shown under the grid with the rows as edited (a running total, a derived cost...). */
       footer?: (rows: LineRow[]) => ReactNode;
     });

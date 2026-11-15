@@ -95,6 +95,14 @@ describe('LinesField', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 
+  it('has no add or remove button when the rows are fixed', async () => {
+    mount({ fields: [{ ...items, fixed: true, defaultValue: [{ productId: 'a', percentage: '40' }] } as Field] });
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Pourcentage ligne 1')).toHaveValue(40);
+    expect(within(dialog).queryByRole('button', { name: 'Ajouter une ligne' })).not.toBeInTheDocument();
+    expect(within(dialog).queryByRole('button', { name: 'Retirer la ligne 1' })).not.toBeInTheDocument();
+  });
+
   it('refuses fewer rows than minRows', async () => {
     const { onSubmit } = mount({ fields: [{ ...items, defaultValue: [] } as Field] });
     const user = userEvent.setup();

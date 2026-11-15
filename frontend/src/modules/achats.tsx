@@ -1,0 +1,99 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { ActionDialog } from '../components/module/ActionDialog';
+import { LoadedRecord } from '../components/module/LoadedRecord';
+import type { Field, ModuleConfig, RowAction } from '../components/module/types';
+import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
+import { formatMoney, formatNumber, todayIso } from '../lib/format';
+import { farmKey } from '../lib/query';
+import { PurchaseDetail } from '../pages/details/PurchaseDetail';
+import { PURCHASE_ACTIONS } from './purchaseActions';
+import { PURCHASE_STATUSES, editableGate, linesTotal, type PurchaseData, type PurchaseRow } from './purchasingShared';
+
+const FIELDS: Field[] = [
+  { name: 'supplierId', label: 'Fournisseur', type: 'select', required: true, options: { endpoint: '/suppliers' } },
+  { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
+  {
+    name: 'lines',
+    label: 'Lignes',
+    type: 'lines',
+    minRows: 1,
+    addLabel: 'Ajouter une ligne',
+    defaultValue: [{ itemId: '', quantity: '', unitPrice: '' }],
+    columns: [
+      { name: 'itemId', label: 'Article', type: 'select', required: true, unique: true, options: { endpoint: '/stock-items', params: { active: 'true' } } },
+      { name: 'quantity', label: 'Quantité', type: 'number', required: true, min: 0.01, step: 0.01 },
+      { name: 'unitPrice', label: 'Prix unitaire', type: 'number', required: true, min: 0, step: 0.01 },
+    ],
+    footer: (rows) => <p className="text-sm font-semibold">Total : {formatMoney(linesTotal(rows))}</p>,
+  },
+];
+
+const toForm = (p: PurchaseData) => ({
+  supplierId: p.supplierId,
+  date: p.date,
+  lines: p.lines.map((l) => ({ itemId: l.itemId, quantity: l.quantity, unitPrice: l.unitPrice })),
+});
+
+/**
+ * Request (add) or correct (edit, `DEMANDE` only) a purchase. A list row carries neither its lines nor its supplier
+ * id, so an edit loads the purchase first; only what changed is sent.
+ */
+function PurchaseForm({ row, onSaved, onClose }: { row?: PurchaseRow; onSaved: () => void; onClose: () => void }) {
+  const { farmId } = useAuth();
+  const queryClient = useQueryClient();
+  const title = `${row ? 'Modifier' : 'Ajouter'} — Achats`;
+  const form = (record?: PurchaseData) => (
+    <ActionDialog
+      title={title}
+      mode={record ? 'update' : 'create'}
+      fields={FIELDS}
+      initial={record ? toForm(record) : undefined}
+      onSubmit={(body) => (record ? api.patch(`/purchases/${record.id}`, body) : api.post('/purchases', body))}
+      onClose={onClose}
+      onDone={() => {
+        // The detail cached for this purchase is stale once its lines or supplier changed.
+        if (record) void queryClient.invalidateQueries({ queryKey: farmKey(farmId, '/purchases', 'detail', record.id) });
+        onSaved();
+      }}
+    />
+  );
+  if (!row) return form();
+  return (
+    <LoadedRecord<PurchaseData> title={title} queryKey={['/purchases', 'detail', row.id]} path={`/purchases/${row.id}`} onClose={onClose}>
+      {form}
+    </LoadedRecord>
+  );
+}
+
+const actions: RowAction<PurchaseRow>[] = PURCHASE_ACTIONS.map((a) => ({
+  key: a.key, label: a.label, icon: a.icon, permission: a.permission, visible: a.visible, dialog: a.Dialog,
+}));
+
+export const achats: ModuleConfig<PurchaseRow> = {
+  slug: 'achats',
+  group: 'Commercial',
+  title: 'Achats',
+  subtitle: 'Demandes, validation, bons de commande et réception.',
+  endpoint: '/purchases',
+  columns: [
+    { key: 'date', header: 'DATE' },
+    { key: 'reference', header: 'RÉFÉRENCE' },
+    { key: 'supplierName', header: 'FOURNISSEUR' },
+    { key: 'article', header: 'ARTICLE' },
+    { key: 'quantity', header: 'QUANTITÉ', render: (p) => formatNumber(p.quantity) },
+    { key: 'status', header: 'STATUT' },
+    { key: 'amount', header: 'MONTANT', render: (p) => formatMoney(p.amount) },
+  ],
+  statuses: PURCHASE_STATUSES,
+  statusKey: 'status',
+  form: PurchaseForm,
+  rowLabel: (p) => p.reference,
+  detail: PurchaseDetail,
+  // A request is a daily entry: whoever may enter it (`create`) corrects or withdraws it, while it is a `Demande`.
+  editPermission: 'create',
+  deletePermission: 'create',
+  canEdit: editableGate,
+  canDelete: editableGate,
+  actions,
+};

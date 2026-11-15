@@ -177,7 +177,7 @@ function LabelledControl({ field, value, onChange, parentValue, waitingFor }: Fi
 export function FieldInput(props: FieldInputProps) {
   const { field, value, onChange } = props;
   if (field.type === 'multiselect') return <MultiSelectInput {...props} field={field} />;
-  if (field.type === 'lines') return <LinesField field={field} value={value as LineRow[]} onChange={onChange} errors={props.errors} />;
+  if (field.type === 'lines') return <LinesField field={field} value={value as LineRow[]} onChange={onChange} errors={props.errors} fixed={field.fixed} />;
   if (field.type === 'checkbox') {
     return (
       <label className="flex items-center gap-2 text-sm font-medium">

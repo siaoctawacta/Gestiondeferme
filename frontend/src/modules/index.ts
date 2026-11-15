@@ -1,5 +1,7 @@
+import { achats } from './achats';
 import { alimentation } from './alimentation';
 import { batiments } from './batiments';
+import { fournisseurs } from './fournisseurs';
 import { lots } from './lots';
 import { ponte } from './ponte';
 import { porcs } from './porcs';
@@ -15,5 +17,7 @@ registerModule(porcs);
 registerModule(reproduction);
 registerModule(alimentation);
 registerModule(stocks);
+registerModule(fournisseurs);
+registerModule(achats);
 
 export { MODULES };
