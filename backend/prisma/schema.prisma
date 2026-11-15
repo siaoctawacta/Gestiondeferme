@@ -1,7 +1,7 @@
 generator client {
-  provider     = "prisma-client"
-  output       = "../src/generated/prisma"
-  moduleFormat = "cjs"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "cjs"
   // relationJoins: the feed and water services pass `relationLoadStrategy: 'join'`
   // to load a row with its batch/building/product names in one query. With the
   // flag on, Prisma's default relation load strategy may itself be `join`, so
@@ -134,6 +134,7 @@ model Organization {
   breeds       Breed[]
   feedProducts FeedProduct[]
   feedFormulas FeedFormula[]
+  stockItems   StockItem[]
 }
 
 model Farm {
@@ -160,6 +161,10 @@ model Farm {
   animalWeighings   AnimalWeighing[]
   heats             Heat[]
   breedingRecords   BreedingRecord[]
+  farmStockItems    FarmStockItem[]
+  stockBatches      StockBatch[]
+  stockMovements    StockMovement[]
+  inventories       InventorySession[]
 }
 
 model Site {
@@ -213,30 +218,33 @@ model Zone {
 }
 
 model User {
-  id             String          @id @default(cuid())
-  organizationId String
-  organization   Organization    @relation(fields: [organizationId], references: [id])
-  email          String          @unique
-  name           String
-  passwordHash   String
-  role           Role
-  active         Boolean         @default(true)
-  failedLogins   Int             @default(0)
-  lockedUntil    DateTime?
-  totpSecretEnc  String?
-  totpEnabledAt  DateTime?
-  totpLastStep   Int?
-  backupCodes    String[]
-  lastLoginAt    DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
-  farms          UserFarm[]
-  refreshTokens  RefreshToken[]
-  passwordResets PasswordReset[]
-  loginLogs      LoginLog[]
-  auditLogs      AuditLog[]
-  responsibleFor AnimalBatch[]
-  batchEvents    BatchEvent[]
+  id                   String             @id @default(cuid())
+  organizationId       String
+  organization         Organization       @relation(fields: [organizationId], references: [id])
+  email                String             @unique
+  name                 String
+  passwordHash         String
+  role                 Role
+  active               Boolean            @default(true)
+  failedLogins         Int                @default(0)
+  lockedUntil          DateTime?
+  totpSecretEnc        String?
+  totpEnabledAt        DateTime?
+  totpLastStep         Int?
+  backupCodes          String[]
+  lastLoginAt          DateTime?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  farms                UserFarm[]
+  refreshTokens        RefreshToken[]
+  passwordResets       PasswordReset[]
+  loginLogs            LoginLog[]
+  auditLogs            AuditLog[]
+  responsibleFor       AnimalBatch[]
+  batchEvents          BatchEvent[]
+  stockMovements       StockMovement[]
+  inventoriesCreated   InventorySession[] @relation("InventoryCreatedBy")
+  inventoriesValidated InventorySession[] @relation("InventoryValidatedBy")
 }
 
 model UserFarm {
@@ -686,4 +694,156 @@ model WaterConsumption {
   @@index([farmId, date])
   @@index([batchId])
   @@index([buildingId])
+}
+
+enum StockCategory {
+  ALIMENT
+  MEDICAMENT
+  VACCIN
+  MATERIEL
+  CONSOMMABLE
+}
+
+enum StockMovementType {
+  ENTREE
+  SORTIE
+  AJUSTEMENT
+  /// Reserved: one stock per farm, no route writes a transfer.
+  TRANSFERT_SORTIE
+  TRANSFERT_ENTREE
+}
+
+enum StockReason {
+  ACHAT
+  CONSOMMATION
+  TRAITEMENT
+  INVENTAIRE
+  PERTE
+  AUTRE
+}
+
+enum InventoryStatus {
+  BROUILLON
+  VALIDEE
+}
+
+/// An article of the organisation's catalogue; its quantity per farm is the sum of that farm's movements.
+model StockItem {
+  id             String          @id @default(cuid())
+  organizationId String
+  organization   Organization    @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  name           String
+  category       StockCategory
+  unit           String
+  active         Boolean         @default(true)
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+  farmItems      FarmStockItem[]
+  batches        StockBatch[]
+  movements      StockMovement[]
+  inventoryLines InventoryLine[]
+
+  @@unique([organizationId, name])
+}
+
+/// The thresholds of one article in one farm; also the row lock that serialises every change to that (farm, article) stock.
+model FarmStockItem {
+  id          String    @id @default(cuid())
+  farmId      String
+  farm        Farm      @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  stockItemId String
+  stockItem   StockItem @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
+  minQty      Decimal   @default(0) @db.Decimal(12, 2)
+  maxQty      Decimal?  @db.Decimal(12, 2)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([farmId, stockItemId])
+  @@index([farmId])
+  @@index([stockItemId])
+}
+
+/// A lot received (one per reception line); its quantity is the sum of the movements that carry it.
+model StockBatch {
+  id           String          @id @default(cuid())
+  farmId       String
+  farm         Farm            @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  stockItemId  String
+  stockItem    StockItem       @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
+  lotNumber    String?
+  expiryDate   DateTime?       @db.Date
+  receivedDate DateTime        @db.Date
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+  movements    StockMovement[]
+
+  @@index([farmId])
+  @@index([stockItemId])
+  @@index([farmId, stockItemId])
+}
+
+model StockMovement {
+  id           String            @id @default(cuid())
+  farmId       String
+  farm         Farm              @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  stockItemId  String
+  stockItem    StockItem         @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
+  stockBatchId String?
+  stockBatch   StockBatch?       @relation(fields: [stockBatchId], references: [id], onDelete: Restrict)
+  date         DateTime          @db.Date
+  type         StockMovementType
+  /// Signed: positive in, negative out.
+  quantity     Decimal           @db.Decimal(12, 2)
+  /// An entry's own cost; for an exit, the weighted-average cost at that point of the history (rewritten when the history changes).
+  unitCost     Decimal           @db.Decimal(12, 2)
+  reason       StockReason
+  /// The operation that wrote it (FEED_DISTRIBUTION, HEALTH_ACT, PURCHASE, INVENTORY...); null for a hand-entered movement.
+  sourceType   String?
+  sourceId     String?
+  note         String?
+  createdById  String
+  createdBy    User              @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([farmId])
+  @@index([stockItemId])
+  @@index([stockBatchId])
+  @@index([createdById])
+  @@index([farmId, stockItemId, date])
+  @@index([sourceType, sourceId])
+}
+
+model InventorySession {
+  id            String          @id @default(cuid())
+  farmId        String
+  farm          Farm            @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  date          DateTime        @db.Date
+  status        InventoryStatus @default(BROUILLON)
+  note          String?
+  createdById   String
+  createdBy     User            @relation("InventoryCreatedBy", fields: [createdById], references: [id], onDelete: Restrict)
+  validatedById String?
+  validatedBy   User?           @relation("InventoryValidatedBy", fields: [validatedById], references: [id], onDelete: Restrict)
+  validatedAt   DateTime?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  lines         InventoryLine[]
+
+  @@index([farmId])
+  @@index([createdById])
+  @@index([validatedById])
+}
+
+model InventoryLine {
+  id             String           @id @default(cuid())
+  sessionId      String
+  session        InventorySession @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+  stockItemId    String
+  stockItem      StockItem        @relation(fields: [stockItemId], references: [id], onDelete: Restrict)
+  theoreticalQty Decimal          @db.Decimal(12, 2)
+  countedQty     Decimal          @db.Decimal(12, 2)
+
+  @@unique([sessionId, stockItemId])
+  @@index([stockItemId])
 }

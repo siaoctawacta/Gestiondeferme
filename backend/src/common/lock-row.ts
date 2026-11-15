@@ -2,7 +2,13 @@ import { Prisma } from '../generated/prisma/client';
 
 /** Tables whose rows are locked by hand; a closed union, never user input. */
 export type LockableTable =
-  'AnimalBatch' | 'Animal' | 'BreedingRecord' | 'Incubation' | 'Building';
+  | 'AnimalBatch'
+  | 'Animal'
+  | 'BreedingRecord'
+  | 'Incubation'
+  | 'Building'
+  | 'FarmStockItem'
+  | 'InventorySession';
 
 const TABLE: Record<LockableTable, Prisma.Sql> = {
   AnimalBatch: Prisma.raw('"AnimalBatch"'),
@@ -10,6 +16,8 @@ const TABLE: Record<LockableTable, Prisma.Sql> = {
   BreedingRecord: Prisma.raw('"BreedingRecord"'),
   Incubation: Prisma.raw('"Incubation"'),
   Building: Prisma.raw('"Building"'),
+  FarmStockItem: Prisma.raw('"FarmStockItem"'),
+  InventorySession: Prisma.raw('"InventorySession"'),
 };
 
 /**

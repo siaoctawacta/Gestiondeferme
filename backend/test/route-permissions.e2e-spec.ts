@@ -287,6 +287,10 @@ describe('Route permissions walk (e2e)', () => {
       FeedFormulasController: ['alimentation'],
       FeedDistributionsController: ['alimentation'],
       WaterController: ['alimentation'],
+      StockItemsController: ['stocks'],
+      StockMovementsController: ['stocks'],
+      StockOverviewController: ['stocks'],
+      InventoriesController: ['stocks'],
     };
 
     it('states the module of its family on every route, and the guard refuses a role without it', async () => {
