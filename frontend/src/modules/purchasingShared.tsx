@@ -58,6 +58,10 @@ export interface PurchaseStep {
 /** `GET /purchases/:id`. */
 export interface PurchaseData extends PurchaseRow {
   supplierId: string;
+  supplierPhone: string | null;
+  supplierAddress: string | null;
+  /** ISO timestamp of the order (`BC-NNNN` assigned); null before it. */
+  orderedAt: string | null;
   lines: PurchaseLine[];
   payments: PurchasePayment[];
   history: PurchaseStep[];
@@ -93,6 +97,10 @@ export const ORDERED: PurchaseStatus[] = ['COMMANDEE', 'RECUE', 'PAYEE'];
 export const LOCKED = 'Enregistrement verrouillé';
 export const editableGate = (p: Pick<PurchaseRow, 'status'>): true | string => (p.status === 'DEMANDE' ? true : LOCKED);
 
-/** Σ quantity × unit price of rows as edited (empty cells count as 0), rounded to 2 decimals. */
+/** Amount of one line: quantity × unit price, rounded to 2 decimals (`3 × 1.1` is `3.3`, not `3.3000000000000003`). */
+export const lineAmount = (quantity: number, unitPrice: number): number =>
+  Math.round((quantity * unitPrice + Number.EPSILON) * 100) / 100;
+
+/** Σ of the rounded line amounts of rows as edited (empty cells count as 0). */
 export const linesTotal = (rows: { quantity?: string; unitPrice?: string }[]): number =>
-  Math.round(rows.reduce((sum, r) => sum + Number(r.quantity || 0) * Number(r.unitPrice || 0), 0) * 100) / 100;
+  Math.round(rows.reduce((sum, r) => sum + lineAmount(Number(r.quantity || 0), Number(r.unitPrice || 0)), 0) * 100) / 100;

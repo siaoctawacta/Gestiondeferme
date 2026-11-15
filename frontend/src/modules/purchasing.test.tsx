@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -24,7 +24,7 @@ const cells = (tr: Element | null) => flat(Array.from(tr!.querySelectorAll('td')
 
 const SUPPLIERS = [
   { id: 'sup1', name: 'Agro Provende SA', products: 'Aliments volaille & porc', phone: '+228 90 11 22 33', email: 'ventes@agroprovende.tg', balance: 850000 },
-  { id: 'sup2', name: 'VetoPlus', products: 'Vaccins, médicaments', phone: '+228 91 44 55 66', email: 'contact@vetoplus.tg', balance: 120000 },
+  { id: 'sup2', name: 'VetoPlus', address: 'Rue des Vaccins', active: true, products: 'Vaccins, médicaments', phone: '+228 91 44 55 66', email: 'contact@vetoplus.tg', balance: 120000 },
   { id: 'sup3', name: 'Couvoir du Golfe', products: "Poussins d'un jour", phone: '+228 92 77 88 99', email: 'info@couvoirgolfe.tg', balance: 0 },
 ];
 
@@ -40,6 +40,7 @@ const line = (o: object) => ({ receivedQuantity: null, lotNumber: null, expiryDa
 const DETAILS: Record<string, unknown> = {
   p1: {
     ...LIST[0], ...base,
+    supplierPhone: '+228 90 11 22 33', supplierAddress: 'Zone industrielle, Lomé', orderedAt: '2026-10-21T09:00:00.000Z',
     lines: [line({ itemId: 's2', itemName: 'Aliment ponte', quantity: 3000, unitPrice: 310 })],
     payments: [],
     history: [
@@ -61,6 +62,20 @@ const DETAILS: Record<string, unknown> = {
     history: [{ step: 'DEMANDE', at: '2026-10-22T09:00:00.000Z', by: 'Koffi' }],
   },
 };
+
+/** Rows of `GET /purchases`; a test may change them. */
+let rows: unknown[] = LIST;
+// Detail-only purchases: a request of a supplier since deactivated, and an order of three lines.
+DETAILS.p4 = { ...(DETAILS.p3 as object), id: 'p4', supplierId: 'sup9', supplierName: 'Ancien fournisseur' };
+DETAILS.p6 = {
+  ...(DETAILS.p1 as object), id: 'p6', reference: 'BC-0150',
+  lines: [
+    line({ itemId: 's2', itemName: 'Aliment ponte', quantity: 3000, unitPrice: 310 }),
+    line({ itemId: 's1', itemName: 'Aliment croissance chair', quantity: 500, unitPrice: 300 }),
+    line({ itemId: 's4', itemName: 'Vaccin Gumboro', unit: 'flacons', quantity: 10, unitPrice: 12000 }),
+  ],
+};
+const VALIDEE = { id: 'p5', date: '2026-10-23', reference: 'DA-0090', supplierName: 'VetoPlus', article: 'Vaccin Gumboro', quantity: 5, status: 'VALIDEE', amount: 60000, paid: 0, remaining: 60000 };
 
 const STOCK_ITEMS = [{ id: 's1', name: 'Aliment croissance chair' }, { id: 's2', name: 'Aliment ponte' }];
 const SETTINGS = { legal: { name: 'Ferme du Golfe SARL', address: 'Route de Kpalimé, Lomé', nif: '1001234567', rccm: 'TG-LOM-2020-B-1234' } };
@@ -93,8 +108,9 @@ function mount(ui: React.ReactNode, { perms = ALL, farm, settings = true }: { pe
     const url = call.url;
     const detail = /^\/api\/purchases\/(\w+)(\?|$)/.exec(url);
     if (detail) return DETAILS[detail[1]] ? json(200, DETAILS[detail[1]]) : json(404, { message: 'Introuvable' });
-    if (url.startsWith('/api/purchases')) return page(LIST, { statusCounts: COUNTS });
-    if (url.startsWith('/api/suppliers')) return page(SUPPLIERS);
+    if (url.startsWith('/api/purchases')) return page(rows, { statusCounts: COUNTS });
+    // `active=true` lists the active suppliers only (VetoPlus is inactive).
+    if (url.startsWith('/api/suppliers')) return page(url.includes('active=true') ? SUPPLIERS.filter((x) => x.id !== 'sup2') : SUPPLIERS);
     if (url.startsWith('/api/stock-items')) return page(STOCK_ITEMS);
     if (url === '/api/settings') return json(200, SETTINGS);
     throw new Error(`unexpected ${call.method} ${url}`);
@@ -118,6 +134,7 @@ const rowOf = (text: string) => within(screen.getByText(text).closest('tr')!);
 beforeEach(() => {
   calls.length = 0;
   failWith = null;
+  rows = LIST;
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -163,10 +180,38 @@ describe('fournisseurs list', () => {
     expect(await within(confirm).findByText('Fournisseur utilisé par des achats')).toBeInTheDocument();
   });
 
-  it('is master data: no Ajouter without update, and it stays writable under all farms', async () => {
+  it('is master data: no Ajouter without update', async () => {
     mountList(fournisseurs, { perms: ['read', 'create'] });
     await screen.findByText('VetoPlus');
     expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+  });
+
+  it('stays writable under all farms, being organisation data', async () => {
+    mountList(fournisseurs, { farm: 'all' });
+    await screen.findByText('VetoPlus');
+    expect(screen.getByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
+    expect(rowOf('VetoPlus').getByRole('button', { name: 'Modifier' })).toBeInTheDocument();
+  });
+
+  it('edits the address and the active flag, sending only what changed, and checks the email', async () => {
+    mountList(fournisseurs);
+    await screen.findByText('VetoPlus');
+    const user = userEvent.setup();
+    await user.click(rowOf('VetoPlus').getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Fournisseurs' });
+    expect(within(dialog).getByLabelText('Adresse')).toHaveValue('Rue des Vaccins');
+    expect(within(dialog).getByLabelText('Actif')).toBeChecked();
+    await user.clear(within(dialog).getByLabelText('Email'));
+    await user.type(within(dialog).getByLabelText('Email'), 'pas-un-email');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText("L'adresse email n'est pas valide")).toBeInTheDocument();
+    expect(writes()).toHaveLength(0);
+    await user.clear(within(dialog).getByLabelText('Email'));
+    await user.type(within(dialog).getByLabelText('Email'), 'vente@vetoplus.tg');
+    await user.click(within(dialog).getByLabelText('Actif'));
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/suppliers/sup2', body: { email: 'vente@vetoplus.tg', active: false } });
   });
 });
 
@@ -205,20 +250,26 @@ describe('achats list', () => {
     expect(names('BC-0141')).toEqual(['Payer', 'Modifier', 'Supprimer']);
   });
 
-  it('keeps Valider from a role without the validate permission', async () => {
-    mountList(achats, { perms: ['read', 'create', 'update'] });
+  const ROLE_ROWS = ['DA-0089', 'DA-0090', 'BC-0142', 'BC-0141'];
+  it.each([
+    ['DIRECTEUR_FERME', ALL, [
+      ['Valider', 'Annuler', 'Modifier', 'Supprimer'], ['Commander', 'Annuler', 'Modifier', 'Supprimer'],
+      ['Réceptionner', 'Annuler', 'Modifier', 'Supprimer'], ['Payer', 'Modifier', 'Supprimer'],
+    ], true],
+    ['RESP_STOCK', ['read', 'create', 'update'], [
+      ['Modifier', 'Supprimer'], ['Modifier', 'Supprimer'], ['Réceptionner', 'Modifier', 'Supprimer'], ['Modifier', 'Supprimer'],
+    ], true],
+    ['MAGASINIER', ['read', 'update'], [[], [], ['Réceptionner'], []], false],
+    ['PROPRIETAIRE', ['read', 'validate'], [['Valider', 'Annuler'], ['Commander', 'Annuler'], ['Annuler'], ['Payer']], false],
+    ['COMPTABLE', ['read'], [[], [], [], []], false],
+  ])('shows %s exactly its actions on each status', async (_role, perms, expected, canAdd) => {
+    rows = [LIST[2], VALIDEE, LIST[0], LIST[1]];
+    mountList(achats, { perms: perms as string[] });
     await screen.findByText('BC-0142');
-    expect(rowOf('DA-0089').queryByRole('button', { name: 'Valider' })).not.toBeInTheDocument();
-    expect(rowOf('DA-0089').getByRole('button', { name: 'Annuler' })).toBeInTheDocument();
-  });
-
-  it('gives the storekeeper (read, update) reception and payment but no create, edit or delete', async () => {
-    mountList(achats, { perms: ['read', 'update'] });
-    await screen.findByText('BC-0142');
-    expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
-    expect(rowOf('BC-0142').getByRole('button', { name: 'Réceptionner' })).toBeInTheDocument();
-    expect(rowOf('BC-0142').queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
-    expect(rowOf('BC-0142').queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
+    ROLE_ROWS.forEach((ref, i) => {
+      expect(rowOf(ref).queryAllByRole('button').map((b) => b.getAttribute('aria-label'))).toEqual(expected[i]);
+    });
+    expect(!!screen.queryByRole('button', { name: 'Ajouter' })).toBe(canAdd);
   });
 
   it('validates a request after a confirmation', async () => {
@@ -258,11 +309,55 @@ describe('achats list', () => {
     });
   });
 
-  it('shows the API refusal of a payment above the remaining, then pays', async () => {
+  it('receives several lines: a partial quantity, a zero and an untouched one', async () => {
+    rows = [{ ...LIST[0], id: 'p6', reference: 'BC-0150' }];
+    mountList(achats);
+    await screen.findByText('BC-0150');
+    const user = userEvent.setup();
+    await user.click(rowOf('BC-0150').getByRole('button', { name: 'Réceptionner' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Réceptionner — BC-0150' });
+    const first = await within(dialog).findByLabelText('Quantité reçue ligne 1');
+    expect(within(dialog).getByLabelText('Quantité reçue ligne 3')).toHaveValue(10);
+    await user.clear(first);
+    await user.type(first, '2800');
+    await user.clear(within(dialog).getByLabelText('Quantité reçue ligne 2'));
+    await user.type(within(dialog).getByLabelText('Quantité reçue ligne 2'), '0');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({
+      date: todayIso(),
+      lines: [
+        { itemId: 's2', receivedQuantity: 2800 },
+        { itemId: 's1', receivedQuantity: 0 },
+        { itemId: 's4', receivedQuantity: 10 },
+      ],
+    });
+  });
+
+  it('shows the API refusal in the receive and the cancel dialogs', async () => {
+    mountList(achats);
+    await screen.findByText('BC-0142');
+    const user = userEvent.setup();
+    failWith = { url: /\/receive$/, status: 409, message: 'Achat déjà réceptionné' };
+    await user.click(rowOf('BC-0142').getByRole('button', { name: 'Réceptionner' }));
+    let dialog = await screen.findByRole('dialog', { name: 'Réceptionner — BC-0142' });
+    await within(dialog).findByLabelText('Quantité reçue ligne 1');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Achat déjà réceptionné')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Annuler' }));
+
+    failWith = { url: /\/cancel$/, status: 409, message: 'Achat déjà reçu' };
+    await user.click(rowOf('BC-0142').getByRole('button', { name: 'Annuler' }));
+    dialog = await screen.findByRole('dialog', { name: 'Annuler — BC-0142' });
+    await user.type(within(dialog).getByLabelText('Motif'), 'Erreur');
+    await user.click(within(dialog).getByRole('button', { name: "Confirmer l'annulation" }));
+    expect(await within(dialog).findByText('Achat déjà reçu')).toBeInTheDocument();
+  });
+
+  it('refuses a payment above the remaining before sending, shows the API refusal, then pays', async () => {
     mountList(achats);
     await screen.findByText('BC-0141');
     const user = userEvent.setup();
-    failWith = { url: /\/payments$/, status: 400, message: 'Le montant dépasse le reste à payer' };
     await user.click(rowOf('BC-0141').getByRole('button', { name: 'Payer' }));
     const dialog = await screen.findByRole('dialog', { name: 'Payer — BC-0141' });
     expect(within(dialog).getByLabelText('Montant (FCFA)')).toHaveValue(120000);
@@ -270,13 +365,18 @@ describe('achats list', () => {
     await user.type(within(dialog).getByLabelText('Montant (FCFA)'), '999999');
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     expect(await within(dialog).findByText('Le montant dépasse le reste à payer')).toBeInTheDocument();
+    expect(writes()).toHaveLength(0);
+
+    failWith = { url: /\/payments$/, status: 409, message: 'Achat déjà payé' };
+    await user.clear(within(dialog).getByLabelText('Montant (FCFA)'));
+    await user.type(within(dialog).getByLabelText('Montant (FCFA)'), '120000');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Achat déjà payé')).toBeInTheDocument();
     expect(writes()[0]).toMatchObject({
-      method: 'POST', url: '/api/purchases/p2/payments', body: { date: todayIso(), amount: 999999, method: 'ESPECES' },
+      method: 'POST', url: '/api/purchases/p2/payments', body: { date: todayIso(), amount: 120000, method: 'ESPECES' },
     });
 
     failWith = null;
-    await user.clear(within(dialog).getByLabelText('Montant (FCFA)'));
-    await user.type(within(dialog).getByLabelText('Montant (FCFA)'), '120000');
     await user.selectOptions(within(dialog).getByLabelText('Mode de paiement'), 'Mobile money');
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
@@ -315,7 +415,10 @@ describe('achats list', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Ajouter' }));
     const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Achats' });
-    await within(dialog).findByRole('option', { name: 'VetoPlus' });
+    await within(dialog).findByRole('option', { name: 'Agro Provende SA' });
+    // Only active suppliers are offered.
+    expect(within(dialog).queryByRole('option', { name: 'VetoPlus' })).not.toBeInTheDocument();
+    expect(calls.some((c) => c.url.startsWith('/api/suppliers') && c.url.includes('active=true'))).toBe(true);
     await user.selectOptions(within(dialog).getByLabelText('Fournisseur'), 'Agro Provende SA');
     expect(within(dialog).getByLabelText('Date')).toHaveValue(todayIso());
     await within(dialog).findByRole('option', { name: 'Aliment ponte' });
@@ -332,6 +435,19 @@ describe('achats list', () => {
     });
   });
 
+  it('totals the lines from rounded line amounts', async () => {
+    mountList(achats);
+    await screen.findByText('BC-0142');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Achats' });
+    await within(dialog).findByRole('option', { name: 'Aliment ponte' });
+    await user.selectOptions(within(dialog).getByLabelText('Article ligne 1'), 'Aliment ponte');
+    await user.type(within(dialog).getByLabelText('Quantité ligne 1'), '3');
+    await user.type(within(dialog).getByLabelText('Prix unitaire ligne 1'), '1.1');
+    expect(flat(within(dialog).getByText(/Total/).textContent)).toBe('Total : 3.3 FCFA');
+  });
+
   it('edits a request from its stored lines and sends only what changed', async () => {
     mountList(achats);
     await screen.findByText('DA-0089');
@@ -345,6 +461,16 @@ describe('achats list', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toEqual(expect.objectContaining({ method: 'PATCH', url: '/api/purchases/p3', body: { date: '2026-10-23' } }));
+  });
+
+  it('keeps the current supplier of an edited request in the choices even when inactive', async () => {
+    const Form = achats.form!;
+    mount(<Form row={{ ...LIST[2], id: 'p4' } as never} onSaved={() => undefined} onClose={() => undefined} />);
+    const select = await screen.findByLabelText('Fournisseur');
+    await within(select).findByRole('option', { name: 'Agro Provende SA' });
+    expect(within(select).getByRole('option', { name: 'Ancien fournisseur' })).toBeInTheDocument();
+    expect(select).toHaveValue('sup9');
+    expect(within(select).queryByRole('option', { name: 'VetoPlus' })).not.toBeInTheDocument();
   });
 
   it('is read-only under all farms', async () => {
@@ -386,26 +512,70 @@ describe('purchase detail', () => {
     expect(within(screen.getByRole('tabpanel')).getAllByRole('row')).toHaveLength(4);
   });
 
-  it('adds and deletes payments', async () => {
+  it('pays from the header and deletes a payment from the Paiements tab', async () => {
     mountDetail('p2');
     await screen.findByRole('heading', { name: 'BC-0141' });
     const user = userEvent.setup();
-    await user.click(screen.getByRole('tab', { name: 'Paiements' }));
-    const payment = within(screen.getByText('VIR-1').closest('tr')!);
-    expect(cells(screen.getByText('VIR-1').closest('tr'))).toContain('2026-10-25 50 000 FCFA Virement VIR-1');
-
-    await user.click(screen.getByRole('button', { name: 'Ajouter un paiement' }));
+    await user.click(screen.getByRole('button', { name: 'Payer' }));
     const dialog = await screen.findByRole('dialog', { name: 'Payer — BC-0141' });
     expect(within(dialog).getByLabelText('Montant (FCFA)')).toHaveValue(70000);
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/purchases/p2/payments', body: { amount: 70000 } });
 
+    await user.click(screen.getByRole('tab', { name: 'Paiements' }));
+    expect(screen.queryByRole('button', { name: 'Ajouter un paiement' })).not.toBeInTheDocument();
+    const payment = within(screen.getByText('VIR-1').closest('tr')!);
+    expect(cells(screen.getByText('VIR-1').closest('tr'))).toContain('2026-10-25 50 000 FCFA Virement VIR-1');
     await user.click(payment.getByRole('button', { name: 'Supprimer' }));
     const confirm = await screen.findByRole('dialog', { name: 'Supprimer le paiement' });
     await user.click(within(confirm).getByRole('button', { name: 'Supprimer' }));
     await waitFor(() => expect(writes()).toHaveLength(2));
     expect(writes()[1]).toMatchObject({ method: 'DELETE', url: '/api/purchases/p2/payments/pay1' });
+  });
+
+  it.each([
+    ['DIRECTEUR_FERME', ALL, { p1: ['Réceptionner', 'Annuler', 'Imprimer'], p2: ['Payer', 'Imprimer'], p3: ['Valider', 'Annuler'] }, true],
+    ['MAGASINIER', ['read', 'update'], { p1: ['Réceptionner', 'Imprimer'], p2: ['Imprimer'], p3: [] }, false],
+  ])('gives %s exactly its header actions, as on the list rows', async (_role, perms, expected, canDelete) => {
+    for (const [id, names] of Object.entries(expected)) {
+      cleanup();
+      mountDetail(id, { perms: perms as string[] });
+      await screen.findByRole('heading', { name: new RegExp(`^(BC|DA)-`) });
+      // Every button of the page is a header action (the tabs are tabs).
+      expect(screen.queryAllByRole('button').map((b) => b.textContent)).toEqual(names);
+    }
+    cleanup();
+    mountDetail('p2', { perms: perms as string[] });
+    await screen.findByRole('heading', { name: 'BC-0141' });
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Paiements' }));
+    expect(!!screen.queryByRole('button', { name: 'Supprimer' })).toBe(canDelete);
+  });
+
+  it('is read-only under all farms', async () => {
+    mountDetail('p2', { farm: 'all' });
+    await screen.findByRole('heading', { name: 'BC-0141' });
+    expect(screen.queryByRole('button', { name: 'Payer' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Imprimer' })).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Paiements' }));
+    expect(screen.queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
+  });
+
+  it('rounds line amounts to 2 decimals on the Lignes tab and the printed sheet', async () => {
+    DETAILS.p7 = {
+      ...(DETAILS.p1 as object), id: 'p7', reference: 'BC-0160', amount: 868435.05 + 3.3,
+      lines: [
+        line({ itemId: 's2', itemName: 'Aliment ponte', quantity: 2800.5, unitPrice: 310.1 }),
+        line({ itemId: 's1', itemName: 'Aliment croissance chair', quantity: 3, unitPrice: 1.1 }),
+      ],
+    };
+    mountDetail('p7');
+    await screen.findByRole('heading', { name: 'BC-0160' });
+    expect(cells(screen.getAllByText('Aliment croissance chair')[0].closest('tr'))).toContain('3.3 FCFA');
+    expect(cells(screen.getAllByText('Aliment ponte')[0].closest('tr'))).toContain('868 435.05 FCFA');
+    const sheet = screen.getByRole('region', { name: 'Bon de commande' });
+    expect(cells(within(sheet).getByText('Aliment croissance chair').closest('tr'))).toContain('3.3 FCFA');
+    expect(flat(within(sheet).getByText(/^Total/).textContent)).toBe('Total : 868 438.35 FCFA');
   });
 
   it('prints the bon de commande once ordered, with the farm legal block and the ordered lines', async () => {
@@ -422,6 +592,10 @@ describe('purchase detail', () => {
     expect(within(sheet).getByText(/RCCM : TG-LOM-2020-B-1234/)).toBeInTheDocument();
     expect(within(sheet).getByText('Route de Kpalimé, Lomé')).toBeInTheDocument();
     expect(within(sheet).getByText(/BC-0142/)).toBeInTheDocument();
+    // The order date, not the request date; the supplier's contact details.
+    expect(within(sheet).getByText('Date : 2026-10-21')).toBeInTheDocument();
+    expect(within(sheet).getByText('Zone industrielle, Lomé')).toBeInTheDocument();
+    expect(within(sheet).getByText('+228 90 11 22 33')).toBeInTheDocument();
     expect(cells(within(sheet).getByText('Aliment ponte').closest('tr'))).toContain('3 000 kg 310 FCFA 930 000 FCFA');
     expect(flat(within(sheet).getByText(/^Total/).textContent)).toContain('930 000 FCFA');
   });

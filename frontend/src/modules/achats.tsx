@@ -1,6 +1,7 @@
 import { useQueryClient } from '@tanstack/react-query';
 import { ActionDialog } from '../components/module/ActionDialog';
 import { LoadedRecord } from '../components/module/LoadedRecord';
+import { useEndpointOptions } from '../components/module/useEndpointOptions';
 import type { Field, ModuleConfig, RowAction } from '../components/module/types';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
@@ -10,8 +11,8 @@ import { PurchaseDetail } from '../pages/details/PurchaseDetail';
 import { PURCHASE_ACTIONS } from './purchaseActions';
 import { PURCHASE_STATUSES, editableGate, linesTotal, type PurchaseData, type PurchaseRow } from './purchasingShared';
 
-const FIELDS: Field[] = [
-  { name: 'supplierId', label: 'Fournisseur', type: 'select', required: true, options: { endpoint: '/suppliers' } },
+const fields = (suppliers: { value: string; label: string }[]): Field[] => [
+  { name: 'supplierId', label: 'Fournisseur', type: 'select', required: true, options: suppliers },
   { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
   {
     name: 'lines',
@@ -35,6 +36,23 @@ const toForm = (p: PurchaseData) => ({
   lines: p.lines.map((l) => ({ itemId: l.itemId, quantity: l.quantity, unitPrice: l.unitPrice })),
 });
 
+/** The dialog: suppliers offered are the active ones, plus the current supplier of a request being edited, whatever its state. */
+function PurchaseDialog({ title, record, onClose, onDone }: { title: string; record?: PurchaseData; onClose: () => void; onDone: () => void }) {
+  const active = useEndpointOptions({ endpoint: '/suppliers', params: { active: 'true' } });
+  const current = record && !active.some((o) => o.value === record.supplierId) ? [{ value: record.supplierId, label: record.supplierName }] : [];
+  return (
+    <ActionDialog
+      title={title}
+      mode={record ? 'update' : 'create'}
+      fields={fields([...current, ...active])}
+      initial={record ? toForm(record) : undefined}
+      onSubmit={(body) => (record ? api.patch(`/purchases/${record.id}`, body) : api.post('/purchases', body))}
+      onClose={onClose}
+      onDone={onDone}
+    />
+  );
+}
+
 /**
  * Request (add) or correct (edit, `DEMANDE` only) a purchase. A list row carries neither its lines nor its supplier
  * id, so an edit loads the purchase first; only what changed is sent.
@@ -44,12 +62,9 @@ function PurchaseForm({ row, onSaved, onClose }: { row?: PurchaseRow; onSaved: (
   const queryClient = useQueryClient();
   const title = `${row ? 'Modifier' : 'Ajouter'} — Achats`;
   const form = (record?: PurchaseData) => (
-    <ActionDialog
+    <PurchaseDialog
       title={title}
-      mode={record ? 'update' : 'create'}
-      fields={FIELDS}
-      initial={record ? toForm(record) : undefined}
-      onSubmit={(body) => (record ? api.patch(`/purchases/${record.id}`, body) : api.post('/purchases', body))}
+      record={record}
       onClose={onClose}
       onDone={() => {
         // The detail cached for this purchase is stale once its lines or supplier changed.

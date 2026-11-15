@@ -54,3 +54,10 @@
     letter-spacing: -0.02em;
   }
 }
+
+/* Printed pages (the bon de commande): a margin around the sheet. */
+@media print {
+  @page {
+    margin: 15mm;
+  }
+}

@@ -132,6 +132,7 @@ export function PayDialog({ row, onClose, onDone }: PurchaseDialogProps) {
     <ActionDialog
       title={`Payer — ${row.reference}`}
       fields={PAY_FIELDS(row.remaining)}
+      validate={(v) => (Number(v.amount) > row.remaining ? 'Le montant dépasse le reste à payer' : null)}
       onSubmit={(body) => post(row.id, 'payments', body)}
       onClose={onClose}
       onDone={onDone}
@@ -141,13 +142,13 @@ export function PayDialog({ row, onClose, onDone }: PurchaseDialogProps) {
 
 /**
  * Transitions of the workflow `DEMANDE → VALIDEE → COMMANDEE → RECUE → PAYEE` (`ANNULEE` before `RECUE`). The role
- * split (the director validates and orders, the storekeeper receives) comes from the permissions alone: `validate`
- * for the validation, `update` for the others.
+ * split comes from the permissions alone: `validate` for validating, ordering, cancelling and paying (director,
+ * owner), `update` for the reception (storekeeper, stock manager).
  */
 export const PURCHASE_ACTIONS: PurchaseActionDef[] = [
   { key: 'validate', label: 'Valider', icon: Check, permission: 'validate', visible: (p) => p.status === 'DEMANDE', Dialog: ValidateDialog },
-  { key: 'order', label: 'Commander', icon: ClipboardCheck, permission: 'update', visible: (p) => p.status === 'VALIDEE', Dialog: OrderDialog },
+  { key: 'order', label: 'Commander', icon: ClipboardCheck, permission: 'validate', visible: (p) => p.status === 'VALIDEE', Dialog: OrderDialog },
   { key: 'receive', label: 'Réceptionner', icon: PackageCheck, permission: 'update', visible: (p) => p.status === 'COMMANDEE', Dialog: ReceiveDialog },
-  { key: 'pay', label: 'Payer', icon: Banknote, permission: 'update', visible: (p) => p.status === 'RECUE' && p.remaining > 0, Dialog: PayDialog },
-  { key: 'cancel', label: 'Annuler', icon: Ban, permission: 'update', visible: (p) => ['DEMANDE', 'VALIDEE', 'COMMANDEE'].includes(p.status), Dialog: CancelDialog },
+  { key: 'pay', label: 'Payer', icon: Banknote, permission: 'validate', visible: (p) => p.status === 'RECUE' && p.remaining > 0, Dialog: PayDialog },
+  { key: 'cancel', label: 'Annuler', icon: Ban, permission: 'validate', visible: (p) => ['DEMANDE', 'VALIDEE', 'COMMANDEE'].includes(p.status), Dialog: CancelDialog },
 ];

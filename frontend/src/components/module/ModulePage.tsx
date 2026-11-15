@@ -18,6 +18,7 @@ import { ExportMenu } from './ExportMenu';
 import { PageHeader } from './PageHeader';
 import { Pagination, pageCount } from './Pagination';
 import { RecordDialog } from './RecordDialog';
+import { canRunAction } from './rowActions';
 import { StatTiles, type StatTile } from './StatTiles';
 import { TabBar, panelId, tabId } from './TabBar';
 import type { FilterDef, ListResponse, ModuleConfig, RowAction } from './types';
@@ -137,10 +138,7 @@ function ModuleView<T extends { id: string }>({
   };
 
   const tableActions: TableAction<T>[] = (config.actions ?? [])
-    .filter((a) => {
-      const permission = a.permission ?? 'update';
-      return can(config.slug, permission) && (permission === 'read' || writable);
-    })
+    .filter((a) => canRunAction(a.permission, config.slug, can, writable))
     .map((a) => ({
       key: a.key,
       label: a.label,

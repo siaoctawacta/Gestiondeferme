@@ -1,6 +1,6 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plus, Printer, Trash2 } from 'lucide-react';
+import { Printer, Trash2 } from 'lucide-react';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { formatDate, formatDateTime, formatMoney, formatNumber } from '../../lib/format';
@@ -9,13 +9,14 @@ import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ActionButton } from '../../components/module/DataTable';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
+import { canRunAction } from '../../components/module/rowActions';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { Pill } from '../../components/ui/Pill';
 import { Table, TD, TH, THead, TR } from '../../components/ui/Table';
-import { PayDialog, PURCHASE_ACTIONS, type PurchaseActionDef } from '../../modules/purchaseActions';
+import { PURCHASE_ACTIONS, type PurchaseActionDef } from '../../modules/purchaseActions';
 import {
-  ORDERED, methodLabel, statusDef, type PurchaseData, type PurchasePayment,
+  ORDERED, lineAmount, methodLabel, statusDef, type PurchaseData, type PurchasePayment,
 } from '../../modules/purchasingShared';
 import NotFound from '../NotFound';
 import { DetailLayout } from './DetailLayout';
@@ -25,9 +26,10 @@ type Legal = Record<'name' | 'address' | 'nif' | 'rccm', string>;
 
 const EMPTY = <TR><TD colSpan={9} className="py-10 text-center text-muted-foreground">Aucun enregistrement</TD></TR>;
 
-function Heads({ labels }: { labels: string[] }) {
+/** `plain`: no tinted background (the printed sheet rules a border instead). */
+function Heads({ labels, plain = false }: { labels: string[]; plain?: boolean }) {
   return (
-    <THead>
+    <THead className={plain ? 'bg-transparent! border-b-2 border-foreground' : ''}>
       <TR className="border-b!">{labels.map((h) => <TH key={h}>{h}</TH>)}</TR>
     </THead>
   );
@@ -48,7 +50,7 @@ function LinesTab({ data }: { data: PurchaseData }) {
               <TD>{l.receivedQuantity === null ? '—' : `${formatNumber(l.receivedQuantity)} ${l.unit}`}</TD>
               <TD>{l.lotNumber ?? '—'}</TD>
               <TD>{l.expiryDate ? formatDate(l.expiryDate) : '—'}</TD>
-              <TD>{formatMoney((received ? (l.receivedQuantity ?? 0) : l.quantity) * l.unitPrice)}</TD>
+              <TD>{formatMoney(lineAmount(received ? (l.receivedQuantity ?? 0) : l.quantity, l.unitPrice))}</TD>
             </TR>
           ))}
         </tbody>
@@ -57,45 +59,36 @@ function LinesTab({ data }: { data: PurchaseData }) {
   );
 }
 
-function PaymentsTab({ data, canWrite, onPay, onDelete }: {
-  data: PurchaseData; canWrite: boolean; onPay: () => void; onDelete: (p: PurchasePayment) => void;
-}) {
+function PaymentsTab({ data, canDelete, onDelete }: { data: PurchaseData; canDelete: boolean; onDelete: (p: PurchasePayment) => void }) {
   return (
-    <>
-      {canWrite && data.status === 'RECUE' && data.remaining > 0 && (
-        <div className="mb-4 flex justify-end print:hidden">
-          <Button onClick={onPay}><Plus aria-hidden className="size-4" />Ajouter un paiement</Button>
-        </div>
-      )}
-      <Card className="overflow-hidden">
-        <Table>
-          <THead>
-            <TR className="border-b!">
-              {['DATE', 'MONTANT', 'MODE', 'RÉFÉRENCE'].map((h) => <TH key={h}>{h}</TH>)}
-              <TH><span className="sr-only">Actions</span></TH>
+    <Card className="overflow-hidden">
+      <Table>
+        <THead>
+          <TR className="border-b!">
+            {['DATE', 'MONTANT', 'MODE', 'RÉFÉRENCE'].map((h) => <TH key={h}>{h}</TH>)}
+            <TH><span className="sr-only">Actions</span></TH>
+          </TR>
+        </THead>
+        <tbody>
+          {data.payments.length === 0 && <TR><TD colSpan={5} className="py-10 text-center text-muted-foreground">Aucun paiement</TD></TR>}
+          {data.payments.map((p) => (
+            <TR key={p.id}>
+              <TD className="font-semibold">{formatDate(p.date)}</TD>
+              <TD>{formatMoney(p.amount)}</TD>
+              <TD>{methodLabel(p.method)}</TD>
+              <TD>{p.reference ?? ''}</TD>
+              <TD>
+                <div className="flex min-h-8 items-center justify-end">
+                  {canDelete && (
+                    <ActionButton label="Supprimer" onClick={() => onDelete(p)}><Trash2 aria-hidden className="size-4" /></ActionButton>
+                  )}
+                </div>
+              </TD>
             </TR>
-          </THead>
-          <tbody>
-            {data.payments.length === 0 && <TR><TD colSpan={5} className="py-10 text-center text-muted-foreground">Aucun paiement</TD></TR>}
-            {data.payments.map((p) => (
-              <TR key={p.id}>
-                <TD className="font-semibold">{formatDate(p.date)}</TD>
-                <TD>{formatMoney(p.amount)}</TD>
-                <TD>{methodLabel(p.method)}</TD>
-                <TD>{p.reference ?? ''}</TD>
-                <TD>
-                  <div className="flex min-h-8 items-center justify-end">
-                    {canWrite && (
-                      <ActionButton label="Supprimer" onClick={() => onDelete(p)}><Trash2 aria-hidden className="size-4" /></ActionButton>
-                    )}
-                  </div>
-                </TD>
-              </TR>
-            ))}
-          </tbody>
-        </Table>
-      </Card>
-    </>
+          ))}
+        </tbody>
+      </Table>
+    </Card>
   );
 }
 
@@ -120,17 +113,13 @@ function HistoryTab({ data }: { data: PurchaseData }) {
   );
 }
 
-const Row = ({ label, children }: { label: string; children: ReactNode }) => (
-  <div className="flex gap-2"><dt className="text-muted-foreground">{label}</dt><dd className="font-medium">{children}</dd></div>
-);
-
 /**
  * The bon de commande: shown only when printing (`print:block`), the screen layout being hidden then. It states what
  * was ordered, whatever was received since. The legal block comes from the settings and is left out when the user
  * cannot read them.
  */
 function PurchaseOrderSheet({ data, farmName, legal }: { data: PurchaseData; farmName: string | undefined; legal: Legal | undefined }) {
-  const total = data.lines.reduce((sum, l) => sum + l.quantity * l.unitPrice, 0);
+  const total = data.lines.reduce((sum, l) => sum + lineAmount(l.quantity, l.unitPrice), 0);
   return (
     <section aria-label="Bon de commande" className="hidden space-y-6 text-sm print:block">
       <header className="flex items-start justify-between gap-6 border-b border-border pb-4">
@@ -144,21 +133,24 @@ function PurchaseOrderSheet({ data, farmName, legal }: { data: PurchaseData; far
         <div className="text-right">
           <h2 className="text-2xl font-bold">Bon de commande</h2>
           <p>Référence : {data.reference}</p>
-          <p>Date : {formatDate(data.date)}</p>
+          <p>Date : {formatDate(data.orderedAt ?? data.date)}</p>
         </div>
       </header>
-      <dl className="space-y-1">
-        <Row label="Fournisseur :">{data.supplierName}</Row>
-      </dl>
+      <div>
+        <p className="text-xs uppercase tracking-wider text-muted-foreground">Fournisseur</p>
+        <span className="block font-semibold">{data.supplierName}</span>
+        {data.supplierAddress && <p>{data.supplierAddress}</p>}
+        {data.supplierPhone && <p>{data.supplierPhone}</p>}
+      </div>
       <Table>
-        <Heads labels={['ARTICLE', 'QUANTITÉ', 'PRIX UNITAIRE', 'MONTANT']} />
+        <Heads plain labels={['ARTICLE', 'QUANTITÉ', 'PRIX UNITAIRE', 'MONTANT']} />
         <tbody>
           {data.lines.map((l) => (
             <TR key={l.itemId}>
               <TD>{l.itemName}</TD>
               <TD>{formatNumber(l.quantity)} {l.unit}</TD>
               <TD>{formatMoney(l.unitPrice)}</TD>
-              <TD>{formatMoney(l.quantity * l.unitPrice)}</TD>
+              <TD>{formatMoney(lineAmount(l.quantity, l.unitPrice))}</TD>
             </TR>
           ))}
         </tbody>
@@ -172,7 +164,6 @@ function Loaded({ data }: { data: PurchaseData }) {
   const { can, farmId, farms } = useAuth();
   const queryClient = useQueryClient();
   const [acting, setActing] = useState<PurchaseActionDef | null>(null);
-  const [paying, setPaying] = useState(false);
   const [deleting, setDeleting] = useState<PurchasePayment | null>(null);
 
   const writable = farmId !== 'all';
@@ -181,9 +172,9 @@ function Loaded({ data }: { data: PurchaseData }) {
     enabled: printable && can('parametres', 'read'),
   });
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
-  const done = () => { setActing(null); setPaying(false); refresh(); };
+  const done = () => { setActing(null); refresh(); };
   const def = statusDef(data.status);
-  const offered = PURCHASE_ACTIONS.filter((a) => writable && can('achats', a.permission) && a.visible(data));
+  const offered = PURCHASE_ACTIONS.filter((a) => canRunAction(a.permission, 'achats', can, writable) && a.visible(data));
 
   return (
     <>
@@ -219,7 +210,7 @@ function Loaded({ data }: { data: PurchaseData }) {
             {
               key: 'payments',
               label: 'Paiements',
-              content: <PaymentsTab data={data} canWrite={writable && can('achats', 'update')} onPay={() => setPaying(true)} onDelete={setDeleting} />,
+              content: <PaymentsTab data={data} canDelete={canRunAction('validate', 'achats', can, writable)} onDelete={setDeleting} />,
             },
             { key: 'history', label: 'Historique', content: <HistoryTab data={data} /> },
           ]}
@@ -233,7 +224,6 @@ function Loaded({ data }: { data: PurchaseData }) {
         />
       )}
       {acting && <acting.Dialog row={data} onClose={() => setActing(null)} onDone={done} />}
-      {paying && <PayDialog row={data} onClose={() => setPaying(false)} onDone={done} />}
       {deleting && (
         <ConfirmDialog
           title="Supprimer le paiement"
