@@ -6,6 +6,8 @@ import type { StatusDef } from '../components/module/types';
 
 export type PurchaseStatus = 'DEMANDE' | 'VALIDEE' | 'COMMANDEE' | 'RECUE' | 'PAYEE' | 'ANNULEE';
 export type PaymentMethod = 'ESPECES' | 'VIREMENT' | 'MOBILE_MONEY' | 'CHEQUE';
+/** The branch of the farm a purchase belongs to; `GENERAL` (the default) is shared charges. */
+export type Activity = 'AVICOLE' | 'PORCIN' | 'GENERAL';
 
 /** `GET /purchases`. `reference` is the `BC-NNNN` once ordered, else the `DA-NNNN`; `article` is the first line's item (`+n` when more). */
 export interface PurchaseRow {
@@ -20,6 +22,7 @@ export interface PurchaseRow {
   /** Unit of the first line's article; absent when the API does not send it. */
   unit?: string;
   status: PurchaseStatus;
+  activity: Activity;
   /** Σ received × price once received, else Σ ordered × price. */
   amount: number;
   paid: number;
@@ -98,6 +101,13 @@ export const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: 'MOBILE_MONEY', label: 'Mobile money' },
   { value: 'CHEQUE', label: 'Chèque' },
 ];
+export const ACTIVITIES: { value: Activity; label: string }[] = [
+  { value: 'AVICOLE', label: 'Avicole' },
+  { value: 'PORCIN', label: 'Porcin' },
+  { value: 'GENERAL', label: 'Général' },
+];
+export const activityLabel = (a: string) => ACTIVITIES.find((x) => x.value === a)?.label ?? a;
+
 export const methodLabel = (m: string) => PAYMENT_METHODS.find((x) => x.value === m)?.label ?? m;
 
 /** Statuses from which a `Bon de commande` exists. */

@@ -17,7 +17,7 @@ import { Pill } from '../../components/ui/Pill';
 import { Table, TD, TH, THead, TR } from '../../components/ui/Table';
 import { PURCHASE_ACTIONS, type PurchaseActionDef } from '../../modules/purchaseActions';
 import {
-  ORDERED, lineAmount, methodLabel, statusDef, type PurchaseData, type PurchasePayment,
+  ORDERED, activityLabel, lineAmount, methodLabel, statusDef, type PurchaseData, type PurchasePayment,
 } from '../../modules/purchasingShared';
 import NotFound from '../NotFound';
 import { DetailLayout } from './DetailLayout';
@@ -185,7 +185,12 @@ function Loaded({ data }: { data: PurchaseData }) {
           back={{ to: '/m/achats', label: 'Achats' }}
           title={data.reference}
           subtitle={data.supplierName}
-          status={<Pill tone={def?.tone ?? 'neutral'}>{def?.label ?? data.status}</Pill>}
+          status={
+            <>
+              <Pill tone={def?.tone ?? 'neutral'}>{def?.label ?? data.status}</Pill>
+              <Pill tone="neutral">{activityLabel(data.activity)}</Pill>
+            </>
+          }
           actions={
             <>
               {offered.map((a) => (

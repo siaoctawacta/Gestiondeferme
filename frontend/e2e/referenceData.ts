@@ -169,7 +169,7 @@ export async function seedLogisticsReferenceData(admin: EnrolledAdmin, productio
   const [{ id: organizationId }] = await sql<{ id: string }>('SELECT "id" FROM "Organization" LIMIT 1');
   for (const [kind, last] of [['DA', 86], ['BC', 140]] as const) {
     await sql(
-      'INSERT INTO "PurchaseCounter" ("organizationId", "kind", "last") VALUES ($1, $2, $3) ON CONFLICT ("organizationId", "kind") DO UPDATE SET "last" = GREATEST("PurchaseCounter"."last", $3)',
+      'INSERT INTO "DocumentCounter" ("organizationId", "kind", "last") VALUES ($1, $2, $3) ON CONFLICT ("organizationId", "kind") DO UPDATE SET "last" = GREATEST("DocumentCounter"."last", $3)',
       [organizationId, kind, last],
     );
   }

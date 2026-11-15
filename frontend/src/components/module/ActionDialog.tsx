@@ -8,6 +8,7 @@ import { changedFields } from './changedFields';
 import { errorMessage } from './errorMessage';
 import { FieldInput, defaultPayload, firstInvalid, initialValue, validateLines } from './formFields';
 import type { Field, FormMode, LineRow } from './types';
+import { useDependentValues } from './useDependentValues';
 
 type Values = Record<string, unknown>;
 
@@ -65,13 +66,6 @@ export function ActionDialog({
   /** Messages of the `lines` field that failed validation, shown under its grid. */
   const [lineErrors, setLineErrors] = useState<{ name: string; messages: string[] } | null>(null);
 
-  /**
-   * How often each field was changed, and which parent (and which of its changes) a dependent's value was chosen
-   * under. A dependent value is only live under the very parent change it was chosen after: it never survives a
-   * later change of the parent (even while hidden), nor a move of its `dependsOn` to another field.
-   */
-  const [meta, setMeta] = useState<{ rev: Record<string, number>; bound: Record<string, { parent: string; rev: number }> }>({ rev: {}, bound: {} });
-
   // A `fields` function sees the values as the form holds them: when creating, a field's default is already in. The
   // fields it returns for the raw values say which defaults apply (a field only some values show is resolved on the second pass).
   const raw = { ...initial, ...edited };
@@ -89,29 +83,14 @@ export function ActionDialog({
       }
       return f;
     });
-  const values = valuesOf(edited, initial, shown, mode);
-
-  const live = (f: Field, depth = 0): boolean => {
-    if (f.type !== 'select' || !f.dependsOn || depth > shown.length) return true;
-    const rev = meta.rev[f.dependsOn] ?? 0;
-    const own = f.name in edited ? meta.bound[f.name]?.parent === f.dependsOn && meta.bound[f.name].rev === rev : rev === 0;
-    const parent = shown.find((p) => p.name === f.dependsOn);
-    return own && (!parent || live(parent, depth + 1));
-  };
-  for (const f of shown) if (!live(f)) values[f.name] = '';
+  // Dependent selects: stale values are cleared (see `useDependentValues`), shown or not.
+  const dependent = useDependentValues(shown, valuesOf(edited, initial, shown, mode));
+  const values = dependent.values;
 
   /** Sets a field; selects depending on it (and theirs in turn) lose their value, shown or not. */
   const setField = (name: string, v: unknown) => {
     setLineErrors((e) => (e?.name === name ? null : e));
-    // Against what the user sees: a value cleared by its parent counts as empty, so picking it again is a change.
-    const was = name in values ? values[name] : name in edited ? edited[name] : initial[name];
-    const changed = JSON.stringify(was ?? '') !== JSON.stringify(v ?? '');
-    const dependsOn = all.find((f) => f.name === name && f.type === 'select');
-    setMeta((m) => {
-      const rev = changed ? { ...m.rev, [name]: (m.rev[name] ?? 0) + 1 } : m.rev;
-      const parent = dependsOn?.type === 'select' ? dependsOn.dependsOn : undefined;
-      return { rev, bound: parent ? { ...m.bound, [name]: { parent, rev: rev[parent] ?? 0 } } : m.bound };
-    });
+    dependent.change(name, v);
     setEdited((s) => ({ ...s, [name]: v }));
   };
 
@@ -151,8 +130,7 @@ export function ActionDialog({
       <form onSubmit={submit} noValidate className="space-y-4">
         {intro && <div className="text-sm text-muted-foreground">{intro}</div>}
         {shown.map((f) => {
-          const parent = f.type === 'select' && f.dependsOn ? shown.find((p) => p.name === f.dependsOn) : undefined;
-          const parentValue = parent ? String(values[parent.name] ?? '') : undefined;
+          const { parentValue, waitingFor } = dependent.parentOf(f);
           return (
             <FieldInput
               key={f.name}
@@ -160,7 +138,7 @@ export function ActionDialog({
               value={values[f.name]}
               onChange={(v) => setField(f.name, v)}
               parentValue={parentValue}
-              waitingFor={parent && !parentValue ? parent.label : undefined}
+              waitingFor={waitingFor}
               errors={lineErrors?.name === f.name ? lineErrors.messages : undefined}
             />
           );

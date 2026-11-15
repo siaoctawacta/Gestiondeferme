@@ -29,7 +29,7 @@ const SUPPLIERS = [
 ];
 
 // The detail carries these beside the list row (`requestNumber` stays after the order, `orderNumber` is the BC).
-const base = { supplierId: 'sup1', orderNumber: null, note: null, requestNumber: 'DA-0001', receivedDate: null, cancelReason: null };
+const base = { supplierId: 'sup1', activity: 'GENERAL', orderNumber: null, note: null, requestNumber: 'DA-0001', receivedDate: null, cancelReason: null };
 const LIST = [
   { id: 'p1', date: '2026-10-20', reference: 'BC-0142', supplierName: 'Agro Provende SA', article: 'Aliment ponte', quantity: 3000, unit: 'kg', status: 'COMMANDEE', amount: 930000, paid: 0, remaining: 930000 },
   { id: 'p2', date: '2026-10-15', reference: 'BC-0141', supplierName: 'VetoPlus', article: 'Vaccin Gumboro', quantity: 10, unit: 'flacons', status: 'RECUE', amount: 120000, paid: 0, remaining: 120000 },
@@ -77,6 +77,7 @@ DETAILS.p6 = {
   ],
 };
 // A purchase worth 0 is paid as soon as it is received; a cancelled one owes nothing and keeps its reason.
+DETAILS.p12 = { ...(DETAILS.p1 as object), id: 'p12', reference: 'BC-0180', activity: 'PORCIN' };
 DETAILS.p7 = {
   ...(DETAILS.p2 as object), id: 'p7', reference: 'BC-0160', status: 'PAYEE', amount: 0, paid: 0, remaining: 0, payments: [],
   lines: [line({ itemId: 's4', itemName: 'Vaccin Gumboro', unit: 'flacons', quantity: 10, unitPrice: 0, receivedQuantity: 10 })],
@@ -484,6 +485,41 @@ describe('achats list', () => {
     });
   });
 
+  it('asks for the activity, Général by default, and sends the one chosen', async () => {
+    mountList(achats);
+    await screen.findByText('BC-0142');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Achats' });
+    const activity = within(dialog).getByLabelText('Activité');
+    expect(activity).toHaveValue('GENERAL');
+    expect(within(activity).getAllByRole('option').map((o) => o.textContent).slice(1)).toEqual(['Avicole', 'Porcin', 'Général']);
+    await within(dialog).findByRole('option', { name: 'Agro Provende SA' });
+    await user.selectOptions(within(dialog).getByLabelText('Fournisseur'), 'Agro Provende SA');
+    await user.selectOptions(activity, 'Avicole');
+    await within(dialog).findByRole('option', { name: 'Aliment ponte' });
+    await user.selectOptions(within(dialog).getByLabelText('Article ligne 1'), 'Aliment ponte');
+    await user.type(within(dialog).getByLabelText('Quantité ligne 1'), '10');
+    await user.type(within(dialog).getByLabelText('Prix unitaire ligne 1'), '300');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toMatchObject({ activity: 'AVICOLE' });
+  });
+
+  it('edits the activity of a request, sending only that', async () => {
+    mountList(achats);
+    await screen.findByText('DA-0089');
+    const user = userEvent.setup();
+    await user.click(rowOf('DA-0089').getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Achats' });
+    await within(dialog).findByLabelText('Quantité ligne 1');
+    expect(within(dialog).getByLabelText('Activité')).toHaveValue('GENERAL');
+    await user.selectOptions(within(dialog).getByLabelText('Activité'), 'Porcin');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toEqual(expect.objectContaining({ method: 'PATCH', url: '/api/purchases/p3', body: { activity: 'PORCIN' } }));
+  });
+
   it('totals the lines from rounded line amounts', async () => {
     mountList(achats);
     await screen.findByText('BC-0142');
@@ -545,6 +581,13 @@ describe('purchase detail', () => {
     expect(cells(screen.getAllByText('Aliment ponte')[0].closest('tr'))).toContain('3 000 kg 310 FCFA');
     expect(screen.getByRole('button', { name: 'Réceptionner' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Valider' })).not.toBeInTheDocument();
+  });
+
+  it('shows the activity beside the status in the header', async () => {
+    mountDetail('p12');
+    expect(await screen.findByRole('heading', { name: 'BC-0180' })).toBeInTheDocument();
+    expect(screen.getByText('Porcin')).toBeInTheDocument();
+    expect(screen.getByText('Commandée')).toBeInTheDocument();
   });
 
   it('offers no payment on a purchase worth 0, paid at reception', async () => {

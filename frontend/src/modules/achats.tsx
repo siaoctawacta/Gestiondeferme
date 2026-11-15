@@ -10,11 +10,12 @@ import { farmKey } from '../lib/query';
 import { PurchaseDetail } from '../pages/details/PurchaseDetail';
 import { PURCHASE_ACTIONS } from './purchaseActions';
 import { stockItemOptions } from './stocksShared';
-import { PURCHASE_STATUSES, editableGate, linesTotal, type PurchaseData, type PurchaseRow } from './purchasingShared';
+import { ACTIVITIES, PURCHASE_STATUSES, editableGate, linesTotal, type PurchaseData, type PurchaseRow } from './purchasingShared';
 
 const fields = (suppliers: { value: string; label: string }[]): Field[] => [
   { name: 'supplierId', label: 'Fournisseur', type: 'select', required: true, options: suppliers },
   { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
+  { name: 'activity', label: 'Activité', type: 'select', required: true, defaultValue: 'GENERAL', options: ACTIVITIES },
   {
     name: 'lines',
     label: 'Lignes',
@@ -34,6 +35,7 @@ const fields = (suppliers: { value: string; label: string }[]): Field[] => [
 const toForm = (p: PurchaseData) => ({
   supplierId: p.supplierId,
   date: p.date,
+  activity: p.activity,
   lines: p.lines.map((l) => ({ itemId: l.itemId, quantity: l.quantity, unitPrice: l.unitPrice })),
 });
 
