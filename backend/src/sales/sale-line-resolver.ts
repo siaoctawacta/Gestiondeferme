@@ -5,12 +5,18 @@ import { SettingsService } from '../admin/settings/settings.service';
 import { MAX_PAYMENT } from '../common/limits';
 import { lineAmount } from '../common/money';
 import type { Prisma } from '../generated/prisma/client';
-import type { SaleLineKind } from '../generated/prisma/enums';
+import type {
+  Activity,
+  FinanceCategory,
+  SaleLineKind,
+} from '../generated/prisma/enums';
 import type { SaleLineDto } from './dto/sale-line.dto';
 import { documentTotal } from './sale-money';
 import {
   canLay,
   defaultDesignation,
+  lineActivity,
+  lineCategory,
   lineShapeError,
   type LineSource,
 } from './sale-lines';
@@ -40,10 +46,29 @@ export interface ResolvedLine {
   unitPrice: Decimal;
   amount: Decimal;
   weightKg: Decimal | null;
+  /** What the line is counted as in finance (an invoice line stores them; a quote line does not). */
+  activity: Activity;
+  category: FinanceCategory;
 }
 
+/** The columns of a `QuoteLine`: a quote does not store what a line counts as in finance. */
+export function quoteLineData(line: ResolvedLine) {
+  const data: Partial<ResolvedLine> = { ...line };
+  delete data.activity;
+  delete data.category;
+  return data as Omit<ResolvedLine, 'activity' | 'category'>;
+}
+
+/** The columns of an `InvoiceLine` (`exitUnitCost` is written at issue). */
+export const invoiceLineData = ({ category, ...line }: ResolvedLine) => ({
+  ...line,
+  revenueCategory: category,
+});
+
 /** What stored lines are compared on to tell a real change from a no-op. */
-type StoredLine = Omit<ResolvedLine, 'position'> & { position?: number };
+type StoredLine = Omit<ResolvedLine, 'position' | 'activity' | 'category'> & {
+  position?: number;
+};
 
 export const sameLines = (
   stored: StoredLine[],
@@ -79,6 +104,41 @@ export const sameLines = (
 @Injectable()
 export class SaleLineResolver {
   constructor(private readonly settings: SettingsService) {}
+
+  /**
+   * Re-checks the sources named by stored lines against the ACTIVE FARM (lots,
+   * animals: 400, never a 404) and the organisation (articles), before any
+   * lock is taken. The lines themselves are left as they were snapshotted.
+   */
+  async assertSources(
+    tx: Tx,
+    ctx: RequestContext,
+    farmId: string,
+    lines: {
+      batchId: string | null;
+      animalId: string | null;
+      stockItemId: string | null;
+    }[],
+  ): Promise<void> {
+    const ids = (pick: (l: (typeof lines)[number]) => string | null) => [
+      ...new Set(lines.map(pick).filter((id): id is string => !!id)),
+    ];
+    const batchIds = ids((l) => l.batchId);
+    const animalIds = ids((l) => l.animalId);
+    const itemIds = ids((l) => l.stockItemId);
+    const [batches, animals, items] = await Promise.all([
+      tx.animalBatch.count({ where: { id: { in: batchIds }, farmId } }),
+      tx.animal.count({ where: { id: { in: animalIds }, farmId } }),
+      tx.stockItem.count({
+        where: { id: { in: itemIds }, organizationId: ctx.user.organizationId },
+      }),
+    ]);
+    if (batches !== batchIds.length) throw new BadRequestException(LOT_INVALID);
+    if (animals !== animalIds.length) {
+      throw new BadRequestException(ANIMAL_INVALID);
+    }
+    if (items !== itemIds.length) throw new BadRequestException(ITEM_INVALID);
+  }
 
   async resolve(
     tx: Tx,
@@ -171,6 +231,8 @@ export class SaleLineResolver {
         unitPrice: new Decimal(l.unitPrice),
         amount: lineAmount(l.quantity, l.unitPrice),
         weightKg: l.weightKg == null ? null : new Decimal(l.weightKg),
+        activity: lineActivity(l.kind, batch?.species),
+        category: lineCategory(l.kind),
       };
     });
     const total = documentTotal(resolved);

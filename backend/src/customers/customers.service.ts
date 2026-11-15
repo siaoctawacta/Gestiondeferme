@@ -246,7 +246,10 @@ export class CustomersService {
           where: { id, organizationId: ctx.user.organizationId },
         });
         if (!before) throw new NotFoundException(CUSTOMER_NOT_FOUND);
-        if ((await tx.quote.count({ where: { customerId: id } })) > 0) {
+        const documents =
+          (await tx.quote.count({ where: { customerId: id } })) +
+          (await tx.invoice.count({ where: { customerId: id } }));
+        if (documents > 0) {
           throw new ConflictException(HAS_DOCUMENTS);
         }
         await tx.customer.delete({ where: { id } });

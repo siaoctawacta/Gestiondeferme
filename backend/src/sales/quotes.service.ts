@@ -3,7 +3,6 @@ import {
   ConflictException,
   Injectable,
   NotFoundException,
-  NotImplementedException,
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
@@ -15,12 +14,18 @@ import type { AuditAction } from '../generated/prisma/enums';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { InvoicesService } from './invoices.service';
 import type {
   CreateQuoteDto,
   QuoteQueryDto,
   UpdateQuoteDto,
 } from './dto/quote.dto';
-import { SaleLineResolver, sameLines } from './sale-line-resolver';
+import { assertSaleCustomer } from './sale-customer';
+import {
+  quoteLineData,
+  SaleLineResolver,
+  sameLines,
+} from './sale-line-resolver';
 import {
   quoteDetail,
   quoteInclude,
@@ -42,10 +47,7 @@ import {
 type Tx = Prisma.TransactionClient;
 
 const NOT_FOUND = 'Devis introuvable';
-const CUSTOMER_INVALID = 'Client invalide';
-const CUSTOMER_INACTIVE = 'Ce client est inactif';
 const BEFORE_DATE = 'La validité ne peut pas précéder la date du devis';
-const NOT_YET = "La facturation d'un devis arrive avec les factures";
 const SORTABLE = ['date', 'total', 'reference'];
 
 /**
@@ -64,6 +66,7 @@ export class QuotesService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly resolver: SaleLineResolver,
+    private readonly invoices: InvoicesService,
   ) {}
 
   // ------------------------------------------------------------------ reads
@@ -226,18 +229,6 @@ export class QuotesService {
     return after;
   }
 
-  private async assertCustomer(
-    tx: Tx,
-    ctx: RequestContext,
-    customerId: string,
-  ): Promise<void> {
-    const customer = await tx.customer.findFirst({
-      where: { id: customerId, organizationId: ctx.user.organizationId },
-    });
-    if (!customer) throw new BadRequestException(CUSTOMER_INVALID);
-    if (!customer.active) throw new BadRequestException(CUSTOMER_INACTIVE);
-  }
-
   // ------------------------------------------------------------- quote CRUD
 
   create(ctx: RequestContext, dto: CreateQuoteDto): Promise<QuoteDetail> {
@@ -252,7 +243,7 @@ export class QuotesService {
     const organizationId = ctx.user.organizationId;
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
-        await this.assertCustomer(tx, ctx, dto.customerId);
+        await assertSaleCustomer(tx, ctx, dto.customerId);
         const { lines, total } = await this.resolver.resolve(
           tx,
           ctx,
@@ -271,7 +262,7 @@ export class QuotesService {
             total,
             note: dto.note || null,
             createdById: ctx.user.id,
-            lines: { create: lines },
+            lines: { create: lines.map(quoteLineData) },
           },
           select: { id: true },
         });
@@ -320,7 +311,7 @@ export class QuotesService {
         const customerChanged =
           dto.customerId !== undefined && dto.customerId !== before.customerId;
         if (customerChanged) {
-          await this.assertCustomer(tx, ctx, dto.customerId as string);
+          await assertSaleCustomer(tx, ctx, dto.customerId as string);
         }
         const resolved = dto.lines
           ? await this.resolver.resolve(tx, ctx, before.farmId, dto.lines)
@@ -359,7 +350,10 @@ export class QuotesService {
         if (linesChanged && resolved) {
           await tx.quoteLine.deleteMany({ where: { quoteId: id } });
           await tx.quoteLine.createMany({
-            data: resolved.lines.map((l) => ({ ...l, quoteId: id })),
+            data: resolved.lines.map((l) => ({
+              ...quoteLineData(l),
+              quoteId: id,
+            })),
           });
         }
         return this.saved(tx, ctx, before);
@@ -414,12 +408,26 @@ export class QuotesService {
     });
   }
 
-  /** Checked under the lock like every step; the invoice draft it creates arrives with the invoices. */
+  /**
+   * Turns a sent or accepted quote into an invoice draft: the lines are copied
+   * with their sources and prices, the quote becomes `FACTURE` and the two
+   * point at each other. Checked under the quote's lock like every step.
+   */
   convert(ctx: RequestContext, id: string): Promise<QuoteDetail> {
-    return this.prisma.$transaction(async (tx) => {
-      const before = await this.lock(tx, ctx, id);
-      this.allow(before, 'convert');
-      throw new NotImplementedException(NOT_YET);
-    });
+    return orConflict(() =>
+      this.prisma.$transaction(async (tx) => {
+        const before = await this.lock(tx, ctx, id);
+        this.allow(before, 'convert');
+        const invoiceId = await this.invoices.createFromQuote(tx, ctx, before);
+        await tx.quote.update({
+          where: { id },
+          data: {
+            status: quoteStatusAfter('convert') ?? before.status,
+            invoiceId,
+          },
+        });
+        return this.saved(tx, ctx, before);
+      }),
+    );
   }
 }

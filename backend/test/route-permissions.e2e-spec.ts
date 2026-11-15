@@ -294,6 +294,7 @@ describe('Route permissions walk (e2e)', () => {
       CustomersController: ['clients'],
       QuotesController: ['ventes'],
       SellablesController: ['ventes'],
+      InvoicesController: ['ventes'],
     };
 
     it('states the module of its family on every route, and the guard refuses a role without it', async () => {

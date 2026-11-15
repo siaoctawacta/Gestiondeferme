@@ -7,6 +7,8 @@ import {
   INVOICE_ACTIONS,
   INVOICE_STATUS_LIST,
   invoiceStatusOf,
+  isOverdue,
+  quoteStatusBeforeConversion,
   QUOTE_ACTIONS,
   QUOTE_STATUS_LIST,
   quoteRefusal,
@@ -287,5 +289,42 @@ describe('invoiceStatusOf', () => {
     expect(of(0, 0)).toBe('SOLDEE');
     // Refunds without a remaining payment: not partially paid.
     expect(of(1000000, 100000, 100000)).toBe('EMISE');
+  });
+});
+
+describe('isOverdue', () => {
+  const base = { status: 'EMISE' as InvoiceStatusValue, due: D(400000) };
+  it('is late the day after the due date, not on it', () => {
+    expect(isOverdue({ ...base, dueDate: '2026-11-14' }, '2026-11-15')).toBe(
+      true,
+    );
+    expect(isOverdue({ ...base, dueDate: '2026-11-15' }, '2026-11-15')).toBe(
+      false,
+    );
+    expect(isOverdue({ ...base, dueDate: '2026-11-16' }, '2026-11-15')).toBe(
+      false,
+    );
+  });
+
+  it('only concerns issued or partly paid invoices that are still owed, with a due date', () => {
+    const late = { dueDate: '2026-11-01' };
+    const today = '2026-11-15';
+    expect(isOverdue({ ...base, ...late, status: 'PARTIELLE' }, today)).toBe(
+      true,
+    );
+    for (const status of ['BROUILLON', 'SOLDEE', 'ANNULEE'] as const) {
+      expect(isOverdue({ ...base, ...late, status }, today)).toBe(false);
+    }
+    expect(isOverdue({ ...base, ...late, due: D(0) }, today)).toBe(false);
+    expect(isOverdue({ ...base, dueDate: null }, today)).toBe(false);
+  });
+});
+
+describe('quoteStatusBeforeConversion', () => {
+  it('goes back to accepted when the quote had been accepted, else to sent', () => {
+    expect(quoteStatusBeforeConversion({ acceptedAt: new Date() })).toBe(
+      'ACCEPTE',
+    );
+    expect(quoteStatusBeforeConversion({ acceptedAt: null })).toBe('ENVOYE');
   });
 });

@@ -734,10 +734,22 @@ describe('Quotes (e2e)', () => {
       );
     });
 
-    // Task 4 (invoices): converting a sent or accepted quote creates the invoice
-    // draft with the quote's lines and sources, the quote becomes FACTURE with
-    // its invoiceId and invoiceNumber (null until the draft is issued).
-    it.todo('converts a sent quote into an invoice draft (lands with Task 4)');
+    it('converts a sent quote into an invoice draft, FACTURE, linked both ways', async () => {
+      const q = await quote();
+      await act(q.id, 'send');
+      const done = (await act(q.id, 'convert')).body as Detail;
+      expect(done.status).toBe('FACTURE');
+      expect(done.invoiceId).toEqual(expect.any(String));
+      expect(done.invoiceNumber).toBeNull();
+      const invoice = (
+        await http().get(`/api/sales/${done.invoiceId}`).set(seller).expect(200)
+      ).body as { status: string; quoteId: string; total: number };
+      expect(invoice).toMatchObject({
+        status: 'BROUILLON',
+        quoteId: q.id,
+        total: q.total,
+      });
+    });
   });
 
   describe('lists', () => {

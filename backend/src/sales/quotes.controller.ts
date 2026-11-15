@@ -84,7 +84,7 @@ export class QuotesController {
     return this.quotes.step(ctx, id, 'refuse');
   }
 
-  /** Turns the quote into an invoice draft (the invoices module lands the body). */
+  /** Turns the quote into an invoice draft (lines and prices kept; issued later from the invoice). */
   @Post(':id/convert')
   @RequireDaily('ventes')
   convert(@Ctx() ctx: RequestContext, @Param('id') id: string) {

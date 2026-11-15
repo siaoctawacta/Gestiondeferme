@@ -95,6 +95,15 @@ export function displayQuoteStatus(
     : status;
 }
 
+/**
+ * Where a quote goes back to when the invoice draft made from it is deleted:
+ * `ACCEPTE` when it had been accepted, else `ENVOYE` (a quote is converted
+ * from one of the two).
+ */
+export const quoteStatusBeforeConversion = (quote: {
+  acceptedAt: Date | null;
+}): QuoteStatusValue => (quote.acceptedAt ? 'ACCEPTE' : 'ENVOYE');
+
 /** The database side of the expiry rule above: a sent quote whose `validUntil` is before `day`. */
 export const expiredQuoteWhere = (day: Date): Prisma.QuoteWhereInput => ({
   status: 'ENVOYE',
@@ -224,4 +233,20 @@ export function invoiceStatusOf(i: {
   if (i.net.sub(i.paid).add(i.refunded).lte(0)) return 'SOLDEE';
   if (i.paid.sub(i.refunded).gt(0)) return 'PARTIELLE';
   return 'EMISE';
+}
+
+/**
+ * An issued invoice that is still owed and whose due date is before `today`
+ * (the day itself is not late). Days are `YYYY-MM-DD` strings.
+ */
+export function isOverdue(
+  invoice: { status: InvoiceStatusValue; due: Decimal; dueDate: string | null },
+  today: string,
+): boolean {
+  return (
+    (invoice.status === 'EMISE' || invoice.status === 'PARTIELLE') &&
+    invoice.due.gt(0) &&
+    invoice.dueDate !== null &&
+    invoice.dueDate < today
+  );
 }

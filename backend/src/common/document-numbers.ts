@@ -1,10 +1,10 @@
 import type { Prisma } from '../generated/prisma/client';
 
 /**
- * DA/BC purchases, DV quotes. FA invoices, AV credit notes and RC receipts are
- * added with their tables (the invoices extend this list and `HOLDERS`).
+ * DA/BC purchases, DV quotes, FA invoices. AV credit notes and RC receipts are
+ * added with their tables (they extend this list and `HOLDERS`).
  */
-export type DocumentKind = 'DA' | 'BC' | 'DV';
+export type DocumentKind = 'DA' | 'BC' | 'DV' | 'FA';
 
 type Tx = Prisma.TransactionClient;
 
@@ -16,6 +16,7 @@ const HOLDERS: Record<DocumentKind, { table: string; column: string }> = {
   DA: { table: 'Purchase', column: 'reference' },
   BC: { table: 'Purchase', column: 'orderNumber' },
   DV: { table: 'Quote', column: 'reference' },
+  FA: { table: 'Invoice', column: 'number' },
 };
 
 /** The highest number the organisation already holds for `kind` (0 when none), to start a counter after it. */
