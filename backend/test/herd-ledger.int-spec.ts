@@ -6,6 +6,7 @@ import {
   assertLedgerValid,
   HerdLedgerService,
 } from '../src/herd/herd-ledger.service';
+import { LitterWeaningRegistry } from '../src/herd/litter-weaning';
 import { OccupationRegistry } from '../src/herd/occupation';
 
 const day = (s: string) => new Date(`${s}T00:00:00.000Z`);
@@ -63,6 +64,7 @@ describe('HerdLedgerService (test database)', () => {
       prisma,
       new OccupationRegistry(),
       new AuditService(prisma),
+      new LitterWeaningRegistry(),
     );
   });
 

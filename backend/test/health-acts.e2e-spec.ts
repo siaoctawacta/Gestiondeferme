@@ -2032,6 +2032,55 @@ describe('Health acts, vaccination plans and biosecurity (e2e)', () => {
     });
   });
 
+  describe('deleting an article whose lots are empty', () => {
+    it('drops its movement-less lots; a lot an act names still blocks the deletion (409)', async () => {
+      const free = await item('Sans acte');
+      const freeMv = (await entry(free.id, 5, {
+        lotNumber: 'F1',
+      })) as unknown as { id: string }[];
+      await http().delete(`/api/stock/movements/${freeMv[0].id}`).set(h);
+      expect(
+        await prisma.stockBatch.count({ where: { stockItemId: free.id } }),
+      ).toBe(1);
+      await http().delete(`/api/stock-items/${free.id}`).set(h).expect(200);
+      expect(
+        await prisma.stockBatch.count({ where: { stockItemId: free.id } }),
+      ).toBe(0);
+
+      const named = await item('Avec acte');
+      const mv = (await entry(named.id, 5, {
+        lotNumber: 'N1',
+      })) as unknown as { id: string }[];
+      const batch = (await detail(named.id)).batches[0].id;
+      // Only a done act holds a lot, and it also holds a movement: write the
+      // row directly to name a lot with no movement (what a cleanup leaves).
+      const lot = await prisma.animalBatch.findUniqueOrThrow({
+        where: { id: lotId },
+      });
+      await prisma.healthAct.create({
+        data: {
+          farmId: lot.farmId,
+          date: new Date(daysAgo(1)),
+          type: 'VACCINATION',
+          batchId: lotId,
+          stockItemId: named.id,
+          stockBatchId: batch,
+          status: 'REALISE',
+          doneDate: new Date(daysAgo(1)),
+          createdById: (await prisma.user.findFirstOrThrow()).id,
+        },
+      });
+      await http()
+        .delete(`/api/stock/movements/${mv[0].id}`)
+        .set(h)
+        .expect(200);
+      await http().delete(`/api/stock-items/${named.id}`).set(h).expect(409);
+      expect(
+        await prisma.stockBatch.count({ where: { stockItemId: named.id } }),
+      ).toBe(1);
+    });
+  });
+
   describe('final fix wave: plans, cancelled acts, incidents, audit', () => {
     const planBody = {
       name: 'Plan C',

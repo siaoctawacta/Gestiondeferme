@@ -13,6 +13,10 @@ import { addDays, assertNotFuture, requireDay } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import { EXITED } from '../common/messages';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
+import {
+  LitterWeaningRegistry,
+  LitterWeaningSource,
+} from '../herd/litter-weaning';
 import type { ExportColumn } from '../listing/export';
 import {
   breedingInclude,
@@ -76,13 +80,27 @@ const average = (values: number[]): number | null =>
   );
 
 @Injectable()
-export class BreedingService {
+export class BreedingService implements LitterWeaningSource {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledger: HerdLedgerService,
     private readonly batches: BatchesService,
     private readonly audit: AuditService,
-  ) {}
+    weanings: LitterWeaningRegistry,
+  ) {
+    weanings.register(this);
+  }
+
+  /** The weaning of a litter, for the herd ledger: which animals it may no longer lose. */
+  async weaningOf(tx: Prisma.TransactionClient, batchId: string) {
+    const row = await tx.breedingRecord.findFirst({
+      where: { litterBatchId: batchId, status: 'SEVRAGE' },
+      select: { weaningDate: true, weanedCount: true },
+    });
+    return row?.weaningDate && row.weanedCount !== null
+      ? { date: row.weaningDate, count: row.weanedCount }
+      : null;
+  }
 
   listArgs(ctx: RequestContext, q: BreedingListQueryDto) {
     if (q.status && !STATUSES.includes(q.status as BreedingStatus)) {

@@ -17,7 +17,8 @@ import { PrismaService } from '../prisma/prisma.service';
 import { toEventItem } from './batch-event-item';
 import { auditHerd } from './herd-audit';
 import { assertBuildingFits } from './species';
-import { assertNotFuture, BEFORE_ENTRY } from '../common/days';
+import { assertNotFuture, BEFORE_ENTRY, formatDay } from '../common/days';
+import { LitterWeaningRegistry } from './litter-weaning';
 import { OccupationRegistry, OccupationSource } from './occupation';
 
 type Tx = Prisma.TransactionClient;
@@ -123,6 +124,7 @@ export class HerdLedgerService implements OccupationSource {
     private readonly prisma: PrismaService,
     registry: OccupationRegistry,
     private readonly audit: AuditService,
+    private readonly weanings: LitterWeaningRegistry,
   ) {
     registry.register(this);
     this.registry = registry;
@@ -222,7 +224,36 @@ export class HerdLedgerService implements OccupationSource {
     initialCount: number,
     entryDate: Date,
   ): Promise<void> {
-    assertLedgerValid(initialCount, entryDate, await this.entries(tx, batchId));
+    const events = await this.entries(tx, batchId);
+    assertLedgerValid(initialCount, entryDate, events);
+    await this.assertWeaned(tx, batchId, initialCount, entryDate, events);
+  }
+
+  /**
+   * A weaned litter keeps the animals that were weaned: whatever the change
+   * (a death, an edit, a removal, a lower opening count), the history it would
+   * leave must still hold at least `weanedCount` live animals on the weaning
+   * date. Called under the batch lock with the history AFTER the change.
+   */
+  private async assertWeaned(
+    tx: Tx,
+    batchId: string,
+    initialCount: number,
+    entryDate: Date,
+    events: LedgerEntry[],
+  ): Promise<void> {
+    const weaning = await this.weanings.weaningOf(tx, batchId);
+    if (!weaning) return;
+    const at = weaning.date.getTime();
+    let alive = entryDate.getTime() <= at ? initialCount : 0;
+    for (const e of events) {
+      if (e.date.getTime() <= at) alive += EVENT_SIGN[e.type] * e.quantity;
+    }
+    if (alive < weaning.count) {
+      throw new BadRequestException(
+        `Cette portée a été sevrée : ${weaning.count} porcelets sevrés le ${formatDay(weaning.date)}`,
+      );
+    }
   }
 
   async record(tx: Tx, input: RecordInput): Promise<BatchEvent> {
@@ -230,7 +261,7 @@ export class HerdLedgerService implements OccupationSource {
     this.assertOpen(batch);
     assertNotFuture(input.date);
     const createdAt = new Date();
-    assertLedgerValid(batch.initialCount, batch.entryDate, [
+    const history = [
       ...(await this.entries(tx, batch.id)),
       {
         date: input.date,
@@ -238,7 +269,15 @@ export class HerdLedgerService implements OccupationSource {
         type: input.type,
         quantity: input.quantity,
       },
-    ]);
+    ];
+    assertLedgerValid(batch.initialCount, batch.entryDate, history);
+    await this.assertWeaned(
+      tx,
+      batch.id,
+      batch.initialCount,
+      batch.entryDate,
+      history,
+    );
     const event = await tx.batchEvent.create({
       data: {
         farmId: batch.farmId,
@@ -291,10 +330,18 @@ export class HerdLedgerService implements OccupationSource {
       quantity: patch.quantity ?? before.quantity,
     };
     assertNotFuture(next.date);
-    assertLedgerValid(batch.initialCount, batch.entryDate, [
+    const history = [
       ...(await this.entries(tx, batch.id, eventId)),
       { id: eventId, createdAt: before.createdAt, ...next },
-    ]);
+    ];
+    assertLedgerValid(batch.initialCount, batch.entryDate, history);
+    await this.assertWeaned(
+      tx,
+      batch.id,
+      batch.initialCount,
+      batch.entryDate,
+      history,
+    );
     const after = await tx.batchEvent.update({
       where: { id: eventId },
       data: {
@@ -322,10 +369,14 @@ export class HerdLedgerService implements OccupationSource {
     const event = await tx.batchEvent.findUnique({ where: { id: eventId } });
     if (!event) throw new NotFoundException('Événement introuvable');
     this.assertOpen(batch);
-    assertLedgerValid(
+    const left = await this.entries(tx, batch.id, eventId);
+    assertLedgerValid(batch.initialCount, batch.entryDate, left);
+    await this.assertWeaned(
+      tx,
+      batch.id,
       batch.initialCount,
       batch.entryDate,
-      await this.entries(tx, batch.id, eventId),
+      left,
     );
     await tx.batchEvent.delete({ where: { id: eventId } });
     // Removing a death or a sale puts animals back in the building.
@@ -375,6 +426,13 @@ export class HerdLedgerService implements OccupationSource {
         },
       });
       assertLedgerValid(batch.initialCount, batch.entryDate, left);
+      await this.assertWeaned(
+        tx,
+        batch.id,
+        batch.initialCount,
+        batch.entryDate,
+        left,
+      );
     }
     await tx.batchEvent.deleteMany({ where: { id: { in: removedIds } } });
     for (const batch of batches) {

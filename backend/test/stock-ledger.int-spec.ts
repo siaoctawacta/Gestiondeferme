@@ -1617,6 +1617,43 @@ describe('StockLedgerService (test database)', () => {
       expect((await level()).quantity).toBe(80);
     });
 
+    it('allows a cost-only correction of an entry before the count (a count fixes quantities, not values); quantity, date or both stay refused', async () => {
+      await counted();
+      const entryId = (
+        await prisma.stockMovement.findFirstOrThrow({
+          where: { type: 'ENTREE' },
+        })
+      ).id;
+      await prisma.$transaction((tx) =>
+        ledger.update(tx, entryId, { unitCost: 12 }),
+      );
+      const stored = await prisma.stockMovement.findUniqueOrThrow({
+        where: { id: entryId },
+      });
+      expect(Number(stored.unitCost)).toBe(12);
+      expect(Number(stored.quantity)).toBe(100);
+      expect((await level()).quantity).toBe(80);
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.update(tx, entryId, { unitCost: 11, quantity: 120 }),
+        ),
+      ).rejects.toThrow(LOCKED);
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.update(tx, entryId, { unitCost: 11, date: day('2026-01-02') }),
+        ),
+      ).rejects.toThrow(LOCKED);
+      expect(
+        Number(
+          (
+            await prisma.stockMovement.findUniqueOrThrow({
+              where: { id: entryId },
+            })
+          ).unitCost,
+        ),
+      ).toBe(12);
+    });
+
     it('refuses a new movement dated before the count (a back-dated reception, a late distribution)', async () => {
       await counted();
       await expect(entry('2026-01-03', 50, 10)).rejects.toThrow(LOCKED);

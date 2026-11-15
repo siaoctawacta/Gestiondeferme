@@ -1104,7 +1104,6 @@ export class StockLedgerService {
       rows: Work[];
     }[],
     created: Map<string, StockMovement>,
-    auditEach = true,
   ): Promise<RecordResult[]> {
     const results: RecordResult[] = [];
     // Rows an edit reused were updated, not created: read them back.
@@ -1127,7 +1126,7 @@ export class StockLedgerService {
         unitCost: movements[0].unitCost,
         cost: cost.toDecimalPlaces(2),
       });
-      if (auditEach && input.raw.audit) {
+      if (input.raw.audit) {
         const state = states.get(pairKey(input.pair))!;
         await this.log(
           tx,
@@ -1148,7 +1147,7 @@ export class StockLedgerService {
    * A validated inventory closes the past of its (farm, article): what was
    * counted would otherwise be shifted by a later write that lands before it.
    * Refuses (409) any row this operation adds, removes or moves (its quantity,
-   * date, cost or place) whose position, before or after the change, is before
+   * date or place) whose position, before or after the change, is before
    * the latest count: an earlier day, or the count day but created before the
    * count was validated. Same-day writes after the count, and edits that keep
    * a position after it, pass.
@@ -1319,8 +1318,12 @@ export class StockLedgerService {
 
 const pairKey = (p: Pair): string => levelKey(p.farmId, p.stockItemId);
 
-/** Edits that move stock (its quantity, its day, its place in the day, its cost): refused before a validated count. */
-const MOVES_STOCK = ['date', 'quantity', 'unitCost', 'createdAt'] as const;
+/**
+ * Edits that move stock (its quantity, its day, its place in the day): refused
+ * before a validated count. A cost-only correction passes: a count fixes
+ * quantities, not values.
+ */
+const MOVES_STOCK = ['date', 'quantity', 'createdAt'] as const;
 
 function assertExpiryAfterReception(expiry: Date | null, received: Date): void {
   if (expiry && expiry.getTime() < received.getTime()) {

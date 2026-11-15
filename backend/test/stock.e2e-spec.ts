@@ -1776,11 +1776,18 @@ describe('Stock (e2e)', () => {
         const current = await prisma.stockItem.findUnique({
           where: { id: it.id },
         });
+        // Whatever the arrival order, the answers agree with the final state.
+        expect(movements > 0).toBe(moved.status === 201);
         if (current) {
-          // Retyped only when no movement came in.
-          expect(movements > 0 ? current.unit : 'kg').toBe('kg');
+          expect(removed.status).toBe(409);
+          // A retype that was answered 200 stands; one that was refused left
+          // the unit alone (a movement written after a retype is legitimate).
+          expect(current.unit).toBe(changed.status === 200 ? 'sac' : 'kg');
+          expect([200, 409]).toContain(changed.status);
         } else {
+          expect(removed.status).toBe(200);
           expect(movements).toBe(0);
+          expect(moved.status).not.toBe(201);
         }
       }
       expect(codes.filter((c) => c >= 500)).toEqual([]);

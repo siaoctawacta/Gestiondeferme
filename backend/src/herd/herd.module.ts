@@ -8,6 +8,7 @@ import { BatchesService } from './batches.service';
 import { BreedsController } from './breeds.controller';
 import { BreedsService } from './breeds.service';
 import { HerdLedgerService } from './herd-ledger.service';
+import { LitterWeaningRegistry } from './litter-weaning';
 import { OccupationRegistry } from './occupation';
 import { OperationTargets } from './operation-targets';
 import { WithdrawalRegistry } from './withdrawal';
@@ -27,6 +28,7 @@ import { WeighingsService } from './weighings.service';
     BatchPerformanceRegistry,
     AnimalTargetRegistry,
     WithdrawalRegistry,
+    LitterWeaningRegistry,
     OperationTargets,
     HerdLedgerService,
     BatchesService,
@@ -40,6 +42,7 @@ import { WeighingsService } from './weighings.service';
     BatchPerformanceRegistry,
     AnimalTargetRegistry,
     WithdrawalRegistry,
+    LitterWeaningRegistry,
     OperationTargets,
     HerdLedgerService,
     BatchesService,

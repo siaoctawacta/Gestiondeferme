@@ -1127,53 +1127,138 @@ describe('Breeding (e2e)', () => {
       return { sow, boar, rec: f };
     }
 
-    it('weaning racing a death on the litter never leaves them out of step', async () => {
-      for (let i = 0; i < 3; i++) {
-        await resetDb();
-        orgId = (await createOrganization()).id;
-        farmA = (await createFarm(orgId, 'Ferme A')).id;
-        const site = await prisma.site.create({
-          data: { farmId: farmA, name: 'Site' },
+    async function freshLitter() {
+      await resetDb();
+      orgId = (await createOrganization()).id;
+      farmA = (await createFarm(orgId, 'Ferme A')).id;
+      const site = await prisma.site.create({
+        data: { farmId: farmA, name: 'Site' },
+      });
+      bldA = (
+        await prisma.building.create({
+          data: {
+            farmId: farmA,
+            siteId: site.id,
+            name: 'Maternité',
+            type: 'PORCIN',
+            capacity: 500,
+          },
+        })
+      ).id;
+      const { headers } = await actor('RESP_PORCIN');
+      return { headers, ...(await farrowedLitter(headers)) };
+    }
+
+    const wean = (headers: Record<string, string>, id: string, count: number) =>
+      http()
+        .post(`/api/breeding/${id}/weaning`)
+        .set(headers)
+        .send({ date: daysAgo(1), weanedCount: count });
+
+    const death = (
+      headers: Record<string, string>,
+      batchId: string | null,
+      date: string,
+      quantity = 1,
+    ) =>
+      http()
+        .post(`/api/batches/${batchId}/events`)
+        .set(headers)
+        .send({ type: 'MORTALITE', date, quantity });
+
+    const WEANED = (n: number) =>
+      `Cette portée a été sevrée : ${n} porcelets sevrés le ${daysAgo(1)}`;
+
+    it('a death dated before the weaning, recorded first, makes the weaning of all 12 impossible', async () => {
+      const { headers, rec } = await freshLitter();
+      await death(headers, rec.litterBatchId, daysAgo(2)).expect(201);
+      await wean(headers, rec.id, 12).expect(400);
+      await wean(headers, rec.id, 11).expect(200);
+    });
+
+    it('a death dated on or before the weaning is refused once the litter is weaned, a later one is not', async () => {
+      const { headers, rec } = await freshLitter();
+      await wean(headers, rec.id, 12).expect(200);
+      for (const date of [daysAgo(2), daysAgo(1)]) {
+        const refused = await death(headers, rec.litterBatchId, date).expect(
+          400,
+        );
+        expect((refused.body as { message: string }).message).toBe(WEANED(12));
+      }
+      await death(headers, rec.litterBatchId, daysAgo(0)).expect(201);
+      const batch = (
+        await http()
+          .get(`/api/batches/${rec.litterBatchId}`)
+          .set(headers)
+          .expect(200)
+      ).body as BatchItem;
+      expect(batch.alive).toBe(11);
+    });
+
+    it('a weaning that wrote off 2 piglets keeps its 10: an earlier death is refused', async () => {
+      const { headers, rec } = await freshLitter();
+      await wean(headers, rec.id, 10).expect(200);
+      await death(headers, rec.litterBatchId, daysAgo(3)).expect(400);
+    });
+
+    it('an edit or a removal on the litter cannot cut into the weaned animals either', async () => {
+      const { headers, rec } = await freshLitter();
+      const early = (await death(headers, rec.litterBatchId, daysAgo(4)).expect(
+        201,
+      )) as { body: { id: string } };
+      await wean(headers, rec.id, 11).expect(200);
+      const url = `/api/batches/${rec.litterBatchId}/events/${early.body.id}`;
+      await http()
+        .patch(url)
+        .set(headers)
+        .send({ quantity: 2 })
+        .expect(400)
+        .expect((r) => {
+          expect((r.body as { message: string }).message).toBe(WEANED(11));
         });
-        bldA = (
-          await prisma.building.create({
-            data: {
-              farmId: farmA,
-              siteId: site.id,
-              name: 'Maternité',
-              type: 'PORCIN',
-              capacity: 500,
-            },
-          })
-        ).id;
-        const { headers } = await actor('RESP_PORCIN');
-        const { rec } = await farrowedLitter(headers);
-        const [wean, death] = await Promise.all([
-          http()
-            .post(`/api/breeding/${rec.id}/weaning`)
-            .set(headers)
-            .send({ date: daysAgo(1), weanedCount: 12 }),
-          http()
-            .post(`/api/batches/${rec.litterBatchId}/events`)
-            .set(headers)
-            .send({ type: 'MORTALITE', date: daysAgo(2), quantity: 1 }),
+      // Moving the death after the weaning date would put it back: allowed.
+      await http()
+        .patch(url)
+        .set(headers)
+        .send({ date: daysAgo(0) })
+        .expect(200);
+      // Removing it is an increase of the count: allowed too.
+      await http().delete(url).set(headers).expect(200);
+      // A lower opening count is refused the same way.
+      await http()
+        .patch(`/api/batches/${rec.litterBatchId}`)
+        .set(headers)
+        .send({ initialCount: 10 })
+        .expect(400);
+    });
+
+    it('weaning racing a death on the litter: one wins, whatever the order, never out of step', async () => {
+      for (let i = 0; i < 3; i++) {
+        const { headers, rec } = await freshLitter();
+        const [w, d] = await Promise.all([
+          wean(headers, rec.id, 12),
+          death(headers, rec.litterBatchId, daysAgo(2)),
         ]);
-        expect([200, 400]).toContain(wean.status);
-        expect([201, 400]).toContain(death.status);
-        const batch = (
+        expect([200, 400]).toContain(w.status);
+        expect([201, 400]).toContain(d.status);
+        // Exactly one of them lands: both together would leave 12 weaned out of 11.
+        expect(w.status === 200 && d.status === 201).toBe(false);
+        expect(w.status === 400 && d.status === 400).toBe(false);
+        const record = await prisma.breedingRecord.findUniqueOrThrow({
+          where: { id: rec.id },
+        });
+        const alive = (
           await http()
             .get(`/api/batches/${rec.litterBatchId}`)
             .set(headers)
             .expect(200)
         ).body as BatchItem;
-        if (wean.status === 200) {
-          expect((wean.body as BreedingItem).weanedCount).toBe(12);
-          // the death landed first and the weaning saw it, or it is refused
-          expect(death.status).toBe(400);
-          expect(batch.alive).toBe(12);
+        if (w.status === 200) {
+          expect(record.weanedCount).toBe(12);
+          expect(alive.alive).toBe(12);
         } else {
-          expect(death.status).toBe(201);
-          expect(batch.alive).toBe(11);
+          expect(record.status).toBe('MISE_BAS');
+          expect(alive.alive).toBe(11);
         }
       }
     });

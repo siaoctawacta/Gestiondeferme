@@ -186,6 +186,16 @@ export class StockItemsService {
         ) {
           throw new ConflictException(HAS_MOVEMENTS);
         }
+        // A lot whose entries were all removed is kept empty by the ledger:
+        // with no movement and no act naming it, it holds nothing worth
+        // keeping. A lot an act names still blocks the deletion (409).
+        await tx.stockBatch.deleteMany({
+          where: {
+            stockItemId: id,
+            movements: { none: {} },
+            healthActs: { none: {} },
+          },
+        });
         // Thresholds only exist to serve the stock; the article goes with them.
         await tx.farmStockItem.deleteMany({ where: { stockItemId: id } });
         await tx.stockItem.delete({ where: { id } });
