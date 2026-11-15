@@ -52,6 +52,13 @@ export class FeedProductsController {
     return this.products.update(ctx, id, dto);
   }
 
+  /** Creates the stock article (Aliment, kg) named after the product and links it. */
+  @Post(':id/create-stock-item')
+  @RequireMaster('alimentation')
+  createStockItem(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    return this.products.createStockItem(ctx, id);
+  }
+
   @Delete(':id')
   @RequireMaster('alimentation')
   remove(@Ctx() ctx: RequestContext, @Param('id') id: string) {

@@ -7,6 +7,7 @@ import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
 import { formatDay, requireDay } from '../common/days';
+import { lockRow } from '../common/lock-row';
 import type { ExportColumn } from '../listing/export';
 import { containsInsensitive } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
@@ -274,7 +275,7 @@ export class FeedDistributionsService {
         where: { id: after.id },
         data: {
           unitCost: result.unitCost,
-          cost: lineCost(after.quantityKg, result.unitCost),
+          cost: result.cost ?? lineCost(after.quantityKg, result.unitCost),
         },
       });
     }
@@ -348,6 +349,8 @@ export class FeedDistributionsService {
     return this.prisma.$transaction(async (tx) => {
       const found = await this.find(tx, ctx, id);
       const target = await this.targets.forRow(tx, ctx, found);
+      // The ledger reads the source's rows before its own locks: serialise on the row first.
+      await lockRow(tx, 'FeedDistribution', id, ctx.farmIds);
       const before = await this.find(tx, ctx, id);
       const date = dto.date ? requireDay(dto.date) : before.date;
       if (dto.date) this.targets.assertDate(target, date);
@@ -367,13 +370,18 @@ export class FeedDistributionsService {
           };
       const [was] = await this.toItems([before], tx);
       const quantityKg = dto.quantityKg ?? before.quantityKg;
+      // Nothing that prices the row changed: keep the cost frozen when it was written.
+      const repriced =
+        changesFeed ||
+        !before.quantityKg.equals(quantityKg) ||
+        date.getTime() !== before.date.getTime();
       const updated = await tx.feedDistribution.update({
         where: { id },
         data: {
           date,
           ...feed,
           quantityKg,
-          cost: lineCost(quantityKg, feed.unitCost),
+          cost: repriced ? lineCost(quantityKg, feed.unitCost) : before.cost,
           note: dto.note,
         },
         include,
@@ -399,6 +407,7 @@ export class FeedDistributionsService {
     return this.prisma.$transaction(async (tx) => {
       const found = await this.find(tx, ctx, id);
       await this.targets.forRow(tx, ctx, found);
+      await lockRow(tx, 'FeedDistribution', id, ctx.farmIds);
       const before = await this.find(tx, ctx, id);
       const [was] = await this.toItems([before], tx);
       await tx.feedDistribution.delete({ where: { id } });

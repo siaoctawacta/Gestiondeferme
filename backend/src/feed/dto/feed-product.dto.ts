@@ -31,6 +31,16 @@ export class FeedProductQueryDto extends ListQueryDto {
   @QueryBool()
   @IsBoolean({ message: 'Le filtre actif est invalide' })
   active?: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      "Article de stock (catégorie Aliment, en kg) dont l'aliment est tiré : chaque distribution y inscrit une sortie valorisée au coût moyen pondéré. Le coût est figé à l'écriture de la distribution : une entrée de stock ultérieure, même antidatée, recalcule les sorties du stock mais pas les distributions déjà saisies. Le lien ne peut plus changer une fois des distributions saisies. Null : pas de stock, prix du catalogue.",
+  })
+  @IsOptional()
+  @IsString({ message: "L'article de stock est invalide" })
+  @IsNotEmpty({ message: "L'article de stock est invalide" })
+  stockItemId?: string | null;
 }
 
 export class CreateFeedProductDto {
@@ -55,6 +65,16 @@ export class CreateFeedProductDto {
   @IsOptional()
   @IsBoolean({ message: 'Le statut est invalide' })
   active?: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      "Article de stock (catégorie Aliment, en kg) dont l'aliment est tiré : chaque distribution y inscrit une sortie valorisée au coût moyen pondéré. Le coût est figé à l'écriture de la distribution : une entrée de stock ultérieure, même antidatée, recalcule les sorties du stock mais pas les distributions déjà saisies. Le lien ne peut plus changer une fois des distributions saisies. Null : pas de stock, prix du catalogue.",
+  })
+  @IsOptional()
+  @IsString({ message: "L'article de stock est invalide" })
+  @IsNotEmpty({ message: "L'article de stock est invalide" })
+  stockItemId?: string | null;
 }
 
 export class UpdateFeedProductDto {
@@ -82,4 +102,14 @@ export class UpdateFeedProductDto {
   @IsOptional()
   @IsBoolean({ message: 'Le statut est invalide' })
   active?: boolean;
+
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      "Article de stock (catégorie Aliment, en kg) dont l'aliment est tiré : chaque distribution y inscrit une sortie valorisée au coût moyen pondéré. Le coût est figé à l'écriture de la distribution : une entrée de stock ultérieure, même antidatée, recalcule les sorties du stock mais pas les distributions déjà saisies. Le lien ne peut plus changer une fois des distributions saisies. Null : pas de stock, prix du catalogue.",
+  })
+  @IsOptional()
+  @IsString({ message: "L'article de stock est invalide" })
+  @IsNotEmpty({ message: "L'article de stock est invalide" })
+  stockItemId?: string | null;
 }

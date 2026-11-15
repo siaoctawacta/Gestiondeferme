@@ -1,8 +1,15 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { FeedProduct, Prisma } from '../generated/prisma/client';
 import type { AuditAction } from '../generated/prisma/enums';
+import { lockRow } from '../common/lock-row';
+import { toItem as toStockItem } from '../stock/stock-items.service';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
@@ -20,9 +27,18 @@ export interface FeedProductItem {
   unit: string;
   unitCost: number;
   active: boolean;
+  /** The stock article it is drawn from, if any. */
+  stockItemId: string | null;
 }
 
 const NOT_FOUND = 'Aliment introuvable';
+const STOCK_INVALID = 'Article de stock invalide';
+const STOCK_CATEGORY = "L'article de stock doit être de catégorie Aliment";
+const STOCK_UNIT = "L'article de stock doit être en kg";
+const STOCK_TAKEN = 'Cet article de stock est déjà lié à un autre aliment';
+const LINK_LOCKED =
+  'Cet aliment a des distributions : le lien avec le stock ne peut plus changer';
+const STOCK_NAME_TAKEN = 'Un article de stock porte déjà ce nom';
 const SORTABLE = ['name', 'unitCost'];
 
 const toItem = (p: FeedProduct): FeedProductItem => ({
@@ -32,6 +48,7 @@ const toItem = (p: FeedProduct): FeedProductItem => ({
   unit: p.unit,
   unitCost: Number(p.unitCost),
   active: p.active,
+  stockItemId: p.stockItemId,
 });
 
 @Injectable()
@@ -97,12 +114,55 @@ export class FeedProductsService {
     );
   }
 
+  /** The article exists in the organisation, is an Aliment counted in kg, and feeds no other product. */
+  private async assertStockItem(
+    tx: Prisma.TransactionClient,
+    ctx: RequestContext,
+    stockItemId: string,
+    productId?: string,
+  ): Promise<void> {
+    const item = await tx.stockItem.findFirst({
+      where: { id: stockItemId, organizationId: ctx.user.organizationId },
+    });
+    if (!item) throw new BadRequestException(STOCK_INVALID);
+    if (item.category !== 'ALIMENT') {
+      throw new BadRequestException(STOCK_CATEGORY);
+    }
+    if (!/^kg$/i.test(item.unit.trim())) {
+      throw new BadRequestException(STOCK_UNIT);
+    }
+    const taken = await tx.feedProduct.findFirst({
+      where: { stockItemId, ...(productId ? { id: { not: productId } } : {}) },
+    });
+    if (taken) throw new ConflictException(STOCK_TAKEN);
+  }
+
+  /** Distributions of the product, directly or through a formula that uses it. */
+  private async assertNoDistributions(
+    tx: Prisma.TransactionClient,
+    productId: string,
+  ): Promise<void> {
+    const used = await tx.feedDistribution.findFirst({
+      where: {
+        OR: [
+          { feedProductId: productId },
+          { formula: { items: { some: { feedProductId: productId } } } },
+        ],
+      },
+      select: { id: true },
+    });
+    if (used) throw new ConflictException(LINK_LOCKED);
+  }
+
   create(
     ctx: RequestContext,
     dto: CreateFeedProductDto,
   ): Promise<FeedProductItem> {
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
+        if (dto.stockItemId) {
+          await this.assertStockItem(tx, ctx, dto.stockItemId);
+        }
         const created = await tx.feedProduct.create({
           data: { ...dto, organizationId: ctx.user.organizationId },
         });
@@ -119,7 +179,17 @@ export class FeedProductsService {
   ): Promise<FeedProductItem> {
     return orConflict(() =>
       this.prisma.$transaction(async (tx) => {
+        await lockRow(tx, 'FeedProduct', id);
         const before = await this.find(tx, ctx, id);
+        if (
+          dto.stockItemId !== undefined &&
+          dto.stockItemId !== before.stockItemId
+        ) {
+          await this.assertNoDistributions(tx, id);
+          if (dto.stockItemId) {
+            await this.assertStockItem(tx, ctx, dto.stockItemId, id);
+          }
+        }
         const updated = await tx.feedProduct.update({
           where: { id },
           data: dto,
@@ -127,6 +197,45 @@ export class FeedProductsService {
         await this.log(tx, ctx, 'UPDATE', updated, before, updated);
         return toItem(updated);
       }),
+    );
+  }
+
+  /** Creates the stock article named after the product (Aliment, kg) and links it. */
+  createStockItem(ctx: RequestContext, id: string): Promise<FeedProductItem> {
+    return orConflict(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          await lockRow(tx, 'FeedProduct', id);
+          const before = await this.find(tx, ctx, id);
+          if (before.stockItemId) throw new ConflictException(STOCK_TAKEN);
+          await this.assertNoDistributions(tx, id);
+          const item = await tx.stockItem.create({
+            data: {
+              organizationId: ctx.user.organizationId,
+              name: before.name,
+              category: 'ALIMENT',
+              unit: 'kg',
+            },
+          });
+          await this.audit.log(
+            {
+              ctx,
+              module: 'stocks',
+              action: 'CREATE',
+              recordId: item.id,
+              label: item.name,
+              after: toStockItem(item),
+            },
+            tx,
+          );
+          const updated = await tx.feedProduct.update({
+            where: { id },
+            data: { stockItemId: item.id },
+          });
+          await this.log(tx, ctx, 'UPDATE', updated, before, updated);
+          return toItem(updated);
+        }),
+      STOCK_NAME_TAKEN,
     );
   }
 

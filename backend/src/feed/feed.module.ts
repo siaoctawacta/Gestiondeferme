@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { HerdModule } from '../herd/herd.module';
 import { IndicatorsModule } from '../indicators/indicators.module';
+import { StockModule } from '../stock/stock.module';
 import { FeedDistributionsController } from './feed-distributions.controller';
 import { FeedDistributionsService } from './feed-distributions.service';
 import { FeedFormulasController } from './feed-formulas.controller';
@@ -14,7 +15,7 @@ import { WaterService } from './water.service';
 
 /** Feed products, formulas, distributions and water; registers a `LotCostSource` with the indicators. */
 @Module({
-  imports: [HerdModule, IndicatorsModule],
+  imports: [HerdModule, IndicatorsModule, StockModule],
   controllers: [
     FeedProductsController,
     FeedFormulasController,

@@ -8,6 +8,8 @@ export type LockableTable =
   | 'Incubation'
   | 'Building'
   | 'FarmStockItem'
+  | 'FeedProduct'
+  | 'FeedDistribution'
   | 'InventorySession';
 
 const TABLE: Record<LockableTable, Prisma.Sql> = {
@@ -17,6 +19,8 @@ const TABLE: Record<LockableTable, Prisma.Sql> = {
   Incubation: Prisma.raw('"Incubation"'),
   Building: Prisma.raw('"Building"'),
   FarmStockItem: Prisma.raw('"FarmStockItem"'),
+  FeedProduct: Prisma.raw('"FeedProduct"'),
+  FeedDistribution: Prisma.raw('"FeedDistribution"'),
   InventorySession: Prisma.raw('"InventorySession"'),
 };
 
