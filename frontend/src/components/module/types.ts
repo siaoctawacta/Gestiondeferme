@@ -162,9 +162,14 @@ type ModuleConfigBase<T extends { id: string }> = {
   statusKey?: keyof T;
   /** Extra filters after the status one. */
   filters?: FilterDef[];
-  /** Row to initial form values (default: the row itself). */
+  /** Row to initial form values: the stored values an edit is compared with (default: the row itself). */
   toForm?: (row: T) => FormMap;
-  /** Form values to request body (default: every field of the mode, numbers coerced). */
+  /**
+   * Form values to request body (default: every field of the mode, numbers coerced). Empty values (`''`,
+   * `undefined`) are left out when creating. When editing, only the keys whose value differs from the one
+   * `toPayload` gives for `toForm(row)` are sent, a cleared one as `null`, and an edit that changes nothing sends
+   * no request.
+   */
   toPayload?: (values: FormMap, mode: FormMode) => unknown;
   /** Label used in the delete confirmation (default `row.name`). */
   rowLabel?: (row: T) => string;

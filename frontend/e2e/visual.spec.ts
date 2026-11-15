@@ -58,6 +58,19 @@ const REF_SCREENS = {
     row: ['2026-10-22', 'LC-2026-14', 'Croissance chair', '620', '1 250', '210 800 FCFA'],
   },
 } as const;
+// Row edit / delete icons stay on every row, as in the reference. A row that cannot be changed shows them
+// disabled (aria-disabled) with the reason as tooltip: [row text, icon, reason].
+const DISABLED_ICONS: Record<string, [string, string, string][]> = {
+  m_lots: [
+    ['LC-2026-12', 'Modifier', 'Lot clôturé'],
+    ['LC-2026-12', 'Supprimer', 'Lot clôturé'],
+    ['LC-2026-14', 'Supprimer', 'Lot avec historique — clôturez-le'],
+  ],
+  m_reproduction: [
+    ['TR-021', 'Modifier', 'Enregistrement verrouillé'],
+    ['TR-021', 'Supprimer', 'Enregistrement verrouillé'],
+  ],
+};
 const TOLERANCE = 2;
 const near = (actual: number, expected: number, what: string) =>
   assert.ok(Math.abs(actual - expected) <= TOLERANCE, `${what}: ${actual} is not within ${TOLERANCE}px of ${expected}`);
@@ -111,6 +124,17 @@ async function compareWithReference(page: Page, name: string, ref: (typeof REF_S
       return { expected, actual: pill ? getComputedStyle(pill).backgroundColor : null };
     }, [label, tone]);
     assert.equal(colors.actual, colors.expected, `${name}: pill « ${label} » is ${tone}`);
+  }
+
+  // Every row keeps its edit and delete icons (none is hidden); the rows that cannot be changed show them disabled, with the reason.
+  const bodyRows = await page.locator('tbody tr').count();
+  for (const icon of ['Modifier', 'Supprimer']) {
+    assert.equal(await page.locator('tbody').getByRole('button', { name: icon }).count(), bodyRows, `${name}: every row has its « ${icon} » icon`);
+  }
+  for (const [rowText, icon, reason] of DISABLED_ICONS[name] ?? []) {
+    const button = page.getByRole('row', { name: new RegExp(rowText) }).getByRole('button', { name: icon });
+    assert.equal(await button.getAttribute('aria-disabled'), 'true', `${name}: ${rowText} « ${icon} » is disabled`);
+    assert.equal(await button.getAttribute('title'), reason, `${name}: ${rowText} « ${icon} » says why`);
   }
 
   // The reference row (the API orders rows its own way, so find it by its content).
@@ -284,6 +308,27 @@ describe('rendu : captures et comparaison avec la référence', () => {
     await mobile.getByRole('button', { name: 'Ouvrir le menu' }).click();
     await drawer.getByRole('link', { name: 'Alertes' }).click();
     await drawer.waitFor({ state: 'detached' });
+
+    // A long form never overflows the phone: the dialog body scrolls and the submit button stays reachable.
+    await mobile.goto(`${WEB_URL}/m/lots`);
+    await mobile.getByRole('button', { name: 'Ajouter' }).click();
+    const dialog = mobile.getByRole('dialog');
+    const save = dialog.getByRole('button', { name: 'Enregistrer' });
+    await save.waitFor();
+    const inViewport = () => save.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      return r.top >= 0 && r.bottom <= window.innerHeight && r.left >= 0 && r.right <= window.innerWidth;
+    });
+    assert.ok(await inViewport(), 'the Enregistrer button is inside the 390x844 viewport');
+    const panel = await box(dialog);
+    assert.ok(panel.y >= 0 && panel.y + panel.height <= 844, 'the dialog panel fits the viewport');
+    // A shorter phone (the form is taller than the screen): the body scrolls, the button stays in view.
+    await mobile.setViewportSize({ width: 390, height: 520 });
+    assert.ok(await inViewport(), 'the Enregistrer button is inside a 390x520 viewport');
+    const short = await box(dialog);
+    assert.ok(short.y >= 0 && short.y + short.height <= 520, 'the dialog panel fits a 390x520 viewport');
+    await dialog.getByLabel('Code (généré si vide)').scrollIntoViewIfNeeded();
+    assert.ok(await inViewport(), 'the Enregistrer button stays in view while the body scrolls');
     await context.close();
   });
 });

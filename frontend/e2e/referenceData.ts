@@ -49,8 +49,12 @@ export async function seedReferenceData(admin: EnrolledAdmin, buildings: Map<str
       await post(`/batches/${lot.id}/events`, { type: 'MORTALITE', cause: 'Maladie', ...event });
     }
     await post(`/batches/${lot.id}/weighings`, { date: weighed, sampleSize: 50, averageWeightG: weight });
-    // The reference's closed lot kept 4 680 birds; closing it at once frees Poulailler A for the next lot.
-    if (code === 'LC-2026-12') await post(`/batches/${lot.id}/close`, {});
+    // The reference's closed lot kept 4 680 birds. The API closes a lot only once its animals have left through an
+    // event, so they are sold first (the closed lot then reads 0 alive); closing frees Poulailler A for the next lot.
+    if (code === 'LC-2026-12') {
+      await post(`/batches/${lot.id}/events`, { type: 'VENTE', date: '2026-08-31', quantity: initialCount - deaths });
+      await post(`/batches/${lot.id}/close`, {});
+    }
   }
 
   // Eggs of the laying lot: date, collected, broken, put in incubation.
