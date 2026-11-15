@@ -189,8 +189,7 @@ describe('Pig herd (e2e)', () => {
         .get(`/api/animals/${a.id}`)
         .set(headers)
         .expect(200);
-      // The detail also carries the withdrawal end (health module), null here.
-      expect(got.body).toEqual({ ...a, withdrawalUntil: null });
+      expect(got.body).toEqual(a);
     });
 
     it('generates TR-, VR- and CO- tags per farm when the tag is omitted', async () => {

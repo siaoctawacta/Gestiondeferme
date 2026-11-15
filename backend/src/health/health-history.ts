@@ -56,15 +56,25 @@ export class HealthHistory
     return latest;
   }
 
-  /** Earliest act, quarantine or incident of the lot. */
+  /**
+   * Earliest health record of the lot: the day of a live act (the earlier of
+   * its date and the day it was done; cancelled acts do not count), a
+   * quarantine or an incident.
+   */
   async earliestDate(
     tx: Prisma.TransactionClient,
     batchId: string,
   ): Promise<Date | null> {
+    const live = { batchId, status: { not: 'ANNULE' as const } };
     const act = await tx.healthAct.findFirst({
-      where: { batchId },
+      where: live,
       orderBy: { date: 'asc' },
       select: { date: true },
+    });
+    const done = await tx.healthAct.findFirst({
+      where: { ...live, doneDate: { not: null } },
+      orderBy: { doneDate: 'asc' },
+      select: { doneDate: true },
     });
     const quarantine = await tx.quarantine.findFirst({
       where: { batchId },
@@ -76,9 +86,12 @@ export class HealthHistory
       orderBy: { date: 'asc' },
       select: { date: true },
     });
-    const dates = [act?.date, quarantine?.startDate, incident?.date].filter(
-      (d) => d !== undefined,
-    );
+    const dates = [
+      act?.date,
+      done?.doneDate,
+      quarantine?.startDate,
+      incident?.date,
+    ].filter((d) => d !== undefined && d !== null);
     return dates.length ? new Date(Math.min(...dates.map((d) => +d))) : null;
   }
 }

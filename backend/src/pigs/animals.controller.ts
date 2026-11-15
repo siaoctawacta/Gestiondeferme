@@ -48,8 +48,9 @@ export class AnimalsController {
 
   @Post()
   @RequireMaster('porcs')
-  create(@Ctx() ctx: RequestContext, @Body() dto: CreateAnimalDto) {
-    return this.animals.create(ctx, dto);
+  async create(@Ctx() ctx: RequestContext, @Body() dto: CreateAnimalDto) {
+    // Same shape as the detail: a new animal has no withdrawal period.
+    return { ...(await this.animals.create(ctx, dto)), withdrawalUntil: null };
   }
 
   @Get(':id')

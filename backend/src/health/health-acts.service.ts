@@ -29,7 +29,7 @@ import {
   type HealthActItem,
 } from './health-act-view';
 import { HealthStock } from './health-stock';
-import { HealthTargets } from './health-targets';
+import { HealthTargets, OPEN_TARGET } from './health-targets';
 
 type Tx = Prisma.TransactionClient;
 
@@ -47,6 +47,10 @@ const BATCH_NEEDS_QUANTITY =
   "Le lot de produit s'indique pour une intervention réalisée avec un produit en stock et une quantité";
 const ITEM_FIXED =
   "Le produit d'une intervention réalisée ne peut pas être changé : supprimez-la et recréez-la";
+const DONE_DATE =
+  'Une intervention saisie réalisée a une seule date : le jour de sa réalisation';
+const ENTERED_DONE =
+  'Cette intervention a été saisie réalisée : modifiez sa date';
 const SORTABLE = ['date', 'status', 'type', 'createdAt'];
 
 /** An empty text is no text. */
@@ -87,9 +91,16 @@ export class HealthActsService {
     status: ActStatus,
     now: Date,
   ): Prisma.HealthActWhereInput {
-    if (status === 'PLANIFIE') return { status, date: { gte: now } };
+    // Late = planned, dated before today, on a target that is still open: a
+    // planned act on a closed lot or an exited animal waits as PLANIFIE.
+    if (status === 'PLANIFIE') {
+      return {
+        status,
+        OR: [{ date: { gte: now } }, { NOT: OPEN_TARGET }],
+      };
+    }
     if (status === 'EN_RETARD') {
-      return { status: 'PLANIFIE', date: { lt: now } };
+      return { status: 'PLANIFIE', date: { lt: now }, ...OPEN_TARGET };
     }
     return { status };
   }
@@ -233,7 +244,11 @@ export class HealthActsService {
       );
     }
     const date = requireDay(dto.date);
-    const doneDate = planned ? null : requireDay(dto.doneDate ?? dto.date);
+    if (!planned && dto.doneDate && dto.doneDate !== dto.date) {
+      throw new BadRequestException(DONE_DATE);
+    }
+    // An act entered as done has one date: the day it was done.
+    const doneDate = planned ? null : date;
     const quantity = blank(dto.quantity);
     const stockBatchId = blank(dto.stockBatchId);
     if (quantity !== null && !dto.stockItemId) {
@@ -258,6 +273,9 @@ export class HealthActsService {
       const product = dto.stockItemId
         ? await this.stock.assertProduct(tx, ctx, dto.stockItemId)
         : null;
+      if (product && stockBatchId) {
+        await this.stock.assertLot(tx, target.farmId, product.id, stockBatchId);
+      }
       const created = await tx.healthAct.create({
         data: {
           farmId: target.farmId,
@@ -278,6 +296,7 @@ export class HealthActsService {
           diagnosis: blank(dto.diagnosis),
           status: planned ? 'PLANIFIE' : 'REALISE',
           doneDate,
+          enteredDone: !planned,
           note: blank(dto.note),
           createdById: ctx.user.id,
         },
@@ -291,7 +310,7 @@ export class HealthActsService {
     });
   }
 
-  /** Finds the act, locks its target and then itself, and reads it again under the lock. */
+  /** Finds the act, locks its open target and then itself, and reads it again under the lock. */
   private async lock(
     tx: Tx,
     ctx: RequestContext,
@@ -304,6 +323,28 @@ export class HealthActsService {
     const target = await this.targets.forRow(tx, ctx, found);
     await lockRow(tx, 'HealthAct', id, ctx.farmIds);
     return { before: await this.find(tx, ctx, id), target };
+  }
+
+  /**
+   * For cancelling and deleting: a PLANIFIE act (no stock involved) may be
+   * dropped even when its lot is closed or its animal gone, so the target is
+   * locked without requiring it open. A done act still needs its target open.
+   */
+  private async lockToDrop(
+    tx: Tx,
+    ctx: RequestContext,
+    id: string,
+  ): Promise<ActRow> {
+    const found = await this.find(tx, ctx, id);
+    if (found.status === 'PLANIFIE') await this.targets.lockAny(tx, ctx, found);
+    else await this.targets.forRow(tx, ctx, found);
+    await lockRow(tx, 'HealthAct', id, ctx.farmIds);
+    const before = await this.find(tx, ctx, id);
+    // It was completed while we waited for the locks: now the target must be open.
+    if (found.status === 'PLANIFIE' && before.status !== 'PLANIFIE') {
+      await this.targets.forRow(tx, ctx, before);
+    }
+    return before;
   }
 
   update(
@@ -321,18 +362,19 @@ export class HealthActsService {
           'Seule une intervention réalisée a une date de réalisation',
         );
       }
+      if (dto.doneDate !== undefined && before.enteredDone) {
+        throw new BadRequestException(ENTERED_DONE);
+      }
       const date = dto.date ? requireDay(dto.date) : before.date;
       if (dto.date) this.targets.assertNotBeforeStart(target, date);
-      // An act entered as done has one date; editing it moves the day it was done.
-      const followed =
-        isDone &&
-        dto.doneDate === undefined &&
-        dto.date !== undefined &&
-        before.doneDate?.getTime() === before.date.getTime();
-      const doneDate = dto.doneDate
-        ? requireDay(dto.doneDate)
-        : followed
+      // Entered as done: the one date is the day it was done, and moves the
+      // exit. Completed later: `date` is the plan, `doneDate` the exit.
+      const doneDate = before.enteredDone
+        ? dto.date
           ? date
+          : before.doneDate
+        : dto.doneDate
+          ? requireDay(dto.doneDate)
           : before.doneDate;
       if (
         isDone &&
@@ -366,6 +408,14 @@ export class HealthActsService {
       }
       if (stockBatchId && (!isDone || quantity === null)) {
         throw new BadRequestException(BATCH_NEEDS_QUANTITY);
+      }
+      if (stockBatchId && stockItemId && stockBatchId !== before.stockBatchId) {
+        await this.stock.assertLot(
+          tx,
+          before.farmId,
+          stockItemId,
+          stockBatchId,
+        );
       }
 
       const updated = await tx.healthAct.update({
@@ -412,7 +462,7 @@ export class HealthActsService {
 
   remove(ctx: RequestContext, id: string): Promise<void> {
     return this.prisma.$transaction(async (tx) => {
-      const { before } = await this.lock(tx, ctx, id);
+      const before = await this.lockToDrop(tx, ctx, id);
       await tx.healthAct.delete({ where: { id } });
       await this.stock.afterActChange(tx, ctx, before, null);
       const was = toActItem(before);
@@ -444,10 +494,10 @@ export class HealthActsService {
         );
       }
       const stockItemId = before.stockItemId ?? dto.stockItemId ?? null;
-      const product =
-        stockItemId && stockItemId !== before.stockItemId
-          ? await this.stock.assertProduct(tx, ctx, stockItemId)
-          : null;
+      // Active, veterinary article of the organisation, also when it was set at planning.
+      const product = stockItemId
+        ? await this.stock.assertProduct(tx, ctx, stockItemId)
+        : null;
       const quantity = dto.quantity ?? before.quantity;
       if (quantity !== null && !stockItemId) {
         throw new BadRequestException(QUANTITY_NEEDS_PRODUCT);
@@ -455,6 +505,14 @@ export class HealthActsService {
       const stockBatchId = blank(dto.stockBatchId);
       if (stockBatchId && quantity === null) {
         throw new BadRequestException(BATCH_NEEDS_QUANTITY);
+      }
+      if (stockItemId && stockBatchId) {
+        await this.stock.assertLot(
+          tx,
+          before.farmId,
+          stockItemId,
+          stockBatchId,
+        );
       }
       const updated = await tx.healthAct.update({
         where: { id },
@@ -482,7 +540,7 @@ export class HealthActsService {
   /** Cancels a planned or done act; a done act gives its stock back. */
   cancel(ctx: RequestContext, id: string): Promise<HealthActItem> {
     return this.prisma.$transaction(async (tx) => {
-      const { before } = await this.lock(tx, ctx, id);
+      const before = await this.lockToDrop(tx, ctx, id);
       if (before.status === 'ANNULE') throw new ConflictException(CANCELLED);
       const updated = await tx.healthAct.update({
         where: { id },

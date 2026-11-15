@@ -44,7 +44,7 @@ describe('toActItem status', () => {
       batchId: 'b',
       animalId: null,
       buildingId: null,
-      batch: { code: 'LC-1' },
+      batch: { code: 'LC-1', status: 'EN_COURS' },
       animal: null,
       building: null,
       quantity: null,
@@ -62,6 +62,25 @@ describe('toActItem status', () => {
     expect(toActItem(row({ date: day('2026-11-16') }), now).status).toBe(
       'PLANIFIE',
     );
+  });
+
+  it('does not mark late a planned act whose lot is closed or animal gone', () => {
+    const closed = row({ batch: { code: 'LC-1', status: 'CLOTURE' } });
+    expect(toActItem(closed, now).status).toBe('PLANIFIE');
+    const gone = row({
+      batchId: null,
+      batch: null,
+      animalId: 'x',
+      animal: { tag: 'T', status: 'VENDU' },
+    });
+    expect(toActItem(gone, now).status).toBe('PLANIFIE');
+    const live = row({
+      batchId: null,
+      batch: null,
+      animalId: 'x',
+      animal: { tag: 'T', status: 'GESTANTE' },
+    });
+    expect(toActItem(live, now).status).toBe('EN_RETARD');
   });
 
   it('never marks a done or cancelled act late', () => {

@@ -56,6 +56,8 @@ const APPLIED =
   'Ce plan a été appliqué à des lots : il ne peut pas être supprimé';
 const ALREADY_APPLIED = 'Ce plan a déjà été appliqué à ce lot';
 const WRONG_SPECIES = "Ce plan ne s'applique pas à cette espèce";
+const FROZEN =
+  'Ce plan a été appliqué à des lots : son espèce et son type ne peuvent plus changer';
 const SORTABLE = ['name', 'species', 'createdAt'];
 
 const toItem = (p: PlanRow): VaccinationPlanItem => ({
@@ -215,6 +217,13 @@ export class VaccinationPlansService {
         const before = await this.find(tx, ctx, id);
         const species = dto.species ?? before.species;
         const type = dto.type === undefined ? before.type : dto.type;
+        // The lots it was applied to were checked against this species and type.
+        if (
+          (species !== before.species || type !== before.type) &&
+          (await tx.healthAct.count({ where: { planId: id } })) > 0
+        ) {
+          throw new ConflictException(FROZEN);
+        }
         await this.assertContent(tx, ctx, species, type, dto.items);
         if (dto.items)
           await tx.vaccinationPlanItem.deleteMany({ where: { planId: id } });
@@ -260,7 +269,8 @@ export class VaccinationPlansService {
    * `planId`, with the step's product, stock article and dose. Every step is
    * created, including those whose date is already past: they show as
    * `EN_RETARD` until someone completes or cancels them, none is marked done.
-   * A plan is applied once per lot (409).
+   * A step whose stock article is no longer an active vaccine of the
+   * organisation is created as free text. A plan is applied once per lot (409).
    */
   apply(
     ctx: RequestContext,
@@ -294,6 +304,15 @@ export class VaccinationPlansService {
       ) {
         throw new ConflictException(ALREADY_APPLIED);
       }
+      // A step's article may have been deactivated, retyped or removed since the
+      // plan was written: such a step is still applied, as free text (its product
+      // name kept, no stock article), rather than failing the whole plan.
+      const usable = await this.stock.usable(
+        tx,
+        ctx,
+        plan.items.flatMap((i) => (i.stockItemId ? [i.stockItemId] : [])),
+        ['VACCIN'],
+      );
       const created: HealthActItem[] = [];
       for (const step of plan.items) {
         const row = await tx.healthAct.create({
@@ -302,7 +321,10 @@ export class VaccinationPlansService {
             date: addDays(batch.entryDate, step.ageDays),
             type: 'VACCINATION',
             batchId: target.id,
-            stockItemId: step.stockItemId,
+            stockItemId:
+              step.stockItemId && usable.has(step.stockItemId)
+                ? step.stockItemId
+                : null,
             productName: step.productName,
             dose: step.dose,
             status: 'PLANIFIE',

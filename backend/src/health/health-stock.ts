@@ -2,7 +2,10 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import type { HealthAct, Prisma, StockItem } from '../generated/prisma/client';
 import type { StockCategory } from '../generated/prisma/enums';
-import { StockLedgerService } from '../stock/stock-ledger.service';
+import {
+  INVALID_BATCH,
+  StockLedgerService,
+} from '../stock/stock-ledger.service';
 
 type Tx = Prisma.TransactionClient;
 
@@ -41,6 +44,47 @@ export class HealthStock {
       );
     }
     return item;
+  }
+
+  /**
+   * The ids among `ids` that are active articles of the user's organisation in
+   * one of `allowed` categories (no error for the others).
+   */
+  async usable(
+    tx: Tx,
+    ctx: RequestContext,
+    ids: string[],
+    allowed: StockCategory[],
+  ): Promise<Set<string>> {
+    if (ids.length === 0) return new Set();
+    const items = await tx.stockItem.findMany({
+      where: {
+        id: { in: ids },
+        organizationId: ctx.user.organizationId,
+        active: true,
+        category: { in: allowed },
+      },
+      select: { id: true },
+    });
+    return new Set(items.map((i) => i.id));
+  }
+
+  /**
+   * The product lot an act names exists for this farm and article: checked
+   * before the act is written, since the row's foreign key would otherwise
+   * answer 500. (Expiry and quantity are the ledger's business.)
+   */
+  async assertLot(
+    tx: Tx,
+    farmId: string,
+    stockItemId: string,
+    stockBatchId: string,
+  ): Promise<void> {
+    const lot = await tx.stockBatch.findFirst({
+      where: { id: stockBatchId, farmId, stockItemId },
+      select: { id: true },
+    });
+    if (!lot) throw new BadRequestException(INVALID_BATCH);
   }
 
   /**

@@ -86,9 +86,10 @@ export class BatchesController {
 
   @Post()
   @AnyAuthenticated()
-  create(@Ctx() ctx: RequestContext, @Body() dto: CreateBatchDto) {
+  async create(@Ctx() ctx: RequestContext, @Body() dto: CreateBatchDto) {
     this.access.assertMaster(ctx, speciesModule(dto.species));
-    return this.batches.create(ctx, dto);
+    // Same shape as the detail: a new lot has no withdrawal period.
+    return { ...(await this.batches.create(ctx, dto)), withdrawalUntil: null };
   }
 
   @Get(':id')

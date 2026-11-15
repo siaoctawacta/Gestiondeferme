@@ -9,11 +9,24 @@ import {
   type Target,
   type TargetIds,
 } from '../herd/operation-targets';
+import { AnimalTargetRegistry } from '../herd/animal-target';
+import { HerdLedgerService } from '../herd/herd-ledger.service';
 import { speciesModule } from '../herd/species';
+import { LIVE_ANIMAL } from './health-act-view';
 
 type Tx = Prisma.TransactionClient;
 
 const SANTE = { module: 'sante' } as const;
+
+/** Rows whose lot is open and whose animal is still on the farm (a building is always open). */
+export const OPEN_TARGET = {
+  AND: [
+    { OR: [{ batchId: null }, { batch: { status: 'EN_COURS' as const } }] },
+    {
+      OR: [{ animalId: null }, { animal: { status: { in: LIVE_ANIMAL } } }],
+    },
+  ],
+};
 
 /**
  * Health records point at a lot, an animal or a building through
@@ -25,7 +38,11 @@ const SANTE = { module: 'sante' } as const;
  */
 @Injectable()
 export class HealthTargets {
-  constructor(private readonly targets: OperationTargets) {}
+  constructor(
+    private readonly targets: OperationTargets,
+    private readonly ledger: HerdLedgerService,
+    private readonly animals: AnimalTargetRegistry,
+  ) {}
 
   /** The species whose lots the caller may read. */
   private species(ctx: RequestContext): Species[] {
@@ -73,6 +90,18 @@ export class HealthTargets {
   /** For an existing record: its lot or animal is locked and must still be open (409 otherwise). */
   forRow(tx: Tx, ctx: RequestContext, row: TargetIds): Promise<Target> {
     return this.targets.forRow(tx, ctx, row, SANTE);
+  }
+
+  /**
+   * Locks the lot or animal of a row WITHOUT requiring it to be open: what
+   * cancelling or deleting a planned act needs (no stock is involved), so a
+   * lot closed or an animal gone does not strand its planned acts.
+   */
+  async lockAny(tx: Tx, ctx: RequestContext, row: TargetIds): Promise<void> {
+    if (row.batchId) await this.ledger.lockBatch(tx, row.batchId, ctx.farmIds);
+    else if (row.animalId) {
+      await this.animals.single().lockAnimal(tx, row.animalId, ctx.farmIds);
+    }
   }
 
   /** `date` valid for the target: not in the future, not before it existed. */

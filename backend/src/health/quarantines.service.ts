@@ -17,7 +17,7 @@ import {
 import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
 import type { QuarantineStatus } from '../generated/prisma/enums';
-import { containsInsensitive } from '../listing/list-helpers';
+import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
@@ -52,6 +52,7 @@ const NOT_FOUND = 'Quarantaine introuvable';
 const LIFTED = 'Cette quarantaine est déjà levée';
 const NEED_TARGET = 'Indiquez un lot ou un animal';
 const END_BEFORE_START = 'La fin ne peut pas précéder le début';
+const OPEN = 'Une quarantaine est déjà en cours';
 const STATUSES: QuarantineStatus[] = ['EN_COURS', 'LEVEE'];
 const SORTABLE = ['startDate', 'endDate', 'status', 'createdAt'];
 
@@ -180,29 +181,43 @@ export class QuarantinesService {
     const start = requireDay(dto.startDate);
     const end = dto.endDate ? requireDay(dto.endDate) : null;
     if (end && end < start) throw new BadRequestException(END_BEFORE_START);
-    return this.prisma.$transaction(async (tx) => {
-      const target = await this.targets.resolve(
-        tx,
-        ctx,
-        { batchId: dto.batchId, animalId: dto.animalId },
-        start,
-      );
-      const created = await tx.quarantine.create({
-        data: {
-          farmId: target.farmId,
-          batchId: target.kind === 'LOT' ? target.id : null,
-          animalId: target.kind === 'ANIMAL' ? target.id : null,
-          startDate: start,
-          endDate: end,
-          reason: dto.reason,
-        },
-        include,
-        relationLoadStrategy: 'join',
-      });
-      const item = toItem(created);
-      await this.log(tx, ctx, 'CREATE', item, undefined, item);
-      return item;
-    });
+    return orConflict(
+      () =>
+        this.prisma.$transaction(async (tx) => {
+          const target = await this.targets.resolve(
+            tx,
+            ctx,
+            { batchId: dto.batchId, animalId: dto.animalId },
+            start,
+          );
+          // The target is locked: no other quarantine of it can open meanwhile.
+          const open = await tx.quarantine.count({
+            where: {
+              status: 'EN_COURS',
+              ...(target.kind === 'LOT'
+                ? { batchId: target.id }
+                : { animalId: target.id }),
+            },
+          });
+          if (open > 0) throw new ConflictException(OPEN);
+          const created = await tx.quarantine.create({
+            data: {
+              farmId: target.farmId,
+              batchId: target.kind === 'LOT' ? target.id : null,
+              animalId: target.kind === 'ANIMAL' ? target.id : null,
+              startDate: start,
+              endDate: end,
+              reason: dto.reason,
+            },
+            include,
+            relationLoadStrategy: 'join',
+          });
+          const item = toItem(created);
+          await this.log(tx, ctx, 'CREATE', item, undefined, item);
+          return item;
+        }),
+      OPEN,
+    );
   }
 
   update(
@@ -211,6 +226,10 @@ export class QuarantinesService {
     dto: UpdateQuarantineDto,
   ): Promise<QuarantineItem> {
     return this.prisma.$transaction(async (tx) => {
+      // Moving the start locks the lot or animal first, like feed (target, then row).
+      if (dto.startDate) {
+        await this.targets.forRow(tx, ctx, await this.find(tx, ctx, id));
+      }
       const before = await this.lock(tx, ctx, id);
       if (before.status === 'LEVEE') throw new ConflictException(LIFTED);
       const start = dto.startDate

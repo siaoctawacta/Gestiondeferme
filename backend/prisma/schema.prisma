@@ -1,7 +1,7 @@
 generator client {
-  provider     = "prisma-client"
-  output       = "../src/generated/prisma"
-  moduleFormat = "cjs"
+  provider        = "prisma-client"
+  output          = "../src/generated/prisma"
+  moduleFormat    = "cjs"
   // relationJoins: the feed and water services pass `relationLoadStrategy: 'join'`
   // to load a row with its batch/building/product names in one query. With the
   // flag on, Prisma's default relation load strategy may itself be `join`, so
@@ -1075,6 +1075,8 @@ model HealthAct {
   status         HealthActStatus  @default(PLANIFIE)
   /// Set exactly while the act is REALISE.
   doneDate       DateTime?        @db.Date
+  /// Entered as done (its date is the day it was done) rather than completed from a planned act.
+  enteredDone    Boolean          @default(false)
   planId         String?
   plan           VaccinationPlan? @relation(fields: [planId], references: [id], onDelete: Restrict)
   note           String?
@@ -1085,6 +1087,7 @@ model HealthAct {
 
   @@index([farmId])
   @@index([farmId, date])
+  @@index([farmId, status])
   @@index([batchId])
   @@index([animalId])
   @@index([buildingId])
@@ -1143,6 +1146,7 @@ model Quarantine {
   updatedAt DateTime         @updatedAt
 
   @@index([farmId])
+  @@index([farmId, startDate])
   @@index([batchId])
   @@index([animalId])
 }

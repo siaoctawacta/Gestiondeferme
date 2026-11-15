@@ -1,18 +1,28 @@
 import { addDays, formatDay, formatDayOrNull, today } from '../common/days';
 import type { Prisma } from '../generated/prisma/client';
-import type { HealthActStatus, HealthActType } from '../generated/prisma/enums';
+import type {
+  AnimalStatus,
+  HealthActStatus,
+  HealthActType,
+} from '../generated/prisma/enums';
 import type { ExportColumn } from '../listing/export';
 
 /** What an act row needs of its target, loaded with it. */
 export const actInclude = {
-  batch: { select: { code: true } },
-  animal: { select: { tag: true } },
+  batch: { select: { code: true, status: true } },
+  animal: { select: { tag: true, status: true } },
   building: { select: { name: true } },
 } satisfies Prisma.HealthActInclude;
 
 export type ActRow = Prisma.HealthActGetPayload<{
   include: typeof actInclude;
 }>;
+
+/**
+ * Animals still on the farm: the same three statuses as the pig module's
+ * `LIVE_STATUSES` (health does not import pigs).
+ */
+export const LIVE_ANIMAL: AnimalStatus[] = ['ACTIF', 'GESTANTE', 'ALLAITANTE'];
 
 /** The stored statuses plus `EN_RETARD`, derived: planned and dated before today. */
 export type ActStatus = HealthActStatus | 'EN_RETARD';
@@ -86,8 +96,13 @@ export function withdrawalEnd(act: {
 }
 
 export function toActItem(row: ActRow, now: Date = today()): HealthActItem {
+  // A planned act on a closed lot or an exited animal can no longer be done:
+  // it is not late, it waits to be cancelled.
+  const open =
+    row.batch?.status !== 'CLOTURE' &&
+    (row.animal === null || LIVE_ANIMAL.includes(row.animal.status));
   const overdue =
-    row.status === 'PLANIFIE' && row.date.getTime() < now.getTime();
+    row.status === 'PLANIFIE' && open && row.date.getTime() < now.getTime();
   return {
     id: row.id,
     date: formatDay(row.date),

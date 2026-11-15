@@ -202,6 +202,10 @@ export class IncidentsService {
       if (batchId && batchId !== found.batchId) {
         await this.targets.resolve(tx, ctx, { batchId }, date);
       }
+      // Moving the date of an incident whose lot stays the same locks that lot first.
+      if (dto.date && found.batchId && batchId === found.batchId) {
+        await this.targets.forRow(tx, ctx, found);
+      }
       await lockRow(tx, 'HealthIncident', id, ctx.farmIds);
       const before = await this.find(tx, ctx, id);
       if (before.status === 'CLOS') throw new ConflictException(CLOSED);
