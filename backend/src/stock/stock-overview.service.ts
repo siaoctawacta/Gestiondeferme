@@ -5,12 +5,18 @@ import {
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
-import { formatDay, formatDayOrNull, today } from '../common/days';
+import {
+  formatDay,
+  formatDayOrNull,
+  signedDaysBetween,
+  today,
+} from '../common/days';
 import type { Prisma, StockItem } from '../generated/prisma/client';
 import type { ExportColumn } from '../listing/export';
 import { containsInsensitive } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { SettingsService } from '../admin/settings/settings.service';
 import type { SetThresholdsDto, StockListQueryDto } from './dto/stock-list.dto';
 import { ITEM_NOT_FOUND } from './stock-items.service';
 import {
@@ -19,9 +25,11 @@ import {
   StockLedgerService,
 } from './stock-ledger.service';
 import {
+  expiryStatus,
   STOCK_LEVELS,
   stockLevel,
   worstLevel,
+  type ExpiryStatus,
   type StockLevel,
 } from './stock-level';
 import { movementItems, type MovementItem } from './stock-movements.service';
@@ -66,6 +74,11 @@ export interface StockDetail extends StockRow {
     receivedDate: string;
     quantity: number;
     expired: boolean;
+    /**
+     * `expired` before today, `soon` up to `expiryWarningDays` days ahead (the
+     * organisation's setting, the alerts' rule), `ok` otherwise or with no date.
+     */
+    expiry: ExpiryStatus;
   }[];
   movements: MovementItem[];
 }
@@ -101,6 +114,7 @@ export class StockOverviewService {
     private readonly prisma: PrismaService,
     private readonly ledger: StockLedgerService,
     private readonly audit: AuditService,
+    private readonly settings: SettingsService,
   ) {}
 
   /**
@@ -239,17 +253,21 @@ export class StockOverviewService {
       where: { id: itemId, organizationId: ctx.user.organizationId },
     });
     if (!item) throw new NotFoundException(ITEM_NOT_FOUND);
-    const [[{ row, perFarm }], batches, movements] = await Promise.all([
-      this.rows(ctx.farmIds, [item]),
-      this.ledger.batchLevels(ctx.farmIds, [item.id]),
-      this.prisma.stockMovement.findMany({
-        where: { stockItemId: item.id, farmId: { in: ctx.farmIds } },
-        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
-        take: LAST_MOVEMENTS,
-        include: { stockItem: true, stockBatch: true },
-      }),
-    ]);
-    const now = today().getTime();
+    const [[{ row, perFarm }], batches, movements, settings] =
+      await Promise.all([
+        this.rows(ctx.farmIds, [item]),
+        this.ledger.batchLevels(ctx.farmIds, [item.id]),
+        this.prisma.stockMovement.findMany({
+          where: { stockItemId: item.id, farmId: { in: ctx.farmIds } },
+          orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
+          take: LAST_MOVEMENTS,
+          include: { stockItem: true, stockBatch: true },
+        }),
+        this.settings.getAll(ctx),
+      ]);
+    const start = today();
+    const warningDays = Number(settings.expiryWarningDays);
+    const now = start.getTime();
     return {
       ...row,
       farms: [...perFarm.values()],
@@ -261,6 +279,10 @@ export class StockOverviewService {
         receivedDate: formatDay(batch.receivedDate),
         quantity: quantity.toNumber(),
         expired: batch.expiryDate !== null && batch.expiryDate.getTime() < now,
+        expiry: expiryStatus(
+          batch.expiryDate ? signedDaysBetween(start, batch.expiryDate) : null,
+          warningDays,
+        ),
       })),
       movements: movementItems(movements),
     };

@@ -64,9 +64,11 @@ interface Inventory {
   status: string;
   lines: {
     itemId: string;
+    itemName: string;
+    unit: string;
     theoreticalQty: number;
-    countedQty: number;
-    difference: number;
+    countedQty: number | null;
+    difference: number | null;
   }[];
 }
 
@@ -1447,6 +1449,222 @@ describe('Stock (e2e)', () => {
       // The count day, after the count, stays open: level = counted − quantity.
       await exit(h, it.id, 7, daysAgo(10)).expect(201);
       expect((await list(h)).items[0].quantity).toBe(73);
+    });
+
+    it('GET /inventories/:id lists every active article with its theoretical quantity AT THE SESSION DATE (a back-dated session)', async () => {
+      const resp = (await actor('DIRECTEUR_FERME')).headers;
+      const a = await item(resp, 'Aliment A');
+      const b = await item(resp, 'Aliment B', { unit: 'sac' });
+      const c = await item(resp, 'Aliment C');
+      const gone = await item(resp, 'Aliment D');
+      await http()
+        .patch(`/api/stock-items/${gone.id}`)
+        .set(resp)
+        .send({ active: false })
+        .expect(200);
+      await entry(resp, a.id, 100, 10, daysAgo(10));
+      await exit(resp, a.id, 20, daysAgo(2)).expect(201); // 80 today, 100 five days ago
+      const session = (
+        await http()
+          .post('/api/inventories')
+          .set(resp)
+          .send({ date: daysAgo(5) })
+          .expect(201)
+      ).body as Inventory;
+      const read = async () =>
+        (
+          await http()
+            .get(`/api/inventories/${session.id}`)
+            .set(resp)
+            .expect(200)
+        ).body as Inventory;
+
+      // Nothing counted yet: one line per active article, none for the inactive one.
+      let draft = await read();
+      expect(draft.lines).toEqual([
+        {
+          itemId: a.id,
+          itemName: 'Aliment A',
+          unit: 'kg',
+          theoreticalQty: 100,
+          countedQty: null,
+          difference: null,
+        },
+        {
+          itemId: b.id,
+          itemName: 'Aliment B',
+          unit: 'sac',
+          theoreticalQty: 0,
+          countedQty: null,
+          difference: null,
+        },
+        {
+          itemId: c.id,
+          itemName: 'Aliment C',
+          unit: 'kg',
+          theoreticalQty: 0,
+          countedQty: null,
+          difference: null,
+        },
+      ]);
+
+      // Counted lines keep their count and difference; an inactive article already counted stays.
+      await http()
+        .put(`/api/inventories/${session.id}/lines`)
+        .set(resp)
+        .send({
+          lines: [
+            { itemId: a.id, countedQty: 90 },
+            { itemId: gone.id, countedQty: 0 },
+          ],
+        })
+        .expect(200);
+      draft = await read();
+      expect(
+        draft.lines.map((l) => [
+          l.itemName,
+          l.theoreticalQty,
+          l.countedQty,
+          l.difference,
+        ]),
+      ).toEqual([
+        ['Aliment A', 100, 90, -10],
+        ['Aliment B', 0, null, null],
+        ['Aliment C', 0, null, null],
+        ['Aliment D', 0, 0, 0],
+      ]);
+
+      // Validated: the stored lines, unchanged.
+      await http()
+        .post(`/api/inventories/${session.id}/validate`)
+        .set(resp)
+        .expect(201);
+      const done = await read();
+      expect(
+        done.lines.map((l) => [
+          l.itemName,
+          l.theoreticalQty,
+          l.countedQty,
+          l.difference,
+        ]),
+      ).toEqual([
+        ['Aliment A', 100, 90, -10],
+        ['Aliment D', 0, 0, 0],
+      ]);
+    });
+
+    it('GET /stock/:id gives each lot an expiry status from expiryWarningDays, like the alerts (non-default setting, both boundaries)', async () => {
+      const admin = await actor('SUPER_ADMIN');
+      const h = (await actor('RESP_STOCK')).headers;
+      const it = await item(h, 'Vaccin', {
+        category: 'VACCIN',
+        unit: 'flacon',
+      });
+      const plusDays = (n: number) => daysAgo(-n);
+      for (const [lot, expiry] of [
+        ['PAST', daysAgo(1)],
+        ['TODAY', daysAgo(0)],
+        ['LIMIT', plusDays(10)],
+        ['BEYOND', plusDays(11)],
+      ] as const) {
+        await entry(h, it.id, 5, 100, daysAgo(40), {
+          lotNumber: lot,
+          expiryDate: expiry,
+        });
+      }
+      await entry(h, it.id, 5, 100, daysAgo(40), { lotNumber: 'NONE' });
+      const statuses = async () =>
+        Object.fromEntries(
+          (
+            (await http().get(`/api/stock/${it.id}`).set(h).expect(200))
+              .body as { batches: { lotNumber: string; expiry: string }[] }
+          ).batches.map((b) => [b.lotNumber, b.expiry]),
+        );
+      // Default 30 days: everything not past is soon, except the lot with no date.
+      expect(await statuses()).toEqual({
+        PAST: 'expired',
+        TODAY: 'soon',
+        LIMIT: 'soon',
+        BEYOND: 'soon',
+        NONE: 'ok',
+      });
+      await http()
+        .put('/api/settings/expiryWarningDays')
+        .set(admin.headers)
+        .send({ value: 10 })
+        .expect(200);
+      expect(await statuses()).toEqual({
+        PAST: 'expired',
+        TODAY: 'soon',
+        LIMIT: 'soon',
+        BEYOND: 'ok',
+        NONE: 'ok',
+      });
+      await http()
+        .put('/api/settings/expiryWarningDays')
+        .set(admin.headers)
+        .send({ value: 1 })
+        .expect(200);
+      expect((await statuses()).LIMIT).toBe('ok');
+      // The alerts say the same: expired and soon lots raise an alert, ok ones do not.
+      const alerts = (await http().get('/api/alerts').set(h).expect(200))
+        .body as { items: { key: string; title: string }[] };
+      expect(alerts.items.map((a) => a.title).sort()).toEqual([
+        'Produit bientôt périmé : Vaccin',
+        'Produit périmé : Vaccin',
+      ]);
+    });
+
+    it('GET /inventories/:id runs a fixed number of queries whatever the number of articles', async () => {
+      const resp = (await actor('DIRECTEUR_FERME')).headers;
+      const first = await item(resp, 'Premier');
+      await entry(resp, first.id, 10, 5, daysAgo(10));
+      const session = (
+        await http()
+          .post('/api/inventories')
+          .set(resp)
+          .send({ date: daysAgo(3) })
+          .expect(201)
+      ).body as Inventory;
+      const measure = async () => {
+        const served = app.get(PrismaService);
+        const counts = { n: 0 };
+        const spies = (
+          ['findMany', 'groupBy', 'count', 'findFirst'] as const
+        ).flatMap((method) =>
+          [
+            served.stockMovement,
+            served.stockItem,
+            served.inventorySession,
+            served.inventoryLine,
+          ].map((delegate) => {
+            const original = delegate[method].bind(delegate) as (
+              ...a: unknown[]
+            ) => unknown;
+            return jest.spyOn(delegate, method as never).mockImplementation(((
+              ...a: unknown[]
+            ) => {
+              counts.n += 1;
+              return original(...a);
+            }) as never);
+          }),
+        );
+        try {
+          await http()
+            .get(`/api/inventories/${session.id}`)
+            .set(resp)
+            .expect(200);
+        } finally {
+          spies.forEach((spy) => spy.mockRestore());
+        }
+        return counts.n;
+      };
+      const small = await measure();
+      for (let i = 0; i < 6; i++) {
+        const extra = await item(resp, `Autre ${i}`);
+        await entry(resp, extra.id, 5, 5, daysAgo(10));
+      }
+      expect(await measure()).toBe(small);
     });
 
     it('a count with no difference closes the past too; another article and another farm stay open', async () => {

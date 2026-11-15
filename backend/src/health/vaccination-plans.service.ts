@@ -136,7 +136,7 @@ export class VaccinationPlansService {
     before?: VaccinationPlanItem,
     after?: VaccinationPlanItem,
   ): Promise<void> {
-    return this.audit.log(
+    return this.audit.logChange(
       {
         ctx,
         module: 'sante',
@@ -299,8 +299,15 @@ export class VaccinationPlansService {
           'Ce plan est réservé à un autre type de lot',
         );
       }
+      // A cancelled step does not count: after cancelling its steps a plan can be applied again.
       if (
-        await tx.healthAct.count({ where: { planId: id, batchId: target.id } })
+        await tx.healthAct.count({
+          where: {
+            planId: id,
+            batchId: target.id,
+            status: { not: 'ANNULE' },
+          },
+        })
       ) {
         throw new ConflictException(ALREADY_APPLIED);
       }

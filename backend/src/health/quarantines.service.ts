@@ -68,9 +68,10 @@ const toItem = (r: Row): QuarantineItem => ({
 });
 
 /**
- * Quarantines of a lot or an animal (daily entries). Lifting, editing and
- * deleting lock the quarantine row alone: a lot closed while quarantined can
- * still be lifted. Creating locks the target first (`HealthTargets`).
+ * Quarantines of a lot or an animal (daily entries). Lifting and deleting lock
+ * the quarantine row alone: a lot closed while quarantined can still be
+ * lifted. Creating, and editing a start date, lock the target (lot or animal,
+ * `HealthTargets`) first and the quarantine row second, like feed.
  */
 @Injectable()
 export class QuarantinesService {
@@ -150,7 +151,7 @@ export class QuarantinesService {
     before?: QuarantineItem,
     after?: QuarantineItem,
   ) {
-    return this.audit.log(
+    return this.audit.logChange(
       {
         ctx,
         module: 'sante',

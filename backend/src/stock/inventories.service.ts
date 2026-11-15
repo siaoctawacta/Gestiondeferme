@@ -45,14 +45,19 @@ export interface InventoryItem {
   createdBy: string;
   validatedBy: string | null;
   validatedAt: string | null;
-  lines: {
-    itemId: string;
-    itemName: string;
-    unit: string;
-    theoreticalQty: number;
-    countedQty: number;
-    difference: number;
-  }[];
+  lines: InventoryLine[];
+}
+
+export interface InventoryLine {
+  itemId: string;
+  itemName: string;
+  unit: string;
+  /** The quantity held on the session date, in the session's farm. */
+  theoreticalQty: number;
+  /** null: not counted yet (a draft's line for an article nobody counted). */
+  countedQty: number | null;
+  /** `countedQty − theoreticalQty`; null while not counted. */
+  difference: number | null;
 }
 
 const toItem = (s: Session): InventoryItem => ({
@@ -125,8 +130,47 @@ export class InventoriesService {
     return row;
   }
 
+  /**
+   * A validated session shows the lines it stored, unchanged. A draft shows one
+   * line per ACTIVE article of the organisation (plus any inactive one that is
+   * already counted), each with the quantity held on the session date in the
+   * session's farm (what validation will use) and its count when it has one:
+   * three queries whatever the number of articles.
+   */
   async get(ctx: RequestContext, id: string): Promise<InventoryItem> {
-    return toItem(await this.find(this.prisma, ctx, id));
+    const session = await this.find(this.prisma, ctx, id);
+    const item = toItem(session);
+    if (session.status === 'VALIDEE') return item;
+    const counted = new Map(session.lines.map((l) => [l.stockItemId, l]));
+    const articles = await this.prisma.stockItem.findMany({
+      where: {
+        organizationId: ctx.user.organizationId,
+        OR: [{ active: true }, { id: { in: [...counted.keys()] } }],
+      },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+      select: { id: true, name: true, unit: true },
+    });
+    const theoretical = await this.ledger.quantitiesAt(
+      session.farmId,
+      articles.map((a) => a.id),
+      session.date,
+      this.prisma,
+    );
+    return {
+      ...item,
+      lines: articles.map((a) => {
+        const line = counted.get(a.id);
+        const expected = theoretical.get(a.id) ?? new Prisma.Decimal(0);
+        return {
+          itemId: a.id,
+          itemName: a.name,
+          unit: a.unit,
+          theoreticalQty: expected.toNumber(),
+          countedQty: line ? line.countedQty.toNumber() : null,
+          difference: line ? line.countedQty.sub(expected).toNumber() : null,
+        };
+      }),
+    };
   }
 
   /** Locks the session (scoped to the caller's farms) and returns it fresh. */

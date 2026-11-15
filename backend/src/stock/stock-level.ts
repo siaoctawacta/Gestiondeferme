@@ -24,3 +24,22 @@ export function worstLevel(levels: StockLevel[]): StockLevel {
     'ok',
   );
 }
+
+export const EXPIRY_STATUSES = ['ok', 'soon', 'expired'] as const;
+export type ExpiryStatus = (typeof EXPIRY_STATUSES)[number];
+
+/**
+ * The one rule for a lot's expiry, shared by the alerts and the stock screens:
+ * `expired` when its expiry day is before today, `soon` from today up to and
+ * including `warningDays` days ahead, `ok` beyond that or with no expiry date.
+ * `daysLeft` is the signed number of whole days from today to the expiry day
+ * (null: no expiry date).
+ */
+export function expiryStatus(
+  daysLeft: number | null,
+  warningDays: number,
+): ExpiryStatus {
+  if (daysLeft === null) return 'ok';
+  if (daysLeft < 0) return 'expired';
+  return daysLeft <= warningDays ? 'soon' : 'ok';
+}

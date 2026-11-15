@@ -160,6 +160,13 @@ function historyOf(p: PurchaseFull): PurchaseStep[] {
         at: last.createdAt.toISOString(),
         by: last.createdBy.name,
       });
+    } else if (p.receivedAt) {
+      // Settled at reception (nothing to pay): paid by the reception itself.
+      steps.push({
+        step: 'PAYEE',
+        at: p.receivedAt.toISOString(),
+        by: p.receivedBy?.name ?? null,
+      });
     }
   }
   if (p.cancelledAt) {

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { AdminModule } from '../admin/admin.module';
 import { InventoriesController } from './inventories.controller';
 import { InventoriesService } from './inventories.service';
 import { StockItemsController } from './stock-items.controller';
@@ -15,6 +16,7 @@ import { StockOverviewService } from './stock-overview.service';
  * movements through it, inside their own transactions.
  */
 @Module({
+  imports: [AdminModule],
   controllers: [
     StockItemsController,
     // Before the overview: `/stock/movements` must win over `/stock/:itemId`.

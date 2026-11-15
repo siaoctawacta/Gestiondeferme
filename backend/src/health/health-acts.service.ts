@@ -206,7 +206,7 @@ export class HealthActsService {
     before?: HealthActItem,
     after?: HealthActItem,
   ): Promise<void> {
-    return this.audit.log(
+    return this.audit.logChange(
       {
         ctx,
         module: 'sante',
@@ -328,9 +328,10 @@ export class HealthActsService {
   }
 
   /**
-   * For cancelling and deleting: a PLANIFIE act (no stock involved) may be
-   * dropped even when its lot is closed or its animal gone, so the target is
-   * locked without requiring it open. A done act still needs its target open.
+   * For cancelling and deleting: an act that is not done (PLANIFIE, or already
+   * ANNULE: no stock involved) may be dropped even when its lot is closed or
+   * its animal gone, so the target is locked without requiring it open. A done
+   * (REALISE) act still needs its target open.
    */
   private async lockToDrop(
     tx: Tx,
@@ -338,12 +339,12 @@ export class HealthActsService {
     id: string,
   ): Promise<ActRow> {
     const found = await this.find(tx, ctx, id);
-    if (found.status === 'PLANIFIE') await this.targets.lockAny(tx, ctx, found);
+    if (found.status !== 'REALISE') await this.targets.lockAny(tx, ctx, found);
     else await this.targets.forRow(tx, ctx, found);
     await lockRow(tx, 'HealthAct', id, ctx.farmIds);
     const before = await this.find(tx, ctx, id);
     // It was completed while we waited for the locks: now the target must be open.
-    if (found.status === 'PLANIFIE' && before.status !== 'PLANIFIE') {
+    if (found.status !== 'REALISE' && before.status === 'REALISE') {
       await this.targets.forRow(tx, ctx, before);
     }
     return before;

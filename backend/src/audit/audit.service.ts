@@ -34,6 +34,11 @@ export function sanitize(value: unknown): unknown {
   return value;
 }
 
+/** Whether two snapshots of a record differ once serialised the way the audit log keeps them. */
+export function differs(before: unknown, after: unknown): boolean {
+  return JSON.stringify(sanitize(before)) !== JSON.stringify(sanitize(after));
+}
+
 export interface AuditEntry {
   /** Present on authenticated routes; public routes pass the three fields below instead. */
   ctx?: RequestContext;
@@ -93,5 +98,19 @@ export class AuditService {
         error instanceof Error ? error.stack : String(error),
       );
     }
+  }
+
+  /**
+   * Like `log`, but an UPDATE whose `before` and `after` are identical (a no-op
+   * PATCH) writes no row: the log records changes, not requests.
+   */
+  async logChange(
+    entry: AuditEntry,
+    tx?: Prisma.TransactionClient,
+  ): Promise<void> {
+    if (entry.action === 'UPDATE' && !differs(entry.before, entry.after)) {
+      return;
+    }
+    await this.log(entry, tx);
   }
 }

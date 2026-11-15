@@ -84,8 +84,10 @@ const OVERPAID = 'Le montant dépasse le reste à payer';
  *
  * Lock order, every path: the purchase row first (`lockRow`, scoped to the
  * caller's farms), then nothing else, except a reception, which ends with ONE
- * stock-ledger call (the ledger takes its own locks last) and the numbering
- * advisory lock a creation/order takes (never held while waiting on a row).
+ * stock-ledger call (the ledger takes its own locks last); a creation or an
+ * order also bumps the organisation's numbering counter row (a row lock held
+ * until commit, taken after the purchase row and never while waiting on
+ * another row).
  */
 @Injectable()
 export class PurchasesService {
@@ -446,7 +448,7 @@ export class PurchasesService {
       await tx.purchase.update({
         where: { id },
         data: {
-          status: statusAfter('validate') ?? before.status,
+          status: statusAfter('validate'),
           validatedAt: new Date(),
           validatedById: ctx.user.id,
         },
@@ -455,7 +457,7 @@ export class PurchasesService {
     });
   }
 
-  /** Assigns the `BC-NNNN` number (per organisation, under an advisory lock). */
+  /** Assigns the `BC-NNNN` number (per organisation, from the counter row). */
   order(ctx: RequestContext, id: string): Promise<PurchaseDetail> {
     const organizationId = ctx.user.organizationId;
     return orConflict(() =>
@@ -466,7 +468,7 @@ export class PurchasesService {
         await tx.purchase.update({
           where: { id },
           data: {
-            status: statusAfter('order') ?? before.status,
+            status: statusAfter('order'),
             orderNumber,
             orderedAt: new Date(),
             orderedById: ctx.user.id,
@@ -488,7 +490,7 @@ export class PurchasesService {
       await tx.purchase.update({
         where: { id },
         data: {
-          status: statusAfter('cancel') ?? before.status,
+          status: statusAfter('cancel'),
           cancelledAt: new Date(),
           cancelledById: ctx.user.id,
           cancelReason: dto.reason,
@@ -539,9 +541,7 @@ export class PurchasesService {
         where: { id },
         data: {
           // A purchase worth 0 has nothing to pay: it is settled at reception.
-          status:
-            statusAfter('receive', { settled: worth.isZero() }) ??
-            before.status,
+          status: statusAfter('receive', { settled: worth.isZero() }),
           receivedAt: new Date(),
           receivedById: ctx.user.id,
           receivedDate: date,
@@ -643,7 +643,7 @@ export class PurchasesService {
         },
       });
       const next = statusAfter('pay', { settled: amount.eq(remaining) });
-      if (next && next !== before.status) {
+      if (next !== before.status) {
         await tx.purchase.update({ where: { id }, data: { status: next } });
       }
       const after = toDetail(await this.load(tx, ctx, id));
@@ -681,7 +681,7 @@ export class PurchasesService {
       if (!can(before.status, 'unpay')) this.refuse('unpay');
       await tx.supplierPayment.delete({ where: { id: paymentId } });
       const next = statusAfter('unpay');
-      if (next && next !== before.status) {
+      if (next !== before.status) {
         await tx.purchase.update({ where: { id }, data: { status: next } });
       }
       const after = toDetail(await this.load(tx, ctx, id));

@@ -147,7 +147,7 @@ export class IncidentsService {
     before?: IncidentItem,
     after?: IncidentItem,
   ) {
-    return this.audit.log(
+    return this.audit.logChange(
       {
         ctx,
         module: 'sante',
@@ -211,7 +211,11 @@ export class IncidentsService {
       if (before.status === 'CLOS') throw new ConflictException(CLOSED);
       if (dto.date) {
         assertNotFuture(date);
-        if (before.batch) assertNotBeforeEntry(before.batch.entryDate, date);
+        // Against the lot the incident ends up on: a NEW lot was checked when
+        // it was resolved above, and an incident whose lot is cleared has none.
+        if (batchId && batchId === before.batchId && before.batch) {
+          assertNotBeforeEntry(before.batch.entryDate, date);
+        }
       }
       if (buildingId && buildingId !== before.buildingId) {
         await this.targets.building(tx, ctx, buildingId);

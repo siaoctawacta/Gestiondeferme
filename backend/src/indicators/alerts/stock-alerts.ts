@@ -1,6 +1,6 @@
 import type { RequestContext } from '../../access/decorators';
 import { signedDaysBetween, today } from '../../common/days';
-import { stockLevel } from '../../stock/stock-level';
+import { expiryStatus, stockLevel } from '../../stock/stock-level';
 import { quantityText } from '../indicators';
 import { ALERT_LEVEL_ORDER } from './alert.types';
 import type { AlertItem, AlertRule, AlertSettings } from './alert.types';
@@ -96,14 +96,18 @@ export function expiryAlerts(
   const alerts: { alert: AlertItem; batch: ExpiringBatch }[] = [];
   for (const b of batches) {
     if (b.quantity <= 0) continue;
-    const days = signedDaysBetween(start, new Date(b.expiryDate));
+    const status = expiryStatus(
+      signedDaysBetween(start, new Date(b.expiryDate)),
+      settings.expiryWarningDays,
+    );
+    if (status === 'ok') continue;
     const lot = `Lot ${b.lotNumber ?? 'sans numéro'}`;
     const base = {
       key: `expiry:${b.id}`,
       module: 'stocks' as const,
       modules: ['stocks'] as AlertItem['modules'],
     };
-    if (days < 0) {
+    if (status === 'expired') {
       alerts.push({
         batch: b,
         alert: {
@@ -113,7 +117,7 @@ export function expiryAlerts(
           level: 'URGENT',
         },
       });
-    } else if (days <= settings.expiryWarningDays) {
+    } else {
       alerts.push({
         batch: b,
         alert: {

@@ -50,10 +50,21 @@ export const can = (
   action: PurchaseAction,
 ): boolean => FROM[action].includes(status);
 
+/** The actions that move the purchase to another status. */
+type StatusChanging = Exclude<PurchaseAction, 'edit' | 'delete'>;
+
 /**
- * The status an action leads to (null: the status does not change).
- * `settled`: nothing is left to pay once the action is done.
+ * The status an action leads to (null for `edit` and `delete`: the status does
+ * not change). `settled`: nothing is left to pay once the action is done.
  */
+export function statusAfter(
+  action: StatusChanging,
+  opts?: { settled?: boolean },
+): PurchaseStatusValue;
+export function statusAfter(
+  action: PurchaseAction,
+  opts?: { settled?: boolean },
+): PurchaseStatusValue | null;
 export function statusAfter(
   action: PurchaseAction,
   opts: { settled?: boolean } = {},

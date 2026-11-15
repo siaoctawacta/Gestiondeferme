@@ -663,6 +663,18 @@ describe('Dashboard (e2e)', () => {
     const aheadStr = (n: number) => dayStr(-n);
     let siteId: string;
     let porcherie: string;
+    const clocks: { stock?: () => Date; health?: () => Date } = {};
+
+    beforeAll(() => {
+      clocks.stock = app.get(StockAlertsService).now;
+      clocks.health = app.get(HealthAlertsService).now;
+    });
+
+    // The services outlive this block: give them their own clock back.
+    afterAll(() => {
+      if (clocks.stock) app.get(StockAlertsService).now = clocks.stock;
+      if (clocks.health) app.get(HealthAlertsService).now = clocks.health;
+    });
 
     beforeEach(async () => {
       const t = new Date();
@@ -986,7 +998,7 @@ describe('Dashboard (e2e)', () => {
       ]);
     });
 
-    it('ignores biosecurityWarningDays: a disinfection is late exactly when the list says EN_RETARD', async () => {
+    it('ignores a stored biosecurityWarningDays row (the setting was removed): a disinfection is late exactly when the list says EN_RETARD', async () => {
       await prisma.setting.create({
         data: {
           organizationId: orgId,
@@ -1169,5 +1181,12 @@ describe('Dashboard (e2e)', () => {
       await stockIn(farmB, await item('Article B'), 5);
       expect(await measure('all')).toBe(small);
     });
+  });
+
+  it('leaves the alert services on the wall clock once the frozen-clock block is done', () => {
+    for (const service of [StockAlertsService, HealthAlertsService]) {
+      const drift = Math.abs(app.get(service).now().getTime() - Date.now());
+      expect(drift).toBeLessThan(60_000);
+    }
   });
 });

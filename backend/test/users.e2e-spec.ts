@@ -716,6 +716,22 @@ describe('Users and settings (e2e)', () => {
   });
 
   describe('settings', () => {
+    it('ignores a value stored for the removed biosecurityWarningDays setting', async () => {
+      const admin = await actor('SUPER_ADMIN');
+      await prisma.setting.create({
+        data: {
+          organizationId: admin.user.organizationId,
+          key: 'biosecurityWarningDays',
+          value: 2,
+        },
+      });
+      const res = await http()
+        .get('/api/settings')
+        .set(admin.headers)
+        .expect(200);
+      expect(res.body).not.toHaveProperty('biosecurityWarningDays');
+    });
+
     it('returns every known key with its default, then the stored value', async () => {
       const admin = await actor('SUPER_ADMIN');
       const res = await http()
@@ -730,7 +746,6 @@ describe('Users and settings (e2e)', () => {
         expiryWarningDays: 30,
         farrowingWarningDays: 7,
         vaccinationWarningDays: 3,
-        biosecurityWarningDays: 0,
         gestationDays: 114,
         legal: { name: '', address: '', nif: '', rccm: '' },
       });
@@ -792,12 +807,8 @@ describe('Users and settings (e2e)', () => {
         }
         await put(key, 21).expect(200);
       }
-      // Days of tolerated delay: 0 is a valid value (and the default).
-      for (const bad of [1.5, 0.5, -1, '7', null]) {
-        await put('biosecurityWarningDays', bad).expect(400);
-      }
-      await put('biosecurityWarningDays', 0).expect(200);
-      await put('biosecurityWarningDays', 2).expect(200);
+      // The biosecurity tolerance no longer exists: unknown key.
+      await put('biosecurityWarningDays', 2).expect(400);
       for (const key of [
         'mortalityDailyPct',
         'mortalityCumulPct',

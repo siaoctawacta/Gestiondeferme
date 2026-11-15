@@ -2031,4 +2031,220 @@ describe('Health acts, vaccination plans and biosecurity (e2e)', () => {
       }
     });
   });
+
+  describe('final fix wave: plans, cancelled acts, incidents, audit', () => {
+    const planBody = {
+      name: 'Plan C',
+      species: 'AVICOLE',
+      type: 'CHAIR',
+      items: [
+        { ageDays: 1, productName: 'a' },
+        { ageDays: 7, productName: 'b' },
+      ],
+    };
+    const apply = (planId: string, status: number) =>
+      http()
+        .post(`/api/vaccination-plans/${planId}/apply`)
+        .set(h)
+        .send({ batchId: lotId })
+        .expect(status);
+
+    it('a plan can be applied again once its steps are cancelled, not while a step is live', async () => {
+      const p = await world.post<Plan>(h, '/vaccination-plans', planBody);
+      const first = (await apply(p.id, 201)).body as Act[];
+      expect(first).toHaveLength(2);
+      await apply(p.id, 409);
+      // One step cancelled, one live: still applied.
+      await http()
+        .post(`/api/health-acts/${first[0].id}/cancel`)
+        .set(h)
+        .expect(200);
+      await apply(p.id, 409);
+      // Every step cancelled: the plan can be applied again.
+      await http()
+        .post(`/api/health-acts/${first[1].id}/cancel`)
+        .set(h)
+        .expect(200);
+      const second = (await apply(p.id, 201)).body as Act[];
+      expect(second).toHaveLength(2);
+      // Fresh acts (past steps show as late), not the cancelled ones.
+      expect(second.every((a) => a.status !== 'ANNULE')).toBe(true);
+      expect(second.map((a) => a.id)).not.toEqual(
+        expect.arrayContaining(first.map((a) => a.id)),
+      );
+      await apply(p.id, 409);
+    });
+
+    it('a cancelled act on a closed lot can be deleted, a done one still cannot', async () => {
+      const planned = await act({ date: daysAgo(1) });
+      await http()
+        .post(`/api/health-acts/${planned.id}/cancel`)
+        .set(h)
+        .expect(200);
+      await closeLot(lotId);
+      await http().delete(`/api/health-acts/${planned.id}`).set(h).expect(200);
+      expect((await list({ batchId: lotId })).items).toEqual([]);
+
+      const open = (await world.lot(h)).id;
+      const finished = await done({ batchId: open, date: daysAgo(2) });
+      await closeLot(open);
+      const res = await http()
+        .delete(`/api/health-acts/${finished.id}`)
+        .set(h)
+        .expect(409);
+      expect(message(res)).toBeTruthy();
+    });
+
+    it('refuses a future doneDate on an act completed later (already enforced by the shared date guard)', async () => {
+      const planned = await act({ date: daysAgo(1) });
+      await complete(planned.id, { doneDate: daysAgo(1) });
+      const res = await http()
+        .patch(`/api/health-acts/${planned.id}`)
+        .set(h)
+        .send({ doneDate: plusDays(2) })
+        .expect(400);
+      expect(message(res)).toBe('La date ne peut pas être dans le futur');
+    });
+
+    describe('incidents: the date is checked against the lot the incident ends up on', () => {
+      const entered = async (entryDate: string) =>
+        (await world.lot(h, { entryDate })).id;
+
+      it('a new lot decides, whatever the old lot was', async () => {
+        const young = await entered(daysAgo(10));
+        const old = await entered(daysAgo(40));
+        const i = await world.post<Id>(h, '/incidents', {
+          date: daysAgo(5),
+          title: 'Toux',
+          severity: 'FAIBLE',
+          batchId: young,
+        });
+        // Valid for the old lot although before the young lot's entry.
+        await http()
+          .patch(`/api/incidents/${i.id}`)
+          .set(h)
+          .send({ batchId: old, date: daysAgo(20) })
+          .expect(200);
+        // And the reverse is refused: the new lot entered after that date.
+        const res = await http()
+          .patch(`/api/incidents/${i.id}`)
+          .set(h)
+          .send({ batchId: young, date: daysAgo(20) })
+          .expect(400);
+        expect(message(res)).toBe("La date est antérieure à l'entrée du lot");
+      });
+
+      it('clearing the lot skips the check', async () => {
+        const young = await entered(daysAgo(10));
+        const i = await world.post<Id>(h, '/incidents', {
+          date: daysAgo(5),
+          title: 'Toux',
+          severity: 'FAIBLE',
+          batchId: young,
+        });
+        const res = await http()
+          .patch(`/api/incidents/${i.id}`)
+          .set(h)
+          .send({ batchId: null, date: daysAgo(20) })
+          .expect(200);
+        expect(res.body).toMatchObject({ target: null, date: daysAgo(20) });
+      });
+
+      it('keeping the lot still refuses a date before its entry', async () => {
+        const young = await entered(daysAgo(10));
+        const i = await world.post<Id>(h, '/incidents', {
+          date: daysAgo(5),
+          title: 'Toux',
+          severity: 'FAIBLE',
+          batchId: young,
+        });
+        await http()
+          .patch(`/api/incidents/${i.id}`)
+          .set(h)
+          .send({ date: daysAgo(20) })
+          .expect(400);
+      });
+    });
+
+    describe('a no-op PATCH writes no audit row, a real change writes one', () => {
+      const updates = (recordId: string) =>
+        prisma.auditLog.count({ where: { recordId, action: 'UPDATE' } });
+
+      async function check(
+        path: string,
+        id: string,
+        same: object,
+        change: object,
+      ) {
+        await http().patch(`${path}/${id}`).set(h).send({}).expect(200);
+        await http().patch(`${path}/${id}`).set(h).send(same).expect(200);
+        expect(await updates(id)).toBe(0);
+        await http().patch(`${path}/${id}`).set(h).send(change).expect(200);
+        expect(await updates(id)).toBe(1);
+      }
+
+      it('health acts', async () => {
+        const a = await act({ dose: '1 goutte' });
+        await check(
+          '/api/health-acts',
+          a.id,
+          { dose: '1 goutte' },
+          { dose: '2 gouttes' },
+        );
+      });
+
+      it('vaccination plans', async () => {
+        const p = await world.post<Plan>(h, '/vaccination-plans', planBody);
+        await check(
+          '/api/vaccination-plans',
+          p.id,
+          { name: 'Plan C' },
+          { name: 'Plan D' },
+        );
+      });
+
+      it('quarantines', async () => {
+        const q = await world.post<Id>(h, '/quarantines', {
+          batchId: lotId,
+          startDate: daysAgo(2),
+          reason: 'Toux',
+        });
+        await check(
+          '/api/quarantines',
+          q.id,
+          { reason: 'Toux' },
+          { reason: 'Grippe' },
+        );
+      });
+
+      it('incidents', async () => {
+        const i = await world.post<Id>(h, '/incidents', {
+          date: daysAgo(1),
+          title: 'Panne',
+          severity: 'FAIBLE',
+        });
+        await check(
+          '/api/incidents',
+          i.id,
+          { title: 'Panne' },
+          { title: 'Grosse panne' },
+        );
+      });
+
+      it('biosecurity logs', async () => {
+        const l = await world.post<Id>(h, '/biosecurity-logs', {
+          date: daysAgo(1),
+          type: 'DESINFECTION',
+          buildingId: world.poultryBld,
+          productName: 'Virkon',
+        });
+        await check(
+          '/api/biosecurity-logs',
+          l.id,
+          { productName: 'Virkon' },
+          { productName: 'Javel' },
+        );
+      });
+    });
+  });
 });

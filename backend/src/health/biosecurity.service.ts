@@ -112,7 +112,7 @@ export class BiosecurityService {
     before?: BiosecurityLogItem,
     after?: BiosecurityLogItem,
   ) {
-    return this.audit.log(
+    return this.audit.logChange(
       {
         ctx,
         module: 'sante',

@@ -1292,6 +1292,17 @@ describe('Suppliers and purchases (e2e)', () => {
         }),
       );
       expect(r).toMatchObject({ status: 'PAYEE', amount: 0, remaining: 0 });
+      // The history tells it: settled by the reception itself.
+      expect(r.history.map((h) => h.step)).toEqual([
+        'DEMANDE',
+        'VALIDEE',
+        'COMMANDEE',
+        'RECUE',
+        'PAYEE',
+      ]);
+      const [recue, payee] = r.history.slice(-2);
+      expect(payee).toMatchObject({ at: recue.at, by: recue.by });
+      expect(payee.by).not.toBeNull();
       const mixed = await ordered({
         lines: [
           { itemId, quantity: 10, unitPrice: 5 },

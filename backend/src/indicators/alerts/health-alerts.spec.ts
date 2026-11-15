@@ -9,7 +9,6 @@ import {
 
 const SETTINGS: AlertSettings = {
   vaccinationWarningDays: 3,
-  biosecurityWarningDays: 0,
 };
 const NOW = new Date(Date.UTC(2026, 10, 15, 14, 30));
 
@@ -133,7 +132,7 @@ describe('otherHealthAlerts', () => {
     ]);
   });
 
-  it('ignores biosecurityWarningDays: late exactly when the health list says EN_RETARD', () => {
+  it('is late exactly when the health list says EN_RETARD (no tolerance)', () => {
     const at = (date: string) =>
       otherHealthAlerts([act({ type: 'DESINFECTION', date })], NOW);
     expect(at('2026-11-14')).toHaveLength(1);
