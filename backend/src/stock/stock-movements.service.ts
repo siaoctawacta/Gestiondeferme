@@ -110,7 +110,8 @@ export class StockMovementsService {
             where,
             include,
             relationLoadStrategy: 'join',
-            orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+            // Exactly the reverse of the replay order (date, createdAt, id): newest first.
+            orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
             ...range,
           }),
         ),
@@ -127,7 +128,7 @@ export class StockMovementsService {
         where: { id: { in: ids } },
         include,
         relationLoadStrategy: 'join',
-        orderBy: [{ createdAt: 'asc' }, { quantity: 'asc' }, { id: 'asc' }],
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       }),
     );
   }

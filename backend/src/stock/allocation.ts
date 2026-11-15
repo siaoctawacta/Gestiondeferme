@@ -39,26 +39,36 @@ export class AllocationError extends Error {
 
 /**
  * What each bucket (a lot, or `null` for stock held in no lot) can give to an
- * exit placed at the end of `date`: its lowest running balance from that point
- * to the end of the history. Taking more than that would drive the bucket
- * negative at a later movement (a later exit that already emptied the lot).
+ * exit placed at a position of the history: its lowest running balance from
+ * that position to the end. The position is the end of `date` for a new
+ * exit, or, for an exit that keeps its place in the day, just before the
+ * movements created at or after `anchor` that day. Taking more than the
+ * headroom would drive the bucket negative at a later movement (a later exit
+ * that already emptied the lot), or give a lot that is received after the
+ * position.
  */
 export function headrooms(
   rows: AllocRow[],
   date: Date,
+  anchor?: Date,
 ): Map<string | null, Decimal> {
   const balance = new Map<string | null, Decimal>();
   const lowest = new Map<string | null, Decimal>();
-  const ordered = [...rows].sort(byReplayOrder);
-  for (const r of ordered) {
+  const before = (r: AllocRow): boolean =>
+    r.date.getTime() < date.getTime() ||
+    (r.date.getTime() === date.getTime() &&
+      (anchor === undefined || r.createdAt.getTime() < anchor.getTime()));
+  for (const r of [...rows].sort(byReplayOrder)) {
     const next = (balance.get(r.stockBatchId) ?? ZERO).add(r.quantity);
     balance.set(r.stockBatchId, next);
-    if (r.date.getTime() <= date.getTime()) {
+    if (before(r)) {
       lowest.set(r.stockBatchId, next);
     } else {
-      const low = lowest.get(r.stockBatchId) ?? ZERO;
-      // The first later movement of a bucket starts from the balance at `date`.
-      lowest.set(r.stockBatchId, Decimal.min(low, next));
+      // The first later movement of a bucket starts from the balance at the position.
+      lowest.set(
+        r.stockBatchId,
+        Decimal.min(lowest.get(r.stockBatchId) ?? ZERO, next),
+      );
     }
   }
   const result = new Map<string | null, Decimal>();
@@ -71,7 +81,8 @@ export function headrooms(
  * earliest expiry first (no expiry last), then the stock held in no lot. A
  * consumption never touches an expired lot (expiry before `date`); any other
  * exit writes expired lots off first. `batchId` names the only lot to use;
- * Each bucket gives at most its headroom.
+ * Each bucket gives at most its headroom at the exit's position (`anchor`: the
+ * creation time an edited exit keeps in its day; absent: the end of the day).
  */
 export function allocateExit(opts: {
   rows: AllocRow[];
@@ -80,9 +91,10 @@ export function allocateExit(opts: {
   needed: Decimal;
   consumption: boolean;
   batchId?: string | null;
+  anchor?: Date;
 }): Piece[] {
   const { rows, batches, date, needed, consumption } = opts;
-  const room = headrooms(rows, date);
+  const room = headrooms(rows, date, opts.anchor);
   const roomOf = (id: string | null) => room.get(id) ?? ZERO;
   const expired = (b: AllocBatch) =>
     b.expiryDate !== null && b.expiryDate.getTime() < date.getTime();

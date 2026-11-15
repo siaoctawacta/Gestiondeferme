@@ -289,6 +289,7 @@ export class StockLedgerService {
         const head = rows[0];
         if (
           pairKey(head) === pairKey(input.pair) &&
+          head.type === input.raw.type &&
           head.quantity.gt(0) === input.quantity.gt(0) &&
           head.date.getTime() === input.raw.date.getTime()
         ) {
@@ -350,7 +351,7 @@ export class StockLedgerService {
     const { state, rows } = await this.lockOperation(tx, movementId, farmIds);
     const before = await tx.stockMovement.findMany({
       where: { id: { in: rows.map((r) => r.id) } },
-      orderBy: [{ createdAt: 'asc' }, { quantity: 'asc' }, { id: 'asc' }],
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     const first = rows[0];
     const entering = isEntry(first);
@@ -438,6 +439,10 @@ export class StockLedgerService {
           needed: wanted.abs(),
           reason: first.reason,
           batchId: first.lotExplicit ? first.stockBatchId : null,
+          anchor:
+            date.getTime() === first.date.getTime()
+              ? first.createdAt
+              : undefined,
         });
         this.place(
           state,
@@ -462,7 +467,7 @@ export class StockLedgerService {
     await this.commit(tx, new Map([[pairKey(state.pair), state]]));
     const after = await tx.stockMovement.findMany({
       where: { operationId: first.operationId, farmId: first.farmId },
-      orderBy: [{ createdAt: 'asc' }, { quantity: 'asc' }, { id: 'asc' }],
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     if (audit) {
       await this.log(
@@ -489,7 +494,7 @@ export class StockLedgerService {
     const { state, rows } = await this.lockOperation(tx, movementId, farmIds);
     const removed = await tx.stockMovement.findMany({
       where: { id: { in: rows.map((r) => r.id) } },
-      orderBy: [{ createdAt: 'asc' }, { quantity: 'asc' }, { id: 'asc' }],
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
     });
     for (const r of rows) r.removed = true;
     await this.commit(tx, new Map([[pairKey(state.pair), state]]));
@@ -779,7 +784,10 @@ export class StockLedgerService {
 
   private async load(tx: Tx, pair: Pair, item: StockItem): Promise<State> {
     const [rows, batches] = await Promise.all([
-      tx.stockMovement.findMany({ where: pair }),
+      tx.stockMovement.findMany({
+        where: pair,
+        orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+      }),
       tx.stockBatch.findMany({ where: pair }),
     ]);
     const latest = rows.reduce(
@@ -865,6 +873,7 @@ export class StockLedgerService {
           needed: quantity.abs(),
           reason: raw.reason,
           batchId: raw.stockBatchId,
+          anchor: claimed[0]?.createdAt,
         });
     return this.place(
       state,
@@ -933,7 +942,7 @@ export class StockLedgerService {
         if (same) return;
         row[key] = value;
         // A cost left to the average is not stored: flush rewrites the cost.
-        if (value !== null) {
+        if (key !== 'unitCost' || value !== null) {
           (row.patch as Record<string, unknown>)[key] = value;
         }
       };
@@ -977,6 +986,7 @@ export class StockLedgerService {
       needed: Dec;
       reason: StockReason;
       batchId?: string | null;
+      anchor?: Date;
     },
   ): Piece[] {
     try {
@@ -987,6 +997,7 @@ export class StockLedgerService {
         needed: opts.needed,
         consumption: CONSUMPTION_REASONS.includes(opts.reason),
         batchId: opts.batchId,
+        anchor: opts.anchor,
       });
     } catch (error) {
       if (!(error instanceof AllocationError)) throw error;

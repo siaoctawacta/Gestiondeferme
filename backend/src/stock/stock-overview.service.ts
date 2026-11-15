@@ -244,7 +244,7 @@ export class StockOverviewService {
       this.ledger.batchLevels(ctx.farmIds, [item.id]),
       this.prisma.stockMovement.findMany({
         where: { stockItemId: item.id, farmId: { in: ctx.farmIds } },
-        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'desc' }],
         take: LAST_MOVEMENTS,
         include: { stockItem: true, stockBatch: true },
       }),

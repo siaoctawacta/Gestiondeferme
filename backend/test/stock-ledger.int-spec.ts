@@ -565,7 +565,7 @@ describe('StockLedgerService (test database)', () => {
     const pieces = () =>
       prisma.stockMovement.findMany({
         where: { quantity: { lt: 0 } },
-        orderBy: [{ createdAt: 'asc' }, { quantity: 'asc' }, { id: 'asc' }],
+        orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       });
 
     it('shares one operation id between the pieces of a split exit, and gives a lone movement its own', async () => {
@@ -595,7 +595,9 @@ describe('StockLedgerService (test database)', () => {
       const { after } = await prisma.$transaction((tx) =>
         ledger.update(tx, out.movements[0].id, { quantity: -130 }),
       );
-      expect(after.map((m) => m.quantity.toNumber())).toEqual([-100, -30]);
+      expect(
+        after.map((m) => m.quantity.toNumber()).sort((x, y) => x - y),
+      ).toEqual([-100, -30]);
       expect(new Set(after.map((m) => m.operationId))).toEqual(
         new Set([out.movements[0].operationId]),
       );
@@ -709,12 +711,85 @@ describe('StockLedgerService (test database)', () => {
       await prisma.$transaction((tx) =>
         ledger.update(tx, fefo.movements[0].id, { quantity: -130 }),
       );
+      // The pieces of one operation share a place in the day: compare them as a set.
       expect(
-        (await pieces()).map((m) => [m.stockBatchId, m.quantity.toNumber()]),
+        (await pieces())
+          .map((m) => [m.stockBatchId, m.quantity.toNumber()])
+          .sort((x, y) => Number(x[1]) - Number(y[1])),
       ).toEqual([
         [a.id, -100],
         [b.id, -30],
       ]);
+    });
+
+    const lotLater = (date: string, quantity: number, lot = 'B') =>
+      prisma.$transaction(async (tx) => {
+        const b = await ledger.createBatch(tx, {
+          farmId,
+          stockItemId: item,
+          lotNumber: lot,
+          expiryDate: day('2027-01-01'),
+          receivedDate: day(date),
+        });
+        await ledger.record(
+          tx,
+          input({
+            type: 'ENTREE',
+            date: day(date),
+            quantity,
+            stockBatchId: b.id,
+          }),
+        );
+        return b;
+      });
+
+    it('re-plans an edited exit at its own position: a lot received later the same day is not drawn on, up or down', async () => {
+      await entry('2026-01-01', 100, 10); // stock held in no lot
+      const e = await exit('2026-01-05', 10); // morning: no lot exists yet
+      const lot = await lotLater('2026-01-05', 50);
+      for (const quantity of [-5, -20, -10]) {
+        await expect(
+          prisma.$transaction((tx) =>
+            ledger.update(tx, e.movements[0].id, { quantity }),
+          ),
+        ).resolves.toBeDefined();
+      }
+      expect(
+        (await pieces()).map((m) => [m.stockBatchId, m.quantity.toNumber()]),
+      ).toEqual([[null, -10]]);
+      expect(
+        (await ledger.batchLevels([farmId], [item]))[0].quantity.toNumber(),
+      ).toBe(50);
+      expect(lot.id).toBeDefined();
+    });
+
+    it('keeps naming the lot when an explicit-lot exit is edited beyond what the lot held at its position', async () => {
+      const a = await prisma.$transaction(async (tx) => {
+        const b = await ledger.createBatch(tx, {
+          farmId,
+          stockItemId: item,
+          lotNumber: 'A',
+          expiryDate: null,
+          receivedDate: day('2026-01-01'),
+        });
+        await ledger.record(
+          tx,
+          input({
+            type: 'ENTREE',
+            date: day('2026-01-01'),
+            quantity: 50,
+            stockBatchId: b.id,
+          }),
+        );
+        return b;
+      });
+      const e = await exit('2026-01-05', 10, { stockBatchId: a.id });
+      await lotLater('2026-01-05', 500);
+      await expect(
+        prisma.$transaction((tx) =>
+          ledger.update(tx, e.movements[0].id, { quantity: -60 }),
+        ),
+      ).rejects.toThrow(/lot A \(disponible 50 kg\)/);
     });
 
     it('audits an operation once, keyed by its operation id, with the pieces in the payload', async () => {
@@ -880,6 +955,136 @@ describe('StockLedgerService (test database)', () => {
         ),
       ).rejects.toThrow(/lot L9/);
       expect((await level()).quantity).toBe(100 - 25 + 50 + 20 - 5);
+    });
+
+    it('re-plans a replaced exit at its own position, so a lot received later the same day is not drawn on', async () => {
+      await entry('2026-01-01', 100, 10);
+      await prisma.$transaction((tx) =>
+        ledger.recordMany(tx, [
+          {
+            ...base(item, 10),
+            sourceType: 'FEED_DISTRIBUTION',
+            sourceId: 'm1',
+          },
+        ]),
+      );
+      await prisma.$transaction(async (tx) => {
+        const b = await ledger.createBatch(tx, {
+          farmId,
+          stockItemId: item,
+          lotNumber: 'B',
+          expiryDate: day('2027-01-01'),
+          receivedDate: day('2026-01-05'),
+        });
+        await ledger.record(
+          tx,
+          input({
+            type: 'ENTREE',
+            date: day('2026-01-05'),
+            quantity: 50,
+            stockBatchId: b.id,
+          }),
+        );
+      });
+      for (const n of [5, 20, 10]) {
+        await expect(
+          prisma.$transaction((tx) =>
+            ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 'm1', [
+              base(item, n),
+            ]),
+          ),
+        ).resolves.toBeDefined();
+      }
+      const rows = await prisma.stockMovement.findMany({
+        where: { sourceId: 'm1' },
+      });
+      expect(rows.map((r) => [r.stockBatchId, r.quantity.toNumber()])).toEqual([
+        [null, -10],
+      ]);
+    });
+
+    it('keeps each input its own operation, piece ids and order across repeated edits of a source with two same-article lines', async () => {
+      await entry('2026-01-01', 500, 10);
+      await prisma.$transaction((tx) =>
+        ledger.recordMany(
+          tx,
+          [10, 20].map((n) => ({
+            ...base(item, n),
+            sourceType: 'FEED_DISTRIBUTION' as const,
+            sourceId: 's2',
+          })),
+        ),
+      );
+      const snap = async () =>
+        (
+          await prisma.stockMovement.findMany({
+            where: { sourceId: 's2' },
+            orderBy: [{ date: 'asc' }, { createdAt: 'asc' }, { id: 'asc' }],
+          })
+        ).map((m) => [m.id, m.operationId, m.createdAt.getTime()]);
+      const first = await snap();
+      for (const [a, b] of [
+        [11, 21],
+        [12, 22],
+        [13, 23],
+      ]) {
+        await prisma.$transaction((tx) =>
+          ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 's2', [
+            base(item, a),
+            base(item, b),
+          ]),
+        );
+        expect(await snap()).toEqual(first);
+        const q = await prisma.stockMovement.findMany({
+          where: { sourceId: 's2' },
+          orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+        });
+        expect(q.map((m) => m.quantity.toNumber())).toEqual([-a, -b]);
+      }
+    });
+
+    it('lets an input clear the note and change the reason of a reused row, and never reuses a row of another type', async () => {
+      await entry('2026-01-01', 100, 10);
+      await prisma.$transaction((tx) =>
+        ledger.recordMany(tx, [
+          {
+            ...base(item, 10),
+            note: 'à corriger',
+            sourceType: 'FEED_DISTRIBUTION',
+            sourceId: 's3',
+          },
+        ]),
+      );
+      const first = await prisma.stockMovement.findFirstOrThrow({
+        where: { sourceId: 's3' },
+      });
+      expect(first.note).toBe('à corriger');
+      await prisma.$transaction((tx) =>
+        ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 's3', [
+          { ...base(item, 12), reason: 'TRAITEMENT' },
+        ]),
+      );
+      const second = await prisma.stockMovement.findFirstOrThrow({
+        where: { sourceId: 's3' },
+      });
+      expect(second).toMatchObject({
+        id: first.id,
+        note: null,
+        reason: 'TRAITEMENT',
+      });
+      await prisma.$transaction((tx) =>
+        ledger.replaceBySource(tx, 'FEED_DISTRIBUTION', 's3', [
+          { ...base(item, 12), type: 'AJUSTEMENT', reason: 'INVENTAIRE' },
+        ]),
+      );
+      const third = await prisma.stockMovement.findFirstOrThrow({
+        where: { sourceId: 's3' },
+      });
+      expect(third.type).toBe('AJUSTEMENT');
+      expect(third.id).not.toBe(first.id);
+      expect(
+        await prisma.stockMovement.count({ where: { sourceId: 's3' } }),
+      ).toBe(1);
     });
 
     it('does not deadlock when two concurrent edits swap the articles of their operations', async () => {

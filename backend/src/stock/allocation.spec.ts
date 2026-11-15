@@ -187,6 +187,50 @@ describe('allocateExit', () => {
     ).toThrow(AllocationError);
   });
 
+  it('allocates at the exit position: a lot received later the same day does not exist yet there', () => {
+    const rows = [
+      row('2026-01-01', null, 100),
+      {
+        ...row('2026-01-05', 'B', 50),
+        createdAt: new Date('2026-01-05T15:00:00Z'),
+      },
+    ];
+    const morning = new Date('2026-01-05T08:00:00Z');
+    const args = {
+      rows,
+      batches: [B],
+      date: day('2026-01-05'),
+      needed: D(10),
+      consumption: true,
+    };
+    // At the end of the day lot B is there and FEFO takes it; at the morning position it is not.
+    expect(take(allocateExit(args))).toEqual([['B', -10]]);
+    expect(take(allocateExit({ ...args, anchor: morning }))).toEqual([
+      [null, -10],
+    ]);
+  });
+
+  it('names no lot that is not yet received at the position, and keeps an explicit lot strict', () => {
+    const rows = [
+      row('2026-01-01', 'A', 5),
+      {
+        ...row('2026-01-05', 'B', 50),
+        createdAt: new Date('2026-01-05T15:00:00Z'),
+      },
+    ];
+    expect(() =>
+      allocateExit({
+        rows,
+        batches: [A, B],
+        date: day('2026-01-05'),
+        needed: D(10),
+        consumption: true,
+        batchId: 'B',
+        anchor: new Date('2026-01-05T08:00:00Z'),
+      }),
+    ).toThrow(AllocationError);
+  });
+
   it('reports what is available when the stock is short', () => {
     try {
       allocateExit({

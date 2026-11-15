@@ -915,7 +915,11 @@ describe('Stock (e2e)', () => {
           .send({ quantity: 120 })
           .expect(200)
       ).body as Mv[];
-      expect(patched.map((m) => [m.lotNumber, m.quantity])).toEqual([
+      expect(
+        patched
+          .map((m) => [m.lotNumber, m.quantity])
+          .sort((x, y) => String(x[0]).localeCompare(String(y[0]))),
+      ).toEqual([
         ['A', -100],
         ['B', -20],
       ]);
