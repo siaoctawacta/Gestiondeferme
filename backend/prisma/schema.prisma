@@ -2,6 +2,12 @@ generator client {
   provider     = "prisma-client"
   output       = "../src/generated/prisma"
   moduleFormat = "cjs"
+  // relationJoins: the feed and water services pass `relationLoadStrategy: 'join'`
+  // to load a row with its batch/building/product names in one query. With the
+  // flag on, Prisma's default relation load strategy may itself be `join`, so
+  // queries that rely on `query` (separate round trips) must say so explicitly.
+  // The client relies on it, hence `prisma` / `@prisma/client` are pinned to an
+  // exact version in package.json.
   previewFeatures = ["relationJoins"]
 }
 
@@ -333,6 +339,11 @@ model Breed {
   @@unique([organizationId, species, name])
 }
 
+enum BatchSourceType {
+  HATCH
+  FARROWING
+}
+
 model AnimalBatch {
   id                  String             @id @default(cuid())
   farmId              String
@@ -352,6 +363,11 @@ model AnimalBatch {
   responsible         User?              @relation(fields: [responsibleId], references: [id], onDelete: Restrict)
   status              BatchStatus        @default(EN_COURS)
   closedAt            DateTime?
+  /// What created the batch: a hatch (`sourceId` = incubation) or a farrowing
+  /// (`sourceId` = breeding record). Null for a purchased lot. Herd reads it to
+  /// freeze the count and entry date of such a batch without importing eggs/breeding.
+  sourceType          BatchSourceType?
+  sourceId            String?
   /// Sow of a piglet batch.
   motherAnimalId      String?
   mother              Animal?            @relation("SowLitters", fields: [motherAnimalId], references: [id], onDelete: Restrict)
