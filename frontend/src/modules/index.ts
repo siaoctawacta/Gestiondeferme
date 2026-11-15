@@ -5,6 +5,7 @@ import { ponte } from './ponte';
 import { porcs } from './porcs';
 import { reproduction } from './reproduction';
 import { MODULES, registerModule } from './registry';
+import { stocks } from './stocks';
 
 /** Module pages built on the ModulePage kit; later slices register their configs here. */
 registerModule(batiments);
@@ -13,5 +14,6 @@ registerModule(ponte);
 registerModule(porcs);
 registerModule(reproduction);
 registerModule(alimentation);
+registerModule(stocks);
 
 export { MODULES };

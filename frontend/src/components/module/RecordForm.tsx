@@ -15,6 +15,7 @@ export interface RecordFormProps {
   initial?: Values;
   intro?: ReactNode;
   toPayload?: (values: Values, mode: FormMode) => unknown;
+  validate?: (values: Values) => string | null;
   /** `POST` target when adding. */
   createPath: string;
   /** `PATCH` target when editing. */

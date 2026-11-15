@@ -30,6 +30,38 @@ interface FieldBase {
   defaultValue?: unknown | (() => unknown);
 }
 
+/** A row of a `lines` field as edited: every cell is a string (the payload coerces numbers). Extra keys are kept untouched. */
+export type LineRow = Record<string, string>;
+
+/**
+ * A cell of a `lines` row: the input of a text, date, number or select field, rendered by the same control as the
+ * form's own inputs. A cell has no `only`, `defaultValue` or `dependsOn`.
+ */
+export type CellField =
+  | (CellBase & { type: 'text' | 'date' })
+  | (CellBase & { type: 'number'; min?: number; max?: number; step?: number })
+  | (CellBase & {
+      type: 'select';
+      options: OptionsDef;
+      /** An option already chosen in another row of the grid is not offered again. */
+      unique?: boolean;
+    });
+
+interface CellBase {
+  /** Key of the cell in the row object (and in the request body). */
+  name: string;
+  /** Column header; the cell's accessible name is `{label} ligne {n}`. */
+  label: string;
+  required?: boolean;
+  /** The cell shows its value as text (no input); the value stays in the row and in the payload. */
+  readOnly?: boolean;
+  /**
+   * A column computed from the row (a gap, a total): shows this instead of an input, is not validated and is not
+   * part of the payload.
+   */
+  computed?: (row: LineRow) => ReactNode;
+}
+
 /** One input of the add / edit dialog. */
 export type Field =
   | (FieldBase & { type: 'text' | 'date' | 'textarea' })
@@ -50,7 +82,23 @@ export type Field =
     })
   /** Checkbox list; the value is the array of selected option values. */
   | (FieldBase & { type: 'multiselect'; options: OptionsDef })
-  | (FieldBase & { type: 'checkbox' });
+  | (FieldBase & { type: 'checkbox' })
+  /**
+   * Line items (ingredients of a formula, products of an order): a grid of rows, one `columns` cell each, with add
+   * and remove buttons. The value is the array of row objects; in the request body numbers are numbers and empty
+   * cells are left out. An edit compares the array as a whole (deep, order-sensitive): unchanged, it is not sent.
+   * Cells are validated on submit and their messages shown under the grid.
+   */
+  | (FieldBase & {
+      type: 'lines';
+      columns: CellField[];
+      /** Fewest rows: the remove button is disabled at that count and a smaller array is refused (`Ajoutez au moins une ligne`). */
+      minRows?: number;
+      /** Label of the add button (default `Ajouter une ligne`). */
+      addLabel?: string;
+      /** Shown under the grid with the rows as edited (a running total, a derived cost...). */
+      footer?: (rows: LineRow[]) => ReactNode;
+    });
 
 export type Column<T> = {
   /** Row property shown by default, and the `sort` field when `sortable`. */

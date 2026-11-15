@@ -48,6 +48,7 @@ function mount(ui: React.ReactNode, { perms = ALL, farm, modules = {} }: { perms
     if (url.startsWith('/api/feed-distributions')) return page(DISTRIBUTIONS);
     if (url.startsWith('/api/feed-products')) return page(url.includes('active=true') ? PRODUCTS.filter((p) => p.active) : PRODUCTS);
     if (url.startsWith('/api/feed-formulas')) return page(FORMULAS);
+    if (url.startsWith('/api/stock-items')) return page([{ id: 'si1', name: 'Maïs (stock)' }]);
     if (url.startsWith('/api/batches')) {
       return url.includes('species=PORCIN') ? page([{ id: 'l9', code: 'LOT-ENG-07' }]) : page([{ id: 'l1', code: 'LC-2026-14' }]);
     }
@@ -381,6 +382,28 @@ describe('aliments', () => {
       url: '/api/feed-products',
       body: { name: 'Son de blé', kind: 'MATIERE_PREMIERE', unitCost: 150, active: true },
     });
+  });
+});
+
+describe('aliments: stock article', () => {
+  it('offers the feed stock items and sends the chosen one as stockItemId', async () => {
+    mountPage();
+    await screen.findByText('LC-2026-14');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Aliments' }));
+    await screen.findByText('Maïs');
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Aliments' });
+    await user.type(within(dialog).getByLabelText('Nom'), 'Son de blé');
+    await user.selectOptions(within(dialog).getByLabelText('Type'), 'Matière première');
+    await user.type(within(dialog).getByLabelText('Coût unitaire (FCFA/kg)'), '150');
+    const article = within(dialog).getByLabelText('Article de stock');
+    await waitFor(() => expect(within(article).getByRole('option', { name: 'Maïs (stock)' })).toBeInTheDocument());
+    expect(calls.some((c) => c.url.startsWith('/api/stock-items?') && c.url.includes('category=ALIMENT') && c.url.includes('active=true'))).toBe(true);
+    await user.selectOptions(article, 'Maïs (stock)');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toMatchObject({ name: 'Son de blé', stockItemId: 'si1' });
   });
 });
 

@@ -1,7 +1,7 @@
 import { useId } from 'react';
-import { Input } from '../ui/Input';
-import { Select } from '../ui/Select';
-import type { Field, FormMode } from './types';
+import { CellControl } from './CellControl';
+import { LinesField } from './LinesField';
+import type { CellField, Field, FormMode, LineRow } from './types';
 import { useEndpointOptions, type Option } from './useEndpointOptions';
 
 type Values = Record<string, unknown>;
@@ -17,10 +17,31 @@ export function initialValue(field: Field, raw: Values, mode: FormMode = 'create
   const fallback = typeof field.defaultValue === 'function' ? (field.defaultValue as () => unknown)() : field.defaultValue;
   const v = mode === 'update' ? raw[field.name] : raw[field.name] ?? fallback;
   switch (field.type) {
+    case 'lines': return linesValue(field.columns, v);
     case 'checkbox': return Boolean(v ?? false);
     case 'multiselect': return Array.isArray(v) ? v.map(String) : [];
     default: return v === null || v === undefined ? '' : String(v);
   }
+}
+
+/** The rows of a `lines` field as edited: only the columns, every cell a string (a stored `null` is empty). */
+function linesValue(columns: CellField[], raw: unknown): LineRow[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((r) => Object.fromEntries(columns.map((c) => {
+    const v = (r as Record<string, unknown> | null)?.[c.name];
+    return [c.name, v === null || v === undefined ? '' : String(v)];
+  })));
+}
+
+/** A row as sent: numbers as numbers, text trimmed, empty and computed cells left out. */
+function linePayload(columns: CellField[], row: LineRow): Values {
+  const out: Values = {};
+  for (const c of columns) {
+    const v = row[c.name] ?? '';
+    if (c.computed || v === '') continue;
+    out[c.name] = c.type === 'number' ? Number(v) : c.type === 'text' ? v.trim() : v;
+  }
+  return out;
 }
 
 export function defaultPayload(fields: Field[], values: Values, mode: FormMode): Values {
@@ -28,7 +49,9 @@ export function defaultPayload(fields: Field[], values: Values, mode: FormMode):
   for (const f of fields) {
     if (f.only && f.only !== mode) continue;
     const v = values[f.name];
-    if (f.type === 'number') {
+    if (f.type === 'lines') {
+      out[f.name] = (v as LineRow[]).map((r) => linePayload(f.columns, r));
+    } else if (f.type === 'number') {
       if (v !== '') out[f.name] = Number(v);
     } else if (f.type === 'select' || f.type === 'date' || f.type === 'time') {
       if (v !== '') out[f.name] = v;
@@ -41,25 +64,53 @@ export function defaultPayload(fields: Field[], values: Values, mode: FormMode):
   return out;
 }
 
-export function validate(fields: Field[], values: Values, mode: FormMode): string | null {
+/** Every message of a `lines` field: too few rows, then each row's cells in order (`Ligne 2 : le champ « X » est requis`). */
+export function validateLines(field: Extract<Field, { type: 'lines' }>, rows: LineRow[]): string[] {
+  const out: string[] = [];
+  if (rows.length < (field.minRows ?? 0)) out.push('Ajoutez au moins une ligne');
+  rows.forEach((row, i) => {
+    for (const c of field.columns) {
+      if (c.computed) continue;
+      const v = (row[c.name] ?? '').trim();
+      const at = `Ligne ${i + 1} : le champ « ${c.label} »`;
+      if (c.required && v === '') out.push(`${at} est requis`);
+      else if (c.type === 'number' && v !== '' && c.min !== undefined && Number(v) < c.min) out.push(`${at} doit être supérieur ou égal à ${c.min}`);
+      else if (c.type === 'number' && v !== '' && c.max !== undefined && Number(v) > c.max) out.push(`${at} doit être inférieur ou égal à ${c.max}`);
+    }
+  });
+  return out;
+}
+
+/** The first field that does not validate, with its message (a `lines` field with the first of its messages). */
+export function firstInvalid(fields: Field[], values: Values, mode: FormMode): { field: Field; message: string } | null {
   for (const f of fields) {
     if (f.only && f.only !== mode) continue;
     const v = values[f.name];
+    if (f.type === 'lines') {
+      const [message] = validateLines(f, v as LineRow[]);
+      if (message) return { field: f, message };
+      continue;
+    }
     const empty = f.type === 'multiselect' ? (v as string[]).length === 0
       : f.type === 'checkbox' ? false
         : String(v).trim() === '';
-    if (f.required && empty) return `Le champ « ${f.label} » est requis`;
+    const fail = (message: string) => ({ field: f, message });
+    if (f.required && empty) return fail(`Le champ « ${f.label} » est requis`);
     if (f.type === 'number' && !empty && f.min !== undefined && Number(v) < f.min) {
-      return `Le champ « ${f.label} » doit être supérieur ou égal à ${f.min}`;
+      return fail(`Le champ « ${f.label} » doit être supérieur ou égal à ${f.min}`);
     }
     if (f.type === 'number' && !empty && f.max !== undefined && Number(v) > f.max) {
-      return `Le champ « ${f.label} » doit être inférieur ou égal à ${f.max}`;
+      return fail(`Le champ « ${f.label} » doit être inférieur ou égal à ${f.max}`);
     }
     if (f.type === 'password' && f.minLength && String(v).length < f.minLength) {
-      return `Le champ « ${f.label} » doit contenir au moins ${f.minLength} caractères`;
+      return fail(`Le champ « ${f.label} » doit contenir au moins ${f.minLength} caractères`);
     }
   }
   return null;
+}
+
+export function validate(fields: Field[], values: Values, mode: FormMode): string | null {
+  return firstInvalid(fields, values, mode)?.message ?? null;
 }
 
 export interface FieldInputProps {
@@ -68,22 +119,14 @@ export interface FieldInputProps {
   onChange: (v: unknown) => void;
   /** Label of the `dependsOn` parent field while it is still empty. */
   waitingFor?: string;
+  /** Value of the `dependsOn` parent field. */
+  parentValue?: string;
+  /** Messages of a `lines` field, shown under its grid. */
+  errors?: string[];
 }
 
-function SelectInput({ field, value, onChange, options, waitingFor }: FieldInputProps & { options: Option[] }) {
-  const id = useId();
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor={id} className={`${LABEL} ${field.required ? "after:content-['*']" : ''}`}>{field.label}</label>
-      <Select id={id} className="w-full" value={String(value)} disabled={waitingFor !== undefined} onChange={(e) => onChange(e.target.value)}>
-        <option value="">{waitingFor !== undefined ? `Choisir d'abord ${waitingFor}` : 'Sélectionner…'}</option>
-        {options.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
-      </Select>
-    </div>
-  );
-}
-
-function MultiSelectInput({ field, value, onChange, options }: FieldInputProps & { options: Option[] }) {
+function MultiSelectInput({ field, value, onChange }: FieldInputProps & { field: Extract<Field, { type: 'multiselect' }> }) {
+  const options: Option[] = useEndpointOptions(field.options);
   const selected = value as string[];
   return (
     <fieldset className="space-y-1.5">
@@ -108,18 +151,30 @@ function MultiSelectInput({ field, value, onChange, options }: FieldInputProps &
   );
 }
 
-export function FieldInput(props: FieldInputProps & { parentValue?: string }) {
-  const { field, value, onChange, parentValue } = props;
+function LabelledControl({ field, value, onChange, parentValue, waitingFor }: FieldInputProps & { field: Exclude<Field, { type: 'multiselect' | 'checkbox' | 'lines' }> }) {
   const id = useId();
-  const dependsOn = field.type === 'select' ? field.dependsOn : undefined;
-  const parentReady = !dependsOn || Boolean(parentValue);
-  const options = useEndpointOptions(
-    'options' in field ? field.options : [],
-    dependsOn && parentValue ? { [dependsOn]: parentValue } : undefined,
-    parentReady,
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className={`${LABEL} ${field.required ? "after:content-['*']" : ''}`}>{field.label}</label>
+      {field.type === 'textarea' ? (
+        <textarea
+          id={id}
+          rows={3}
+          className="w-full rounded-2xl border border-border bg-card px-4 py-2 text-sm"
+          value={String(value)}
+          onChange={(e) => onChange(e.target.value)}
+        />
+      ) : (
+        <CellControl id={id} field={field} value={value} onChange={onChange} parentValue={parentValue} waitingFor={waitingFor} />
+      )}
+    </div>
   );
-  if (field.type === 'select') return <SelectInput {...props} options={options} />;
-  if (field.type === 'multiselect') return <MultiSelectInput {...props} options={options} />;
+}
+
+export function FieldInput(props: FieldInputProps) {
+  const { field, value, onChange } = props;
+  if (field.type === 'multiselect') return <MultiSelectInput {...props} field={field} />;
+  if (field.type === 'lines') return <LinesField field={field} value={value as LineRow[]} onChange={onChange} errors={props.errors} />;
   if (field.type === 'checkbox') {
     return (
       <label className="flex items-center gap-2 text-sm font-medium">
@@ -133,30 +188,5 @@ export function FieldInput(props: FieldInputProps & { parentValue?: string }) {
       </label>
     );
   }
-  return (
-    <div className="space-y-1.5">
-      <label htmlFor={id} className={`${LABEL} ${field.required ? "after:content-['*']" : ''}`}>{field.label}</label>
-      {field.type === 'textarea' ? (
-        <textarea
-          id={id}
-          rows={3}
-          className="w-full rounded-2xl border border-border bg-card px-4 py-2 text-sm"
-          value={String(value)}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      ) : (
-        <Input
-          id={id}
-          type={field.type}
-          min={field.type === 'number' ? field.min : undefined}
-          max={field.type === 'number' ? field.max : undefined}
-          step={field.type === 'number' ? field.step : undefined}
-          autoComplete={field.type === 'password' ? 'new-password' : undefined}
-          value={String(value)}
-          onChange={(e) => onChange(e.target.value)}
-        />
-      )}
-    </div>
-  );
+  return <LabelledControl {...props} field={field} />;
 }
-

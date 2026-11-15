@@ -4,8 +4,8 @@ import { Button } from '../ui/Button';
 import { Dialog, DialogActions } from '../ui/Dialog';
 import { changedFields } from './changedFields';
 import { errorMessage } from './errorMessage';
-import { FieldInput, defaultPayload, initialValue, validate } from './formFields';
-import type { Field, FormMode } from './types';
+import { FieldInput, defaultPayload, firstInvalid, initialValue, validateLines } from './formFields';
+import type { Field, FormMode, LineRow } from './types';
 
 type Values = Record<string, unknown>;
 
@@ -23,6 +23,11 @@ export interface ActionDialogProps {
   /** Fields with `only` for the other mode are left out (default `create`). */
   mode?: FormMode;
   submitLabel?: string;
+  /**
+   * Check across fields, run after the fields' own checks on submit (a total that must reach 100 %). Return the
+   * French message to show in the dialog, or `null`.
+   */
+  validate?: (values: Values) => string | null;
   /** Form values to request body (default: the shown fields, numbers coerced). */
   toPayload?: (values: Values, mode: FormMode) => unknown;
   /**
@@ -47,18 +52,21 @@ export interface ActionDialogProps {
  *   nothing sends no request and closes.
  */
 export function ActionDialog({
-  title, fields, initial = {}, intro, mode = 'create', submitLabel = 'Enregistrer', toPayload, onSubmit, onClose, onDone,
+  title, fields, initial = {}, intro, mode = 'create', submitLabel = 'Enregistrer', validate, toPayload, onSubmit, onClose, onDone,
 }: ActionDialogProps) {
   const [edited, setEdited] = useState<Values>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  /** Messages of the `lines` field that failed validation, shown under its grid. */
+  const [lineErrors, setLineErrors] = useState<{ name: string; messages: string[] } | null>(null);
 
   const all = typeof fields === 'function' ? fields({ ...initial, ...edited }) : fields;
   const shown = all.filter((f) => !f.only || f.only === mode);
   const values = valuesOf(edited, initial, shown, mode);
 
   /** Sets a field; every select depending on it is cleared, and theirs in turn (A -> B -> C). */
-  const setField = (name: string, v: unknown) =>
+  const setField = (name: string, v: unknown) => {
+    setLineErrors((e) => (e?.name === name ? null : e));
     setEdited((s) => {
       const next = { ...s, [name]: v };
       const cleared = [name];
@@ -72,14 +80,21 @@ export function ActionDialog({
       }
       return next;
     });
+  };
 
   const build = (v: Values): Values =>
     (toPayload ? toPayload(v, mode) : defaultPayload(shown, v, mode)) as Values;
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const invalid = validate(shown, values, mode);
-    if (invalid) return setError(invalid);
+    const invalid = firstInvalid(shown, values, mode);
+    setLineErrors(null);
+    if (invalid?.field.type === 'lines') {
+      setError(null);
+      return setLineErrors({ name: invalid.field.name, messages: validateLines(invalid.field, values[invalid.field.name] as LineRow[]) });
+    }
+    const custom = invalid?.message ?? validate?.(values) ?? null;
+    if (custom) return setError(custom);
     setBusy(true);
     setError(null);
     try {
@@ -113,6 +128,7 @@ export function ActionDialog({
               onChange={(v) => setField(f.name, v)}
               parentValue={parentValue}
               waitingFor={parent && !parentValue ? parent.label : undefined}
+              errors={lineErrors?.name === f.name ? lineErrors.messages : undefined}
             />
           );
         })}

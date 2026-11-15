@@ -1,15 +1,14 @@
 import { useState, type FormEvent } from 'react';
-import { Plus, Trash2 } from 'lucide-react';
 import { allPages } from '../components/module/allPages';
 import { changedFields } from '../components/module/changedFields';
 import { errorMessage } from '../components/module/errorMessage';
-import type { ModuleConfig } from '../components/module/types';
+import { RecordForm } from '../components/module/RecordForm';
+import type { LineRow, ModuleConfig } from '../components/module/types';
 import { useEndpointOptions, type Option } from '../components/module/useEndpointOptions';
 import { Alert } from '../components/ui/Alert';
 import { Button } from '../components/ui/Button';
 import { Dialog, DialogActions } from '../components/ui/Dialog';
 import { Field } from '../components/ui/Field';
-import { Input } from '../components/ui/Input';
 import { Pill } from '../components/ui/Pill';
 import { Segmented } from '../components/ui/Segmented';
 import { Select } from '../components/ui/Select';
@@ -57,6 +56,8 @@ export interface FeedProduct {
   unit: string;
   unitCost: number;
   active: boolean;
+  /** Stock article this feed draws from (`GET /stock-items`, category ALIMENT); absent on an API without stock. */
+  stockItemId?: string | null;
 }
 
 /** `GET /feed-formulas`. */
@@ -240,136 +241,71 @@ function DistributionForm({ row, scope, onSaved, onClose }: FormProps<FeedDistri
   );
 }
 
-interface Line { productId: string; percentage: string }
-
 /** Hundredths of a percent, so sums are exact. */
 const hundredths = (s: string) => Math.round(Number(s || 0) * 100);
-const totalHundredths = (lines: { percentage: string }[]) => lines.reduce((sum, l) => sum + hundredths(l.percentage), 0);
+const totalHundredths = (rows: LineRow[]) => rows.reduce((sum, r) => sum + hundredths(r.percentage ?? ''), 0);
+const isComplete = (rows: LineRow[]) => Math.abs(totalHundredths(rows) - 10000) <= 1;
 /** `100%` when exact, else up to two decimals (`99.95%`), so the total never reads 100 % while the line says it falls short. */
 const showTotal = (h: number) => `${+(h / 100).toFixed(2)}%`;
 
 /**
- * Add / edit a formula: name, species, stage and ingredient lines (product + percentage). The running total
- * must reach 100 %; `Coût / kg` follows the selected products' unit costs as lines change.
+ * Add / edit a formula: name, species, stage and ingredient lines (a `lines` field: product + percentage). The
+ * running total must reach 100 %; `Coût / kg` follows the selected products' unit costs as lines change.
  */
 function FormulaForm({ row, onSaved, onClose }: FormProps<FeedFormula>) {
   const products = useFarmQuery<FeedProduct[]>(['/feed-products', 'all'], () => allPages<FeedProduct>('/feed-products'));
-  const [name, setName] = useState(row?.name ?? '');
-  const [species, setSpecies] = useState<string>(row?.species ?? 'AVICOLE');
-  const [stage, setStage] = useState(row?.stage ?? '');
-  const [active, setActive] = useState(row?.active ?? true);
-  const [lines, setLines] = useState<Line[]>(
-    row ? row.items.map((i) => ({ productId: i.feedProductId, percentage: String(i.percentage) })) : [{ productId: '', percentage: '' }],
-  );
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
   const catalogue = products.data ?? [];
-  const total = totalHundredths(lines);
   const byId = new Map(catalogue.map((p) => [p.id, p]));
-  const complete = Math.abs(total - 10000) <= 1;
-  const costPerKg = round2(lines.reduce((sum, l) => sum + (Number(l.percentage || 0) * (byId.get(l.productId)?.unitCost ?? 0)) / 100, 0));
+  // An inactive product is not offered for a new line, but a formula already using it keeps it.
+  const stored = new Set(row?.items.map((i) => i.feedProductId));
+  const productOptions: Option[] = catalogue.filter((p) => p.active || stored.has(p.id)).map((p) => ({ value: p.id, label: p.name }));
 
-  const setLine = (at: number, patch: Partial<Line>) => setLines((ls) => ls.map((l, i) => (i === at ? { ...l, ...patch } : l)));
-  const optionsFor = (at: number): Option[] => {
-    const taken = new Set(lines.filter((_, i) => i !== at).map((l) => l.productId));
-    const current = lines[at].productId;
-    return catalogue.filter((p) => (p.active || p.id === current) && !taken.has(p.id)).map((p) => ({ value: p.id, label: p.name }));
-  };
-
-  const submit = async (e: FormEvent) => {
-    e.preventDefault();
-    if (name.trim() === '') return setError('Le champ « Nom » est requis');
-    if (stage.trim() === '') return setError('Le champ « Stade » est requis');
-    if (lines.some((l) => !l.productId || !(Number(l.percentage) > 0))) return setError('Chaque ligne demande un aliment et un pourcentage positif');
-    if (!complete) return setError('Les pourcentages doivent totaliser 100 %');
-
-    const items = lines.map((l) => ({ feedProductId: l.productId, percentage: Number(l.percentage) }));
-    setBusy(true);
-    setError(null);
-    try {
-      if (!row) {
-        await api.post('/feed-formulas', { name: name.trim(), species, stage: stage.trim(), active, items });
-      } else {
-        const key = (list: { feedProductId: string; percentage: number }[]) =>
-          [...list].map((i) => `${i.feedProductId}:${i.percentage}`).sort().join();
-        const body = changedFields(
-          { name: row.name, species: row.species, stage: row.stage, active: row.active, items: key(row.items) },
-          { name: name.trim(), species, stage: stage.trim(), active, items: key(items) },
-        );
-        // The composition is sent whole, not as its comparison key.
-        if ('items' in body) body.items = items;
-        if (Object.keys(body).length > 0) await api.patch(`/feed-formulas/${row.id}`, body);
-      }
-      onSaved();
-    } catch (err) {
-      setError(errorMessage(err));
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Dialog open onClose={onClose} title={`${row ? 'Modifier' : 'Ajouter'} — Formules`}>
-      <form onSubmit={submit} noValidate className="space-y-4">
-        <Field label="Nom" value={name} onChange={(e) => setName(e.target.value)} />
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-1.5">
-            <label htmlFor="formula-species" className={LABEL}>Espèce</label>
-            <Select id="formula-species" className="w-full" value={species} onChange={(e) => setSpecies(e.target.value)}>
-              {SPECIES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
-            </Select>
-          </div>
-          <Field label="Stade" placeholder="Démarrage" value={stage} onChange={(e) => setStage(e.target.value)} />
-        </div>
-        {products.isError && <Alert>{errorMessage(products.error)}</Alert>}
-        <fieldset className="space-y-2">
-          <legend className={LABEL}>Composition</legend>
-          {lines.map((l, i) => (
-            <div key={i} className="flex items-center gap-2">
-              <div className="min-w-0 flex-1">
-                <SelectField label={`Aliment ligne ${i + 1}`} value={l.productId} options={optionsFor(i)} onChange={(v) => setLine(i, { productId: v })} />
-              </div>
-              <Input
-                aria-label={`Pourcentage ligne ${i + 1}`}
-                className="w-24"
-                type="number"
-                min={0}
-                max={100}
-                step={0.01}
-                placeholder="%"
-                value={l.percentage}
-                onChange={(e) => setLine(i, { percentage: e.target.value })}
-              />
-              <Button variant="ghost" size="sm" aria-label={`Retirer la ligne ${i + 1}`} disabled={lines.length === 1} onClick={() => setLines((ls) => ls.filter((_, at) => at !== i))}>
-                <Trash2 aria-hidden className="size-4" />
-              </Button>
-            </div>
-          ))}
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <Button variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, { productId: '', percentage: '' }])}>
-              <Plus aria-hidden className="size-4" />
-              Ajouter une ligne
-            </Button>
-            <p data-testid="formula-total" className={`text-sm font-medium ${complete ? 'text-accent-foreground' : 'text-warning-foreground'}`}>
-              Total : {showTotal(total)}{complete ? '' : ' (doit atteindre 100%)'}
-            </p>
-          </div>
-        </fieldset>
+  const footer = (rows: LineRow[]) => {
+    const complete = isComplete(rows);
+    const costPerKg = round2(rows.reduce((sum, r) => sum + (Number(r.percentage || 0) * (byId.get(r.feedProductId ?? '')?.unitCost ?? 0)) / 100, 0));
+    return (
+      <div className="w-full space-y-2">
+        <p data-testid="formula-total" className={`text-sm font-medium ${complete ? 'text-accent-foreground' : 'text-warning-foreground'}`}>
+          Total : {showTotal(totalHundredths(rows))}{complete ? '' : ' (doit atteindre 100%)'}
+        </p>
         <p className="flex items-baseline justify-between rounded-2xl bg-muted px-4 py-2 text-sm">
           <span className="font-medium">Coût / kg</span>
           <span data-testid="formula-cost" className="font-display text-lg font-bold">{formatMoney(costPerKg)}</span>
         </p>
-        <label className="flex items-center gap-2 text-sm font-medium">
-          <input type="checkbox" className="size-4 accent-primary" checked={active} onChange={(e) => setActive(e.target.checked)} />
-          Actif
-        </label>
-        {error && <Alert>{error}</Alert>}
-        <DialogActions>
-          <Button variant="outline" onClick={onClose}>Annuler</Button>
-          <Button type="submit" disabled={busy}>Enregistrer</Button>
-        </DialogActions>
-      </form>
-    </Dialog>
+      </div>
+    );
+  };
+
+  return (
+    <RecordForm
+      label="Formules"
+      row={row}
+      initial={row as unknown as Record<string, unknown> | undefined}
+      intro={products.isError ? <Alert>{errorMessage(products.error)}</Alert> : undefined}
+      fields={[
+        { name: 'name', label: 'Nom', type: 'text', required: true },
+        { name: 'species', label: 'Espèce', type: 'select', required: true, defaultValue: 'AVICOLE', options: [...SPECIES] },
+        { name: 'stage', label: 'Stade', type: 'text', required: true },
+        {
+          name: 'items',
+          label: 'Composition',
+          type: 'lines',
+          minRows: 1,
+          defaultValue: [{ feedProductId: '', percentage: '' }],
+          columns: [
+            { name: 'feedProductId', label: 'Aliment', type: 'select', required: true, unique: true, options: productOptions },
+            { name: 'percentage', label: 'Pourcentage', type: 'number', required: true, min: 0.01, max: 100, step: 0.01 },
+          ],
+          footer,
+        },
+        { name: 'active', label: 'Actif', type: 'checkbox', defaultValue: true },
+      ]}
+      validate={(v) => (isComplete(v.items as LineRow[]) ? null : 'Les pourcentages doivent totaliser 100 %')}
+      createPath="/feed-formulas"
+      patchPath={(r) => `/feed-formulas/${r.id}`}
+      onSaved={onSaved}
+      onClose={onClose}
+    />
   );
 }
 
@@ -393,6 +329,7 @@ export const feedProducts: ModuleConfig<FeedProduct> = {
     { name: 'name', label: 'Nom', type: 'text', required: true },
     { name: 'kind', label: 'Type', type: 'select', required: true, options: KINDS },
     { name: 'unitCost', label: 'Coût unitaire (FCFA/kg)', type: 'number', required: true, min: 0, step: 0.01 },
+    { name: 'stockItemId', label: 'Article de stock', type: 'select', options: { endpoint: '/stock-items', params: { category: 'ALIMENT', active: 'true' } } },
     { name: 'active', label: 'Actif', type: 'checkbox', defaultValue: true },
   ],
 };
