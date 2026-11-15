@@ -39,6 +39,7 @@ describe('toActItem status', () => {
       id: 'a',
       date: day('2026-11-14'),
       doneDate: null,
+      enteredDone: false,
       status: 'PLANIFIE',
       type: 'VACCINATION',
       batchId: 'b',
@@ -53,6 +54,11 @@ describe('toActItem status', () => {
       ...over,
     }) as ActRow;
   const now = day('2026-11-15');
+
+  it('carries the stored enteredDone flag', () => {
+    expect(toActItem(row({ enteredDone: true }), now).enteredDone).toBe(true);
+    expect(toActItem(row({}), now).enteredDone).toBe(false);
+  });
 
   it('derives EN_RETARD for a planned act dated before today only', () => {
     expect(toActItem(row({}), now).status).toBe('EN_RETARD');

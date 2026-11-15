@@ -52,6 +52,11 @@ export interface HealthActItem {
   /** The planned date, or the day it was done for an act created as done. */
   date: string;
   doneDate: string | null;
+  /**
+   * The act was entered as done (not completed from a plan): PATCH `date` moves its exit too and PATCH `doneDate` is
+   * refused; for an act completed later PATCH `date` moves the plan date only and `doneDate` moves the exit.
+   */
+  enteredDone: boolean;
   /** Lot code, animal tag or building name. */
   target: string;
   targetKind: 'LOT' | 'ANIMAL' | 'BATIMENT';
@@ -134,6 +139,7 @@ export function toActItem(row: ActRow, now: Date = today()): HealthActItem {
     id: row.id,
     date: formatDay(row.date),
     doneDate: formatDayOrNull(row.doneDate),
+    enteredDone: row.enteredDone,
     target: targetLabel(row),
     targetKind: row.batchId ? 'LOT' : row.animalId ? 'ANIMAL' : 'BATIMENT',
     batchId: row.batchId,

@@ -86,8 +86,16 @@ try {
     await new Promise(() => {});
   }
   // `npm run e2e -- production` runs only the specs whose file name contains one of the words.
-  // (`--trace off` is accepted and ignored: the specs drive Playwright's library, which never records a trace.)
-  const only = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && all[i - 1] !== '--trace');
+  // `--trace off` is accepted and ignored (the specs drive Playwright's library, which never records a trace);
+  // any other use of `--trace` is an error, not silently dropped.
+  const args = process.argv.slice(2);
+  const only: string[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    if (args[i] === '--trace') {
+      if (args[i + 1] !== 'off') throw new Error(`--trace n'accepte que « off » (reçu : ${args[i + 1] ?? 'rien'})`);
+      i += 1;
+    } else if (!args[i].startsWith('--')) only.push(args[i]);
+  }
   const specs = readdirSync(here)
     .filter((f) => f.endsWith('.spec.ts') && (only.length === 0 || only.some((w) => f.includes(w))))
     .sort()

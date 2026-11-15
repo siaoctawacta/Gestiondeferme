@@ -274,8 +274,18 @@ describe('rendu : captures et comparaison avec la référence', () => {
     await page.screenshot({ path: join(BUILT, 'home.png'), fullPage: true });
 
     const text = flat(await page.locator('main').innerText());
-    for (const expected of ['11 570', '3 lots en cours', '245', '2 480', 'Taux de ponte 87%', '3.6%', 'Mise bas TR-014', /Dépassée depuis \d+ j \(2026-10-27\)/, 'Mortalité élevée LC-2026-14', 'Mortalité élevée LP-2026-03', '5 bâtiments actifs']) {
+    for (const expected of ['11 570', '3 lots en cours', '245', '2 480', 'Taux de ponte 87%', '3.6%', 'Mise bas TR-014', /Dépassée depuis \d+ j \(2026-10-27\)/, 'Mortalité élevée LC-2026-14', 'Mortalité élevée LP-2026-03', '5 bâtiments actifs',
+      // Stock and health alerts (slice 3), exact texts: title and detail.
+      'Stock critique : Aliment engraissement porc 600 kg (seuil 1500)', 'Stock faible : Aliment ponte 900 kg (seuil 1500)']) {
       assert.ok(typeof expected === 'string' ? text.includes(expected) : expected.test(text), `home shows « ${expected} »`);
+    }
+
+    // The home shows the five most urgent alerts; the full list (the Alertes page) also has the overdue disinfection.
+    await page.goto(`${WEB_URL}/alertes`);
+    await page.getByText('Désinfection en retard').first().waitFor();
+    const alertsText = flat(await page.locator('main').innerText());
+    for (const expected of ['Désinfection en retard Porcherie 2 — Virkon S', 'Stock critique : Aliment engraissement porc 600 kg (seuil 1500)']) {
+      assert.ok(alertsText.includes(expected), `the alerts page shows « ${expected} »`);
     }
 
     await page.goto(`${WEB_URL}/m/batiments`);
@@ -342,6 +352,24 @@ describe('rendu : captures et comparaison avec la référence', () => {
       assert.ok(t.tileRight <= 375, 'a tile stays inside the viewport');
     }
     assert.ok(tiles.some((t) => /1 120 000 FCFA/.test(t.text ?? '')), 'the long amount is shown whole');
+    // Same check on an older screen with amounts: no figure sticks out of its card on the dashboard.
+    await phone.goto(`${WEB_URL}/`);
+    await phone.getByText('Volailles vivantes', { exact: true }).waitFor();
+    await settle(phone);
+    const figures = await phone.locator('main .font-display').evaluateAll((els) =>
+      els.map((el) => {
+        const card = el.closest('[class*="rounded"]') ?? el.parentElement!;
+        const e = el.getBoundingClientRect();
+        const c = card.getBoundingClientRect();
+        return { text: el.textContent?.replace(/\s+/g, ' ').slice(0, 30), scroll: el.scrollWidth, client: el.clientWidth, right: Math.round(e.right), cardRight: Math.round(c.right) };
+      }),
+    );
+    report('dashboard figures', figures);
+    for (const f of figures) assert.ok(f.scroll <= f.client && f.right <= f.cardRight && f.cardRight <= 375, `dashboard figure « ${f.text} » stays inside its card`);
+    await noPageScroll('dashboard');
+    await phone.goto(`${WEB_URL}/m/achats`);
+    await phone.getByRole('row', { name: /DA-0089/ }).getByRole('link').first().click();
+    await phone.getByRole('heading', { name: 'DA-0089' }).waitFor();
     await noPageScroll('purchase detail');
     await phone.screenshot({ path: join(BUILT, 'achat_detail_375.png') });
 
@@ -395,7 +423,7 @@ describe('rendu : captures et comparaison avec la référence', () => {
     assert.equal(printed.sheet, true, 'the bon de commande is shown when printing');
     assert.deepEqual(printed.headerCells, ['ARTICLE', 'QUANTITÉ', 'PRIX UNITAIRE', 'MONTANT']);
     assert.ok(printed.contrast >= 4.5, `the table header is legible when printing (contrast ${printed.contrast})`);
-    await phone.pdf({ path: join(BUILT, 'bon_de_commande.pdf'), format: 'A4' });
+    await phone.screenshot({ path: join(BUILT, 'bon_de_commande_impression_375.png'), fullPage: true });
     await phone.emulateMedia({ media: 'screen' });
 
     // 4. Santé: five tabs in one bar that scrolls inside itself, every tab reachable.
@@ -404,6 +432,8 @@ describe('rendu : captures et comparaison avec la référence', () => {
     const bar = phone.getByRole('tablist');
     const barBox = await bar.evaluate((el) => ({ clientWidth: el.clientWidth, scrollWidth: el.scrollWidth }));
     report('santé tabs', { page: await noPageScroll('santé'), bar: barBox });
+    assert.ok(barBox.scrollWidth > barBox.clientWidth, 'the five tabs do not fit: the bar scrolls inside its container');
+    assert.ok((await right(bar)) <= 375, 'the tab bar stays inside the phone');
     await phone.getByRole('tab', { name: 'Incidents' }).click();
     await phone.getByRole('tab', { name: 'Incidents', selected: true }).waitFor();
     await noPageScroll('santé, tab Incidents');
@@ -419,7 +449,7 @@ describe('rendu : captures et comparaison avec la référence', () => {
     report('act dialog', { panel: await box(act), groups, page: await noPageScroll('act dialog') });
     for (const g of groups) assert.ok(g.right <= 375 && g.scroll <= g.client, `segmented control « ${g.label} » fits the phone`);
     const actPanel = await box(act);
-    assert.ok(actPanel.x >= 0 && actPanel.x + actPanel.height >= 0 && actPanel.x + actPanel.width <= 375 && actPanel.y + actPanel.height <= 812, 'the act dialog fits the phone');
+    assert.ok(actPanel.x >= 0 && actPanel.y >= 0 && actPanel.x + actPanel.width <= 375 && actPanel.y + actPanel.height <= 812, 'the act dialog fits the phone');
     await phone.screenshot({ path: join(BUILT, 'sante_acte_375.png') });
     await context.close();
   });

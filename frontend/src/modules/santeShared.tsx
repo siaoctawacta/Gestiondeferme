@@ -23,6 +23,11 @@ export interface HealthActRow {
    * an act completed from a plan keeps its planned `date` and may have been done another day.
    */
   doneDate: string | null;
+  /**
+   * The act was entered as done (one date, both moved by PATCH `date`). False for an act completed from a plan: its
+   * planned `date` and its `doneDate` are two fields, whether or not they happen to be equal.
+   */
+  enteredDone: boolean;
   /** Lot code, animal tag or building name. */
   target: string;
   targetKind: TargetKind;
@@ -136,9 +141,13 @@ export const LOG_TYPES: { value: BiosecurityType; label: string }[] = [
   { value: 'VISITEUR', label: 'Visiteur' },
 ];
 
-/** An act completed from a plan on another day than planned: its two dates are told apart (and edited apart). */
-export const doneAnotherDay = (a: Pick<HealthActRow, 'status' | 'date' | 'doneDate'>): boolean =>
-  a.status === 'REALISE' && a.doneDate !== null && a.doneDate !== a.date;
+/** An act completed from a plan: its planned date and the day it was done are told apart (and edited apart). */
+export const completedLater = (a: Pick<HealthActRow, 'status' | 'enteredDone' | 'doneDate'>): boolean =>
+  a.status === 'REALISE' && !a.enteredDone && a.doneDate !== null;
+
+/** Shown under the date of the list only when the two days differ. */
+export const doneAnotherDay = (a: Pick<HealthActRow, 'status' | 'enteredDone' | 'date' | 'doneDate'>): boolean =>
+  completedLater(a) && a.doneDate !== a.date;
 
 /** Under withdrawal up to and including `until`: the notice shows on that day and is gone the next. */
 export const underWithdrawal = (until: string | null | undefined): until is string => Boolean(until) && until! >= todayIso();

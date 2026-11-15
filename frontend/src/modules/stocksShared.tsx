@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import { useRef, type ComponentType } from 'react';
 import { ActionDialog } from '../components/module/ActionDialog';
 import { allPages } from '../components/module/allPages';
 import { LoadedRecord } from '../components/module/LoadedRecord';
@@ -153,6 +153,8 @@ export interface MovementDialogProps {
   itemId?: string;
   /** The manual movement being edited. */
   row?: MovementRow;
+  /** Pieces of the operation being edited (an exit split across lots); more than one is announced in the dialog. */
+  pieces?: number;
   onClose: () => void;
   onDone: () => void;
 }
@@ -161,12 +163,13 @@ export interface MovementDialogProps {
  * Record or correct a manual stock movement. The API signs the quantity: an entry or exit is sent positive, an
  * adjustment signed. A refusal (`Stock insuffisant`, `Lot périmé`) shows in the dialog.
  */
-export function MovementDialog({ title, type, itemId, row, onClose, onDone }: MovementDialogProps) {
+export function MovementDialog({ title, type, itemId, row, pieces = 1, onClose, onDone }: MovementDialogProps) {
   const fixed = row?.type ?? type;
   return (
     <ActionDialog
       title={title}
       mode={row ? 'update' : 'create'}
+      intro={pieces > 1 ? `Cette sortie est répartie sur ${pieces} lots : la quantité modifiée est le total.` : undefined}
       initial={row ? { date: row.date, quantity: row.type === 'AJUSTEMENT' ? row.quantity : Math.abs(row.quantity), unitCost: row.unitCost, note: row.note } : undefined}
       fields={(values) => {
         const t = fixed ?? (values.type as MovementType | undefined);
@@ -211,20 +214,23 @@ export function MovementDialog({ title, type, itemId, row, onClose, onDone }: Mo
  * An exit is edited by the quantity of its whole operation (the API re-plans every piece), so the form shows the
  * sum of the pieces sharing the clicked row's `operationId`, read from that item's movements of that day.
  */
-async function operationTotal(row: MovementRow): Promise<MovementRow> {
+async function operationTotal(row: MovementRow): Promise<{ row: MovementRow; pieces: number }> {
   const day = await allPages<MovementRow>('/stock/movements', { itemId: row.itemId, from: row.date, to: row.date, type: row.type });
   const pieces = day.filter((m) => m.operationId === row.operationId);
-  return { ...row, quantity: pieces.reduce((sum, m) => sum + m.quantity, 0) || row.quantity };
+  return { row: { ...row, quantity: pieces.reduce((sum, m) => sum + m.quantity, 0) || row.quantity }, pieces: pieces.length };
 }
 
 const MovementForm: ComponentType<{ row?: MovementRow; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }> =
   ({ row, scope, onSaved, onClose }) => {
     const title = `${row ? 'Modifier' : 'Ajouter'} — Mouvements`;
-    const dialog = (r?: MovementRow) => <MovementDialog title={title} row={r} itemId={scope?.itemId} onClose={onClose} onDone={onSaved} />;
-    if (row?.type !== 'SORTIE') return dialog(row);
+    // One key per opening: the total is read again every time, never served from an earlier open.
+    const opening = useRef(Math.random().toString(36).slice(2));
+    if (row?.type !== 'SORTIE') {
+      return <MovementDialog title={title} row={row} itemId={scope?.itemId} onClose={onClose} onDone={onSaved} />;
+    }
     return (
-      <LoadedRecord<MovementRow> title={title} queryKey={['/stock/movements', 'operation', row.operationId]} load={() => operationTotal(row)} onClose={onClose}>
-        {dialog}
+      <LoadedRecord<{ row: MovementRow; pieces: number }> title={title} queryKey={['/stock/movements', 'operation', row.operationId, opening.current]} load={() => operationTotal(row)} onClose={onClose}>
+        {(loaded) => <MovementDialog title={title} row={loaded.row} pieces={loaded.pieces} itemId={scope?.itemId} onClose={onClose} onDone={onSaved} />}
       </LoadedRecord>
     );
   };

@@ -540,10 +540,26 @@ describe('ModulePage kit extensions', () => {
       await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.url === '/api/buildings/b2')).toBe(true));
     });
 
-    it('still asks for the permission and never works under all farms', async () => {
+    it('still asks for the permission', async () => {
       setup({ list: true, readOnly: true, perms: ['read'], config: withGates({ actions: { close: () => true }, canDelete: () => true }) });
       await screen.findByText('Poulailler A');
       expect(names('Poulailler A')).toEqual([]);
+    });
+
+    it('never works under all farms, whatever the gates let through', async () => {
+      setup({ list: true, readOnly: true, farm: 'all', config: withGates({ actions: { close: () => true }, canDelete: () => true }) });
+      await screen.findByText('Poulailler A');
+      expect(names('Poulailler A')).toEqual([]);
+      expect(names('Porcherie 2')).toEqual([]);
+    });
+
+    it('needs the row action to be visible as well as let through', async () => {
+      const config = withGates({ actions: { close: () => true }, canDelete: () => false });
+      config.actions = [{ key: 'close', label: 'Clore', icon: Eye, run, visible: (b) => b.id === 'b2' }];
+      setup({ list: true, readOnly: true, config });
+      await screen.findByText('Poulailler A');
+      expect(names('Poulailler A')).toEqual([]);
+      expect(names('Porcherie 2')).toEqual(['Clore']);
     });
   });
 

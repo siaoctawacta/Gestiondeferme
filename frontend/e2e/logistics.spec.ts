@@ -99,14 +99,15 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
   after(async () => {
     // The articles are shared with the visual spec's reference stock list: this one is not a reference article, so it is
     // deactivated, like every article this spec created (a deactivated article drops out of the list of a farm where it holds nothing).
-    if (vaccineId) {
+    // Runs even when `before` failed part-way: every article this spec created is deactivated.
+    if (admin) {
       const referenced = new Set<string>(Object.values(REFERENCE_ITEMS).map((i) => i.name));
       const items = await api<{ items: { id: string; name: string; active: boolean }[] }>('/stock-items?pageSize=200', { token: admin.token });
       for (const item of items.items.filter((i) => i.active && !referenced.has(i.name))) {
         await api(`/stock-items/${item.id}`, { method: 'PATCH', token: admin.token, body: { active: false } });
       }
     }
-    await browser.close();
+    await browser?.close();
   });
 
   it('Responsable stock : crée une demande d’achat de deux lignes, au total calculé, sans pouvoir la valider', async () => {
@@ -115,6 +116,8 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     await page.getByRole('button', { name: 'Ajouter' }).click();
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel('Fournisseur').selectOption({ label: 'Agro Provende SA' });
+    // Dated five days ago, so that the goods can be received (and used) on earlier days.
+    await dialog.getByLabel('Date', { exact: true }).fill(day(-5));
     await dialog.getByLabel('Article ligne 1').selectOption({ label: 'Aliment ponte' });
     await dialog.getByLabel('Quantité ligne 1').fill('3000');
     await dialog.getByLabel('Prix unitaire ligne 1').fill('310');
@@ -189,6 +192,7 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     // The grid is the order's own lines, prefilled with the ordered quantities.
     assert.equal(await dialog.getByLabel('Quantité reçue ligne 1').inputValue(), '3000');
     assert.equal(await dialog.getByLabel('Quantité reçue ligne 2').inputValue(), '20');
+    await dialog.getByLabel('Date de réception').fill(day(-3));
     // More than ordered is refused with the API's own message, before any request.
     await dialog.getByLabel('Quantité reçue ligne 1').fill('3001');
     await dialog.getByRole('button', { name: 'Enregistrer' }).click();
@@ -421,6 +425,26 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     await page.getByRole('link', { name: 'Vaccin Newcastle' }).click();
     await page.getByRole('heading', { name: 'Vaccin Newcastle' }).waitFor();
     assert.match(flat(await page.getByRole('tabpanel').innerText()), /NC-2026-11 .* 16/);
+    await page.getByRole('tab', { name: 'Mouvements' }).click();
+    const exitRow = page.getByRole('row', { name: /Sortie/ });
+    await exitRow.waitFor();
+    assert.match(flat(await exitRow.innerText()), new RegExp(`^${day(0)} Vaccin Newcastle Sortie -4 `));
+
+    // The act was planned for tomorrow and completed today: two dates. Moving « Réalisé le » to yesterday moves the
+    // stock exit (the planned date stays), whereas an act entered as done has one date that moves both.
+    await page.goto(`${WEB_URL}/m/sante`);
+    await newcastle.getByRole('button', { name: 'Modifier' }).click();
+    const edit = page.getByRole('dialog');
+    assert.equal(await edit.getByLabel('Date prévue').inputValue(), day(1));
+    assert.equal(await edit.getByLabel('Réalisé le').inputValue(), day(0));
+    await edit.getByLabel('Réalisé le').fill(day(-1));
+    await edit.getByRole('button', { name: 'Enregistrer' }).click();
+    await edit.waitFor({ state: 'detached' });
+    await mainShows(page, new RegExp(`${day(1)} Réalisé le ${day(-1)}`));
+    await page.goto(`${WEB_URL}/m/stocks`);
+    await page.getByRole('link', { name: 'Vaccin Newcastle' }).click();
+    await page.getByRole('tab', { name: 'Mouvements' }).click();
+    assert.match(flat(await page.getByRole('row', { name: /Sortie/ }).innerText()), new RegExp(`^${day(-1)} Vaccin Newcastle Sortie -4 `));
 
     // A treatment: 3 days of treatment and 7 of withdrawal: the lot is under withdrawal for 10 days from today.
     await page.goto(`${WEB_URL}/m/sante`);

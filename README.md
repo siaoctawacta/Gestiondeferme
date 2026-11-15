@@ -272,13 +272,17 @@ Les scénarios sont écrits avec `node:test` et `playwright` (pas `@playwright/t
 
 Scénarios : connexion et 2FA obligatoire (`auth.spec.ts`), site et bâtiments, droits de l'auditeur et
 journal d'audit (`batiments.spec.ts`), comparaison de rendu avec la référence et responsive mobile
-(`visual.spec.ts`), parcours de production de bout en bout (`production.spec.ts`).
+(`visual.spec.ts`), parcours de production de bout en bout (`production.spec.ts`), parcours logistique : achats,
+stocks, inventaire, santé et alertes, un rôle par étape (`logistics.spec.ts`, `npm run e2e -- logistics`). Le spec
+logistique tourne avant le spec de rendu : ils partagent la même organisation, donc les articles et fournisseurs de
+référence (« Aliment ponte », « Agro Provende SA »…) sont créés une seule fois, par celui qui passe le premier.
 `npm run e2e -- --serve` laisse seulement les serveurs e2e démarrés ; `npm run e2e -- production` n'exécute que les
 specs dont le nom contient le mot donné (erreur s'il n'y en a aucune).
 
 Précondition : la date du serveur est postérieure au 2026-10-22, car les lignes de référence des captures sont
 datées d'octobre 2026 (aucune date future n'est acceptée). Les captures de `docs/reference/built/` peuvent différer
-d'un jour à l'autre par un seul nombre (« Dépassée depuis N j » de l'alerte de mise bas).
+d'un jour à l'autre par un seul nombre (« Dépassée depuis N j » de l'alerte de mise bas) ; la date de l'acte de santé
+planifié et les mouvements de consommation de stock (jours de stock) sont calculés par rapport au jour d'exécution.
 
 ## Sauvegarde et restauration
 
@@ -390,9 +394,17 @@ Livraison en cinq tranches ; chacune se termine par une application qui tourne e
   biosécurité. Un acte réalisé avec un produit en stock en retire la quantité du stock.
 - Alertes du tableau de bord : « Stock faible / critique », produits périmés ou bientôt périmés, « Vaccination en
   retard / à venir », traitements et désinfections en retard.
-- Tests : parcours bout en bout Playwright (demande, validation, commande, réception, stock, distribution, inventaire,
-  vaccination avec lot de produit, délai d'attente, alertes, droits du comptable) et captures de Stocks, Fournisseurs,
-  Achats et Santé comparées à la maquette (`docs/reference/built/`), vérifiées aussi sur un écran de 375 px.
+- Tests : parcours bout en bout Playwright `frontend/e2e/logistics.spec.ts` (`npm run e2e -- logistics` : demande,
+  validation, commande, réception, stock, distribution, inventaire, vaccination avec lot de produit, délai d'attente,
+  alertes, droits du comptable) et captures de Stocks, Fournisseurs, Achats et Santé comparées à la maquette
+  (`docs/reference/built/`), vérifiées aussi sur un écran de 375 px : feuille d'inventaire
+  (`m_stocks_inventaire_375.png`), détail d'un achat (`achat_detail_375.png`), réception (`achat_reception_375.png`),
+  formulaire d'acte de santé (`sante_acte_375.png`) et bon de commande à l'impression
+  (`bon_de_commande_impression_375.png`).
+- Écarts assumés avec la maquette, dans les données de test : les jours de stock et la vaccination planifiée sont
+  datés par rapport au jour d'exécution (la date de la maquette est passée) ; le solde d'Agro Provende SA est 0 (le
+  solde ne compte que les achats reçus) ; les numéros DA-0089, BC-0141 et BC-0142 sont obtenus en avançant le compteur
+  de numérotation.
 
 À savoir après une mise à jour : la tranche 3 ajoute plusieurs migrations de base de données. Après avoir récupéré le
 code, lancez `npx prisma migrate deploy` dans `backend/` (ou `./scripts/dev.sh`).
@@ -401,13 +413,13 @@ Qui peut faire quoi sur les achats et les stocks :
 
 | Action | Rôles |
 |---|---|
-| Créer, corriger ou supprimer une demande d'achat (tant qu'elle est en « Demande ») | Responsable stock, Directeur de ferme |
-| Valider, commander, annuler, enregistrer ou supprimer un paiement | Directeur de ferme, Propriétaire |
-| Réceptionner une commande | Magasinier, Responsable stock, Directeur de ferme |
-| Enregistrer un mouvement de stock, compter un inventaire | Magasinier, Responsable stock, Directeur de ferme |
-| Valider un inventaire | Responsable stock, Directeur de ferme (pas le Magasinier) |
-| Créer ou modifier un article, ses seuils, un fournisseur | Responsable stock, Directeur de ferme |
-| Lire les achats et les fournisseurs | Comptable, Auditeur et les rôles ci-dessus (sans bouton d'action) |
+| Créer, corriger ou supprimer une demande d'achat (tant qu'elle est en « Demande ») | Responsable stock, Directeur de ferme, Super administrateur |
+| Valider, commander, annuler, enregistrer ou supprimer un paiement | Directeur de ferme, Propriétaire, Super administrateur |
+| Réceptionner une commande | Magasinier, Responsable stock, Directeur de ferme, Super administrateur |
+| Enregistrer un mouvement de stock, compter un inventaire | Magasinier, Responsable stock, Directeur de ferme, Super administrateur |
+| Valider un inventaire | Responsable stock, Directeur de ferme, Super administrateur (pas le Magasinier) |
+| Créer ou modifier un article, ses seuils, un fournisseur | Responsable stock, Directeur de ferme, Super administrateur |
+| Lire les achats et les fournisseurs | Comptable, Auditeur, Propriétaire et les rôles ci-dessus (sans bouton d'action quand le droit d'écrire manque) |
 
 Le paiement par le Comptable reste une question ouverte pour la tranche 4 (finance).
 

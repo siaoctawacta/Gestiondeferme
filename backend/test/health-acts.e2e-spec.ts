@@ -26,6 +26,7 @@ interface Act extends Id {
   status: string;
   planId: string | null;
   withdrawalUntil: string | null;
+  enteredDone: boolean;
 }
 interface Page<T> {
   items: T[];
@@ -176,6 +177,7 @@ describe('Health acts, vaccination plans and biosecurity (e2e)', () => {
         veterinarian: 'Dr Koffi',
         status: 'PLANIFIE',
         withdrawalUntil: null,
+        enteredDone: false,
       });
       const row = (await list()).items[0];
       expect(row).toMatchObject({
@@ -183,6 +185,22 @@ describe('Health acts, vaccination plans and biosecurity (e2e)', () => {
         date: plusDays(2),
         target: lotCode,
         status: 'PLANIFIE',
+        enteredDone: false,
+      });
+    });
+
+    it('exposes enteredDone: true for an act entered as done, false once completed from a plan, on the row and the response', async () => {
+      const entered = await done();
+      expect(entered.enteredDone).toBe(true);
+      const planned = await act({ date: plusDays(1) });
+      expect(planned.enteredDone).toBe(false);
+      await complete(planned.id, { doneDate: daysAgo(0) });
+      const rows = (await list()).items;
+      expect(rows.find((r) => r.id === entered.id)?.enteredDone).toBe(true);
+      const completed = rows.find((r) => r.id === planned.id);
+      expect(completed).toMatchObject({
+        status: 'REALISE',
+        enteredDone: false,
       });
     });
 

@@ -313,7 +313,37 @@ describe('stock movements: the API contract', () => {
     await user.type(within(dialog).getByLabelText('Quantité'), '320');
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/stock/movements/m5', body: { quantity: 320 } });
+    expect(writes()[0]).toEqual({ method: 'PATCH', url: '/api/stock/movements/m5', body: { quantity: 320 } });
+  });
+
+  it('says the quantity is the total of the operation when it has several pieces, and only then', async () => {
+    const user = await openMovements();
+    await user.click(within(screen.getByText('L-02').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const split = await screen.findByRole('dialog', { name: 'Modifier — Mouvements' });
+    expect(await within(split).findByText('Cette sortie est répartie sur 2 lots : la quantité modifiée est le total.')).toBeInTheDocument();
+    await user.click(within(split).getByRole('button', { name: 'Annuler' }));
+    await user.click(within(screen.getByText('2026-11-03').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const single = await screen.findByRole('dialog', { name: 'Modifier — Mouvements' });
+    await within(single).findByLabelText('Quantité');
+    expect(within(single).queryByText(/répartie sur/)).not.toBeInTheDocument();
+  });
+
+  it('reads the total again each time the dialog opens (no stale cached total)', async () => {
+    const user = await openMovements();
+    const edit = () => within(screen.getByText('L-02').closest('tr')!).getByRole('button', { name: 'Modifier' });
+    await user.click(edit());
+    let dialog = await screen.findByRole('dialog', { name: 'Modifier — Mouvements' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Quantité')).toHaveValue(350));
+    await user.click(within(dialog).getByRole('button', { name: 'Annuler' }));
+    // Another user corrected the operation meanwhile.
+    MOVEMENTS[4] = { ...MOVEMENTS[4], quantity: -80 } as (typeof MOVEMENTS)[number];
+    try {
+      await user.click(edit());
+      dialog = await screen.findByRole('dialog', { name: 'Modifier — Mouvements' });
+      await waitFor(() => expect(within(dialog).getByLabelText('Quantité')).toHaveValue(380));
+    } finally {
+      MOVEMENTS[4] = { ...MOVEMENTS[4], quantity: -50 } as (typeof MOVEMENTS)[number];
+    }
   });
 
   it('does not offer the reason of an exit on edit (the API cannot change it) and sends only what changed', async () => {

@@ -23,9 +23,9 @@ const FULL = { sante: ALL, lots: ALL, porcs: ALL, stocks: ALL, alimentation: ALL
 
 const plusDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
 
-const act = (o: object) => ({
+const act = (o: Record<string, unknown>) => ({
   batchId: 'l1', animalId: null, buildingId: null, stockItemId: null, quantity: null, planId: null, targetKind: 'LOT',
-  withdrawalUntil: null, doneDate: null, stockBatchId: null, ...o,
+  withdrawalUntil: null, doneDate: null, stockBatchId: null, enteredDone: o.status === 'REALISE' && !('planId' in o && o.planId), ...o,
 });
 const ACTS = [
   act({ id: 'a1', date: '2026-10-24', target: 'LC-2026-15', type: 'VACCINATION', productName: 'Gumboro', dose: '1 goutte', veterinarian: 'Dr Koffi', status: 'PLANIFIE', stockItemId: 's4', quantity: 2 }),
@@ -35,7 +35,9 @@ const ACTS = [
   act({ id: 'a6', date: '2026-12-01', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Marek libre', dose: null, veterinarian: null, status: 'PLANIFIE' }),
   act({ id: 'a7', date: '2026-10-05', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Gumboro fait', dose: null, veterinarian: null, status: 'REALISE', doneDate: '2026-10-05', stockItemId: 's4', quantity: 2 }),
   // Planned for 2026-09-30, completed on 2026-10-02: the planned date and the day it was done differ.
-  act({ id: 'a8', date: '2026-09-30', doneDate: '2026-10-02', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Marek fait', dose: null, veterinarian: null, status: 'REALISE', planId: 'pl1' }),
+  act({ id: 'a8', enteredDone: false, date: '2026-09-30', doneDate: '2026-10-02', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Marek fait', dose: null, veterinarian: null, status: 'REALISE', planId: 'pl1' }),
+  // Planned for 2026-10-04 and completed that very day: same two dates as an entered-done act, but not entered as done.
+  act({ id: 'a9', enteredDone: false, date: '2026-10-04', doneDate: '2026-10-04', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Marek même jour', dose: null, veterinarian: null, status: 'REALISE', planId: 'pl1' }),
   act({ id: 'a5', date: '2026-10-01', target: 'LC-2026-14', type: 'DIAGNOSTIC', productName: null, dose: null, veterinarian: null, status: 'ANNULE' }),
 ];
 const STATUS_COUNTS = { PLANIFIE: 1, REALISE: 2, EN_RETARD: 1, ANNULE: 1 };
@@ -843,12 +845,29 @@ describe('the day an act was done', () => {
     await user.click(within(rowOf('Marek fait')).getByRole('button', { name: 'Modifier' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByLabelText('Date prévue')).toHaveValue('2026-09-30');
-    const done = within(dialog).getByLabelText('Date de réalisation');
+    const done = within(dialog).getByLabelText('Réalisé le');
     expect(done).toHaveValue('2026-10-02');
     fireEvent.change(done, { target: { value: '2026-10-03' } });
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toEqual({ method: 'PATCH', url: '/api/health-acts/a8', body: { doneDate: '2026-10-03' } });
+  });
+
+  it('edits both dates of an act completed the day it was planned: the API moves them apart', async () => {
+    mountPage();
+    await screen.findByText('Marek même jour');
+    const user = userEvent.setup();
+    expect(within(rowOf('Marek même jour')).queryByText(/Réalisé le/)).toBeNull();
+    await user.click(within(rowOf('Marek même jour')).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Date prévue')).toHaveValue('2026-10-04');
+    const done = within(dialog).getByLabelText('Réalisé le');
+    expect(done).toHaveValue('2026-10-04');
+    fireEvent.change(done, { target: { value: '2026-10-05' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    // Only the exit's day: the planned date stays where it was.
+    expect(writes()[0]).toEqual({ method: 'PATCH', url: '/api/health-acts/a9', body: { doneDate: '2026-10-05' } });
   });
 
   it('has a single Date field for an act entered as done, where the API moves both dates', async () => {
@@ -857,7 +876,7 @@ describe('the day an act was done', () => {
     await userEvent.setup().click(within(rowOf('Newcastle')).getByRole('button', { name: 'Modifier' }));
     const dialog = await screen.findByRole('dialog');
     expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-10-18');
-    expect(within(dialog).queryByLabelText('Date de réalisation')).toBeNull();
+    expect(within(dialog).queryByLabelText('Réalisé le')).toBeNull();
     expect(within(dialog).queryByLabelText('Date prévue')).toBeNull();
   });
 });

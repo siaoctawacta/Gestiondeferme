@@ -7,7 +7,7 @@ import { useAuth } from '../lib/auth';
 import { formatNumber, todayIso } from '../lib/format';
 import { num, text } from './lotsShared';
 import {
-  ACT_TYPES, LOG_TYPES, SEVERITIES, actTypeLabel, doneAnotherDay,
+  ACT_TYPES, LOG_TYPES, SEVERITIES, actTypeLabel, completedLater,
   type BiosecurityLogRow, type HealthActRow, type HealthActType, type IncidentRow, type QuarantineRow, type VaccinationPlanRow,
 } from './santeShared';
 import type { StockItemDetailData } from './stocksShared';
@@ -101,7 +101,7 @@ export function ActForm({ row, scope, onSaved, onClose }: ActFormProps) {
     const itemField = ITEM_FIELD[type];
     const stockItemId = row ? row.stockItemId : itemOf(v);
     const clinical = type === 'TRAITEMENT' || type === 'DIAGNOSTIC';
-    const otherDay = row ? doneAnotherDay(row) : false;
+    const otherDay = row ? completedLater(row) : false;
     return [
       { name: 'type', label: 'Type', type: 'segmented', only: 'create', required: true, defaultValue: 'VACCINATION', options: types },
       {
@@ -115,7 +115,7 @@ export function ActForm({ row, scope, onSaved, onClose }: ActFormProps) {
           : lotOrAnimalFields(v, targets)),
       // An act completed from a plan has two dates: the API moves the plan with `date` and the exit with `doneDate`.
       { name: 'date', label: otherDay ? 'Date prévue' : 'Date', type: 'date', required: true, defaultValue: todayIso },
-      ...(otherDay ? [{ name: 'doneDate', label: 'Date de réalisation', type: 'date', required: true } as Field] : []),
+      ...(otherDay ? [{ name: 'doneDate', label: 'Réalisé le', type: 'date', required: true } as Field] : []),
       ...(itemField && stockRead && !row
         ? [{ name: itemField, label: 'Produit en stock', type: 'select', only: 'create', options: stockItemOptions(type) } as Field]
         : []),
@@ -147,7 +147,7 @@ export function ActForm({ row, scope, onSaved, onClose }: ActFormProps) {
     const clinical = type === 'TRAITEMENT' || type === 'DIAGNOSTIC';
     const body: Values = {
       date: v.date,
-      ...(row && doneAnotherDay(row) ? { doneDate: v.doneDate } : {}),
+      ...(row && completedLater(row) ? { doneDate: v.doneDate } : {}),
       productName: stockItemId ? '' : text(v.productName),
       dose: text(v.dose),
       quantity: stockItemId && done ? num(v.quantity) : '',
