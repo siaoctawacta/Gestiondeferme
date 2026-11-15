@@ -5,7 +5,7 @@ import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { Browser, Locator, Page } from 'playwright';
 import { api, enrollAdmin, launch, newPage, uiLoginWithBackupCode, WEB_URL, type EnrolledAdmin } from './helpers.ts';
-import { seedReferenceData } from './referenceData.ts';
+import { PLANNED_VACCINATION_DATE, seedLogisticsReferenceData, seedReferenceData } from './referenceData.ts';
 
 const BUILT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'reference', 'built');
 
@@ -57,6 +57,60 @@ const REF_SCREENS = {
     headerHeight: 40, rowHeight: 56,
     row: ['2026-10-22', 'LC-2026-14', 'Croissance chair', '620', '1 250', '210 800 FCFA'],
   },
+  m_stocks: {
+    path: '/m/stocks', wait: 'Aliment ponte',
+    tiles: ['Total enregistrements'],
+    headers: ['ARTICLE', 'CATÉGORIE', 'QUANTITÉ', 'UNITÉ', 'SEUIL MINIMUM', 'NIVEAU', 'JOURS DE STOCK'],
+    pills: [['ok', 'success'], ['faible', 'warning'], ['critique', 'danger']],
+    headerHeight: 40, rowHeight: 56,
+    row: ['Aliment ponte', 'Aliment', '900', 'kg', '1 500', 'faible', '2'],
+    more: [
+      ['Aliment croissance chair', 'Aliment', '4 200', 'kg', '2 000', 'ok', '6'],
+      ['Aliment engraissement porc', 'Aliment', '600', 'kg', '1 500', 'critique', '1'],
+      ['Vaccin Gumboro', 'Médicament', '12', 'flacons', '5', 'ok', '—'],
+      ['Copeaux litière', 'Consommable', '80', 'sacs', '40', 'ok', '13'],
+    ],
+  },
+  m_fournisseurs: {
+    path: '/m/fournisseurs', wait: 'VetoPlus',
+    tiles: ['Total enregistrements'],
+    headers: ['NOM', 'PRODUITS FOURNIS', 'TÉLÉPHONE', 'EMAIL', 'SOLDE'],
+    pills: [],
+    headerHeight: 40, rowHeight: 56,
+    row: ['VetoPlus', 'Vaccins, médicaments', '+228 91 44 55 66', 'contact@vetoplus.tg', '120 000 FCFA'],
+    // Reference: Agro Provende SA owes 850 000. Its two purchases of the reference list are an order and a request, and
+    // the balance counts received purchases only: 0 (see `seedLogisticsReferenceData`).
+    more: [
+      ['Agro Provende SA', 'Aliments volaille & porc', '+228 90 11 22 33', 'ventes@agroprovende.tg', '0 FCFA'],
+      ['Couvoir du Golfe', "Poussins d'un jour", '+228 92 77 88 99', 'info@couvoirgolfe.tg', '0 FCFA'],
+    ],
+  },
+  m_achats: {
+    path: '/m/achats', wait: 'BC-0142',
+    tiles: ['Total enregistrements', 'Demande', 'Validée', 'Commandée'],
+    headers: ['DATE', 'RÉFÉRENCE', 'FOURNISSEUR', 'ARTICLE', 'QUANTITÉ', 'STATUT', 'MONTANT'],
+    pills: [['Commandée', 'warning'], ['Reçue', 'success'], ['Demande', 'neutral']],
+    headerHeight: 40, rowHeight: 56,
+    row: ['2026-10-20', 'BC-0142', 'Agro Provende SA', 'Aliment ponte', '3 000', 'Commandée', '930 000 FCFA'],
+    more: [
+      ['2026-10-15', 'BC-0141', 'VetoPlus', 'Vaccin Gumboro', '10', 'Reçue', '120 000 FCFA'],
+      ['2026-10-22', 'DA-0089', 'Agro Provende SA', 'Aliment engraissement porc', '4 000', 'Demande', '1 120 000 FCFA'],
+    ],
+  },
+  m_sante: {
+    path: '/m/sante', wait: 'Newcastle',
+    tiles: ['Total enregistrements', 'Planifié', 'Réalisé', 'En retard'],
+    headers: ['DATE', 'LOT / ANIMAL', 'TYPE', 'PRODUIT', 'DOSE', 'VÉTÉRINAIRE', 'STATUT'],
+    pills: [['Planifié', 'warning'], ['Réalisé', 'success'], ['En retard', 'danger']],
+    headerHeight: 40, rowHeight: 56,
+    row: ['2026-10-18', 'LC-2026-14', 'Vaccination', 'Newcastle', 'Eau de boisson', 'Dr Koffi', 'Réalisé'],
+    // The planned vaccination is dated two days ahead, not 2026-10-24 (past: it would read `En retard`).
+    more: [
+      [PLANNED_VACCINATION_DATE, 'LC-2026-15', 'Vaccination', 'Gumboro', '1 goutte', 'Dr Koffi', 'Planifié'],
+      ['2026-10-20', 'TR-021', 'Traitement', 'Fer injectable porcelets', '1 ml', 'Dr Amah', 'Réalisé'],
+      ['2026-10-15', 'Porcherie 2', 'Désinfection', 'Virkon S', '1%', 'Équipe', 'En retard'],
+    ],
+  },
 } as const;
 // Row edit / delete icons stay on every row, as in the reference. A row that cannot be changed shows them
 // disabled (aria-disabled) with the reason as tooltip: [row text, icon, reason].
@@ -69,6 +123,12 @@ const DISABLED_ICONS: Record<string, [string, string, string][]> = {
   m_reproduction: [
     ['TR-021', 'Modifier', 'Enregistrement verrouillé'],
     ['TR-021', 'Supprimer', 'Enregistrement verrouillé'],
+  ],
+  // Only a request (Demande) can still be edited or deleted.
+  m_achats: [
+    ['BC-0142', 'Modifier', 'Enregistrement verrouillé'],
+    ['BC-0142', 'Supprimer', 'Enregistrement verrouillé'],
+    ['BC-0141', 'Modifier', 'Enregistrement verrouillé'],
   ],
 };
 const TOLERANCE = 2;
@@ -114,7 +174,7 @@ async function compareWithReference(page: Page, name: string, ref: (typeof REF_S
   // Pill tones, as on the reference (green / yellow / red): the pill's background is compared with the tone's token.
   for (const [label, tone] of ref.pills) {
     const colors = await page.evaluate(([text, tone]) => {
-      const classes = { success: 'bg-primary-soft', warning: 'bg-warning/35', danger: 'bg-destructive/15' } as const;
+      const classes = { success: 'bg-primary-soft', warning: 'bg-warning/35', danger: 'bg-destructive/15', neutral: 'bg-muted' } as const;
       const probe = document.createElement('span');
       probe.className = classes[tone as keyof typeof classes];
       document.body.append(probe);
@@ -140,7 +200,10 @@ async function compareWithReference(page: Page, name: string, ref: (typeof REF_S
   // The reference row (the API orders rows its own way, so find it by its content).
   const rows = (await page.locator('tbody tr').all());
   const cells = await Promise.all(rows.map(async (r) => (await r.locator('td').allInnerTexts()).map(flat).filter(Boolean)));
-  assert.ok(cells.some((c) => JSON.stringify(c) === JSON.stringify(ref.row)), `${name}: a row reads ${ref.row.join(' | ')} (got ${JSON.stringify(cells)})`);
+  for (const expected of [ref.row, ...('more' in ref ? ref.more : [])]) {
+    assert.ok(cells.some((c) => JSON.stringify(c) === JSON.stringify(expected)), `${name}: a row reads ${expected.join(' | ')} (got ${JSON.stringify(cells)})`);
+  }
+  if ('more' in ref) assert.equal(bodyRows, ref.more.length + 1, `${name}: exactly the reference rows`);
 }
 
 async function settle(page: Page): Promise<void> {
@@ -161,7 +224,8 @@ describe('rendu : captures et comparaison avec la référence', () => {
     mkdirSync(BUILT, { recursive: true });
     browser = await launch();
     admin = await enrollAdmin('visual');
-    const opened = await newPage(browser);
+    // The committed captures are twice the size of the reference (layout measurements stay in CSS pixels).
+    const opened = await newPage(browser, undefined, 2);
     page = opened.page;
     // Other specs add farms to the organisation: this one always looks at the seeded farm.
     await opened.context.addInitScript((farm) => localStorage.setItem('ap_farm', farm), admin.farmId);
@@ -200,7 +264,8 @@ describe('rendu : captures et comparaison avec la référence', () => {
       });
       buildings.set(b.name, created.id);
     }
-    await seedReferenceData(admin, buildings);
+    const production = await seedReferenceData(admin, buildings);
+    await seedLogisticsReferenceData(admin, production, buildings);
 
     await page.goto(`${WEB_URL}/`);
     await page.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
@@ -225,8 +290,138 @@ describe('rendu : captures et comparaison avec la référence', () => {
       await page.screenshot({ path: join(BUILT, `${name}.png`) });
       await compareWithReference(page, name, ref);
     }
-    assert.equal(await page.title(), 'Alimentation & eau — AgriPilot');
+    assert.equal(await page.title(), 'Santé & biosécurité — AgriPilot');
     assert.deepEqual(foreignRequests, [], 'every asset (fonts included) is served locally');
+  });
+
+  it('mobile 375x812 : feuille d’inventaire, réception, tuiles d’un achat, cinq onglets de Santé, formulaire d’acte, bon de commande à l’impression', async () => {
+    const { context, page: phone } = await newPage(browser, { width: 375, height: 812 });
+    await uiLoginWithBackupCode(phone, admin.email, admin.backupCodes[2]);
+    await phone.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
+    const report = (what: string, values: unknown) => console.log(`[375px] ${what}: ${JSON.stringify(values)}`);
+    const pageWidth = () => phone.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth, clientWidth: document.documentElement.clientWidth }));
+    const noPageScroll = async (what: string) => {
+      const { scrollWidth } = await pageWidth();
+      assert.ok(scrollWidth <= 375, `${what}: document scrollWidth ${scrollWidth} > 375`);
+      return scrollWidth;
+    };
+    /** Right edge of the element, in the viewport. */
+    const right = async (locator: Locator) => (await box(locator)).x + (await box(locator)).width;
+
+    // 1. The count sheet: five items, four columns. The grid scrolls INSIDE its container, the page does not.
+    const inventory = await api<{ id: string }>('/inventories', { method: 'POST', token: admin.token, farmId: admin.farmId, body: { date: new Date().toISOString().slice(0, 10) } });
+    await phone.goto(`${WEB_URL}/m/stocks/inv-${inventory.id}`);
+    await phone.getByLabel('Compté ligne 1').waitFor();
+    await settle(phone);
+    const grid = phone.locator('fieldset .overflow-x-auto');
+    const gridBox = await grid.evaluate((el) => ({ clientWidth: el.clientWidth, scrollWidth: el.scrollWidth }));
+    assert.ok(gridBox.scrollWidth > gridBox.clientWidth, 'the count grid is wider than its container and scrolls inside it');
+    report('inventory sheet', { page: await noPageScroll('inventory sheet'), grid: gridBox });
+    // The last column (the gap) is reachable by scrolling the grid, not the page.
+    await grid.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+    assert.ok((await pageWidth()).scrollWidth <= 375, 'scrolling the grid does not widen the page');
+    await phone.screenshot({ path: join(BUILT, 'm_stocks_inventaire_375.png') });
+
+    // 2. A purchase in `Demande` with the long amount: tiles, then the order (BC-0142) with its reception dialog.
+    await phone.goto(`${WEB_URL}/m/achats`);
+    await phone.getByRole('row', { name: /DA-0089/ }).getByRole('link').first().click();
+    await phone.getByRole('heading', { name: 'DA-0089' }).waitFor();
+    await settle(phone);
+    const tiles = await phone.locator('main .grid > div').evaluateAll((els) =>
+      els.map((tile) => {
+        const value = tile.querySelector('p:last-child') as HTMLElement;
+        const t = tile.getBoundingClientRect();
+        const v = value.getBoundingClientRect();
+        return { text: value.textContent?.replace(/\s+/g, ' '), tileRight: Math.round(t.right), valueRight: Math.round(v.right), valueScroll: value.scrollWidth, valueClient: value.clientWidth };
+      }),
+    );
+    report('purchase tiles', tiles);
+    for (const t of tiles) {
+      assert.ok(t.valueScroll <= t.valueClient, `tile « ${t.text} » overflows its box (${t.valueScroll} > ${t.valueClient})`);
+      assert.ok(t.valueRight <= t.tileRight, `tile « ${t.text} » sticks out of its tile`);
+      assert.ok(t.tileRight <= 375, 'a tile stays inside the viewport');
+    }
+    assert.ok(tiles.some((t) => /1 120 000 FCFA/.test(t.text ?? '')), 'the long amount is shown whole');
+    await noPageScroll('purchase detail');
+    await phone.screenshot({ path: join(BUILT, 'achat_detail_375.png') });
+
+    await phone.goto(`${WEB_URL}/m/achats`);
+    await phone.getByRole('row', { name: /BC-0142/ }).getByRole('link').first().click();
+    await phone.getByRole('heading', { name: 'BC-0142' }).waitFor();
+    await phone.getByRole('button', { name: 'Réceptionner' }).click();
+    const dialog = phone.getByRole('dialog');
+    await dialog.getByLabel('Quantité reçue ligne 1').waitFor();
+    const panel = await box(dialog);
+    assert.ok(panel.x >= 0 && panel.x + panel.width <= 375 && panel.y >= 0 && panel.y + panel.height <= 812, 'the reception dialog fits the phone');
+    const receptionGrid = await dialog.locator('fieldset .overflow-x-auto').evaluate((el) => ({ clientWidth: el.clientWidth, scrollWidth: el.scrollWidth }));
+    report('reception dialog', { panel, grid: receptionGrid, page: await noPageScroll('reception dialog') });
+    const save = dialog.getByRole('button', { name: 'Enregistrer' });
+    await save.scrollIntoViewIfNeeded();
+    assert.ok((await right(save)) <= 375, 'the Enregistrer button is inside the phone');
+    await phone.screenshot({ path: join(BUILT, 'achat_reception_375.png') });
+    await dialog.getByRole('button', { name: 'Annuler' }).click();
+
+    // 3. Print view of the bon de commande: the app chrome is hidden, the sheet shows, its table header is legible.
+    await phone.emulateMedia({ media: 'print' });
+    const printed = await phone.evaluate(() => {
+      // Hidden = takes no space (an element inside a `display: none` ancestor keeps its own `display`).
+      const shown = (el: Element | null) => Boolean(el) && (el as Element).getClientRects().length > 0;
+      const sheet = document.querySelector('section[aria-label="Bon de commande"]');
+      const head = sheet?.querySelector('thead th') as HTMLElement | null;
+      // Any CSS colour (oklab here) as RGBA, through a canvas.
+      const ctx = document.createElement('canvas').getContext('2d', { willReadFrequently: true })!;
+      const rgba = (css: string) => { ctx.clearRect(0, 0, 1, 1); ctx.fillStyle = '#fff'; ctx.fillStyle = css; ctx.fillRect(0, 0, 1, 1); return [...ctx.getImageData(0, 0, 1, 1).data]; };
+      const over = ([r, g, b, a]: number[], [br, bgc, bb]: number[]) => [r, g, b].map((c, i) => Math.round((c * a) / 255 + [br, bgc, bb][i] * (1 - a / 255)));
+      const luminance = (rgb: number[]) => rgb.map((v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }).reduce((acc, c, i) => acc + c * [0.2126, 0.7152, 0.0722][i], 0);
+      // What the paper shows behind the header: white (browsers do not print backgrounds by default).
+      const paper = [255, 255, 255];
+      const fg = head ? over(rgba(getComputedStyle(head).color), paper) : [0, 0, 0];
+      const [hi, lo] = [luminance(fg), luminance(paper)].sort((a, b) => b - a);
+      return {
+        aside: shown(document.querySelector('aside')),
+        topbar: shown(document.querySelector('header')),
+        screenLayout: shown(document.querySelector('main .print\\:hidden')),
+        sheet: shown(sheet),
+        headerCells: sheet ? [...sheet.querySelectorAll('thead th')].map((t) => t.textContent) : [],
+        headerColor: fg, contrast: Math.round(((hi + 0.05) / (lo + 0.05)) * 10) / 10,
+        headerRule: head ? getComputedStyle(head.closest('thead')!).borderBottomWidth : null,
+        sheetText: sheet?.textContent?.replace(/\s+/g, ' ').slice(0, 400),
+      };
+    });
+    report('print view', printed);
+    assert.equal(printed.aside, false, 'the sidebar is hidden when printing');
+    assert.equal(printed.topbar, false, 'the top bar is hidden when printing');
+    assert.equal(printed.screenLayout, false, 'the screen layout (tiles, tabs) is hidden when printing');
+    assert.equal(printed.sheet, true, 'the bon de commande is shown when printing');
+    assert.deepEqual(printed.headerCells, ['ARTICLE', 'QUANTITÉ', 'PRIX UNITAIRE', 'MONTANT']);
+    assert.ok(printed.contrast >= 4.5, `the table header is legible when printing (contrast ${printed.contrast})`);
+    await phone.pdf({ path: join(BUILT, 'bon_de_commande.pdf'), format: 'A4' });
+    await phone.emulateMedia({ media: 'screen' });
+
+    // 4. Santé: five tabs in one bar that scrolls inside itself, every tab reachable.
+    await phone.goto(`${WEB_URL}/m/sante`);
+    await phone.getByRole('tab', { name: 'Interventions' }).waitFor();
+    const bar = phone.getByRole('tablist');
+    const barBox = await bar.evaluate((el) => ({ clientWidth: el.clientWidth, scrollWidth: el.scrollWidth }));
+    report('santé tabs', { page: await noPageScroll('santé'), bar: barBox });
+    await phone.getByRole('tab', { name: 'Incidents' }).click();
+    await phone.getByRole('tab', { name: 'Incidents', selected: true }).waitFor();
+    await noPageScroll('santé, tab Incidents');
+    await phone.getByRole('tab', { name: 'Interventions' }).click();
+
+    // 5. The act dialog with its two segmented controls (type, status) and the target kind.
+    await phone.getByRole('button', { name: 'Ajouter' }).click();
+    const act = phone.getByRole('dialog');
+    await act.getByRole('radio', { name: 'Vaccination' }).waitFor();
+    const groups = await act.getByRole('radiogroup').evaluateAll((els) =>
+      els.map((el) => { const r = el.getBoundingClientRect(); return { label: el.getAttribute('aria-label') ?? el.textContent?.slice(0, 40), right: Math.round(r.right), scroll: el.scrollWidth, client: el.clientWidth }; }),
+    );
+    report('act dialog', { panel: await box(act), groups, page: await noPageScroll('act dialog') });
+    for (const g of groups) assert.ok(g.right <= 375 && g.scroll <= g.client, `segmented control « ${g.label} » fits the phone`);
+    const actPanel = await box(act);
+    assert.ok(actPanel.x >= 0 && actPanel.x + actPanel.height >= 0 && actPanel.x + actPanel.width <= 375 && actPanel.y + actPanel.height <= 812, 'the act dialog fits the phone');
+    await phone.screenshot({ path: join(BUILT, 'sante_acte_375.png') });
+    await context.close();
   });
 
   it('barre latérale : 256 px, lignes de 48 px (principales) et 44 px (groupes)', async () => {

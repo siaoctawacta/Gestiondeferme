@@ -301,6 +301,16 @@ type ModuleConfigBase<T extends { id: string }> = {
   qr?: boolean;
   actions?: RowAction<T>[];
   /**
+   * What an embedded list that is `readOnly` (a closed lot, an exited animal) still lets through, decided row by row:
+   * the row actions by `key` (they must also be `visible` and permitted) and the delete icon (still behind
+   * `deletePermission` and `canDelete`). Without it a read-only list has no write control at all. Add, edit and every
+   * other action stay hidden.
+   */
+  whenReadOnly?: {
+    actions?: Record<string, (row: T) => boolean>;
+    canDelete?: (row: T) => boolean;
+  };
+  /**
    * Further tabs under the header, after the first (main) one. A `config` tab is another list, hidden without
    * read permission on its `slug`; an `element` tab is any content and always shown.
    */

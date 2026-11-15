@@ -7,7 +7,7 @@ import {
   LiftQuarantineDialog, QuarantineForm,
 } from './santeDialogs';
 import {
-  ACT_STATUSES, ACT_TYPES, LOG_TYPES, SEVERITIES, actTypeLabel,
+  ACT_STATUSES, ACT_TYPES, LOG_TYPES, SEVERITIES, actTypeLabel, doneAnotherDay,
   type BiosecurityLogRow, type HealthActRow, type IncidentRow, type QuarantineRow, type VaccinationPlanRow,
 } from './santeShared';
 
@@ -168,7 +168,16 @@ export const sante: ModuleConfig<HealthActRow> = {
   subtitle: "Vaccinations, traitements, diagnostics et délais d'attente.",
   endpoint: '/health-acts',
   columns: [
-    { key: 'date', header: 'DATE' },
+    {
+      key: 'date',
+      header: 'DATE',
+      render: (a) => (
+        <>
+          {a.date}
+          {doneAnotherDay(a) && <span className="block text-xs font-normal text-muted-foreground">Réalisé le {a.doneDate}</span>}
+        </>
+      ),
+    },
     { key: 'target', header: 'LOT / ANIMAL' },
     { key: 'type', header: 'TYPE', render: (a) => actTypeLabel(a.type) },
     { key: 'productName', header: 'PRODUIT' },
@@ -186,6 +195,8 @@ export const sante: ModuleConfig<HealthActRow> = {
   canEdit: (a) => (a.status === 'ANNULE' ? 'Intervention annulée' : true),
   form: ActForm,
   actions: actActions,
+  // On a closed lot or an exited animal the API still cancels and deletes a planned act, and refuses every other change.
+  whenReadOnly: { actions: { cancel: isOpen }, canDelete: isOpen },
   tabs: [
     { key: 'plans', label: 'Plans vaccinaux', config: plans },
     { key: 'biosecurite', label: 'Biosécurité', config: biosecurity },

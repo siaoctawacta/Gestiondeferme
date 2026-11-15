@@ -25,15 +25,17 @@ const plusDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString(
 
 const act = (o: object) => ({
   batchId: 'l1', animalId: null, buildingId: null, stockItemId: null, quantity: null, planId: null, targetKind: 'LOT',
-  withdrawalUntil: null, ...o,
+  withdrawalUntil: null, doneDate: null, stockBatchId: null, ...o,
 });
 const ACTS = [
   act({ id: 'a1', date: '2026-10-24', target: 'LC-2026-15', type: 'VACCINATION', productName: 'Gumboro', dose: '1 goutte', veterinarian: 'Dr Koffi', status: 'PLANIFIE', stockItemId: 's4', quantity: 2 }),
-  act({ id: 'a2', date: '2026-10-18', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Newcastle', dose: 'Eau de boisson', veterinarian: 'Dr Koffi', status: 'REALISE' }),
-  act({ id: 'a3', date: '2026-10-20', target: 'TR-021', type: 'TRAITEMENT', productName: 'Fer injectable porcelets', dose: '1 ml', veterinarian: 'Dr Amah', status: 'REALISE', batchId: null, animalId: 'p1', targetKind: 'ANIMAL' }),
+  act({ id: 'a2', date: '2026-10-18', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Newcastle', dose: 'Eau de boisson', veterinarian: 'Dr Koffi', status: 'REALISE', doneDate: '2026-10-18' }),
+  act({ id: 'a3', date: '2026-10-20', target: 'TR-021', type: 'TRAITEMENT', productName: 'Fer injectable porcelets', dose: '1 ml', veterinarian: 'Dr Amah', status: 'REALISE', doneDate: '2026-10-20', batchId: null, animalId: 'p1', targetKind: 'ANIMAL' }),
   act({ id: 'a4', date: '2026-10-15', target: 'Porcherie 2', type: 'DESINFECTION', productName: 'Virkon S', dose: '1%', veterinarian: 'Équipe', status: 'EN_RETARD', batchId: null, buildingId: 'bd1', targetKind: 'BATIMENT' }),
   act({ id: 'a6', date: '2026-12-01', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Marek libre', dose: null, veterinarian: null, status: 'PLANIFIE' }),
-  act({ id: 'a7', date: '2026-10-05', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Gumboro fait', dose: null, veterinarian: null, status: 'REALISE', stockItemId: 's4', quantity: 2 }),
+  act({ id: 'a7', date: '2026-10-05', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Gumboro fait', dose: null, veterinarian: null, status: 'REALISE', doneDate: '2026-10-05', stockItemId: 's4', quantity: 2 }),
+  // Planned for 2026-09-30, completed on 2026-10-02: the planned date and the day it was done differ.
+  act({ id: 'a8', date: '2026-09-30', doneDate: '2026-10-02', target: 'LC-2026-14', type: 'VACCINATION', productName: 'Marek fait', dose: null, veterinarian: null, status: 'REALISE', planId: 'pl1' }),
   act({ id: 'a5', date: '2026-10-01', target: 'LC-2026-14', type: 'DIAGNOSTIC', productName: null, dose: null, veterinarian: null, status: 'ANNULE' }),
 ];
 const STATUS_COUNTS = { PLANIFIE: 1, REALISE: 2, EN_RETARD: 1, ANNULE: 1 };
@@ -515,6 +517,51 @@ describe('biosécurité, quarantaines and incidents', () => {
   });
 });
 
+describe('API refusals shown in the dialog', () => {
+  it('shows the 409 of a plan whose species changed after it was applied', async () => {
+    failWith = { url: /vaccination-plans\/pl1$/, status: 409, message: 'Ce plan a été appliqué à des lots : son espèce et son type ne peuvent plus changer' };
+    mountPage();
+    await openTab('Plans vaccinaux');
+    await screen.findByText('Programme chair');
+    const user = userEvent.setup();
+    await user.click(within(rowOf('Programme chair')).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.selectOptions(within(dialog).getByLabelText('Espèce'), 'Porcin');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText(/ne peuvent plus changer/)).toBeInTheDocument();
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/vaccination-plans/pl1', body: { species: 'PORCIN' } });
+  });
+
+  it('shows the 409 of a second quarantine on the same lot', async () => {
+    failWith = { url: /\/api\/quarantines$/, status: 409, message: 'Une quarantaine est déjà en cours' };
+    mountPage();
+    await openTab('Quarantaines');
+    await screen.findByText('Toux');
+    const user = userEvent.setup();
+    await user.click(button('Ajouter'));
+    const dialog = await screen.findByRole('dialog');
+    await user.selectOptions(await within(dialog).findByLabelText('Lot'), 'LC-2026-14');
+    await user.type(within(dialog).getByLabelText('Motif'), 'Toux');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Une quarantaine est déjà en cours')).toBeInTheDocument();
+  });
+
+  it('shows the 400 of a product batch that is not the product’s', async () => {
+    failWith = { url: /\/api\/health-acts$/, status: 400, message: 'Lot invalide pour cet article' };
+    mountPage();
+    await screen.findByText('Gumboro');
+    const user = userEvent.setup();
+    await user.click(button('Ajouter'));
+    const dialog = await screen.findByRole('dialog');
+    await user.selectOptions(await within(dialog).findByLabelText('Lot'), 'LC-2026-14');
+    await within(dialog).findByRole('option', { name: 'Vaccin Gumboro' });
+    await user.selectOptions(within(dialog).getByLabelText('Produit en stock'), 'Vaccin Gumboro');
+    fireEvent.change(await within(dialog).findByLabelText('Quantité'), { target: { value: '1' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Lot invalide pour cet article')).toBeInTheDocument();
+  });
+});
+
 describe('withdrawal period on lot and animal pages', () => {
   const NOTICE = /Délai d'attente jusqu'au/;
   const mountLot = (opts?: Parameters<typeof mount>[1]) => mount(<LotDetail id="l1" />, opts);
@@ -727,20 +774,37 @@ describe('complete and edit with stock', () => {
   });
 });
 
-describe('Santé tab is read-only when the target is closed', () => {
-  it('on a closed lot: no add, no row action', async () => {
+describe('Santé tab when the target is closed', () => {
+  const names = (text: string) => within(rowOf(text)).queryAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
+
+  it('on a closed lot: no add, and only the planned acts can be cancelled or deleted', async () => {
     lotData = { ...LOT, status: 'CLOTURE', closedAt: '2026-11-01' };
     mount(<LotDetail id="l1" />);
     await screen.findByText('LC-2026-14', { selector: 'h1' });
     await openTab('Santé');
     await screen.findByText('Gumboro');
     expect(screen.queryByRole('button', { name: 'Ajouter' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Marquer réalisé' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Annuler' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Modifier' })).toBeNull();
+    // Planned (or overdue): cancel and delete, but neither complete nor edit.
+    expect(names('Gumboro')).toEqual(['Annuler', 'Supprimer']);
+    expect(names('Marek libre')).toEqual(['Annuler', 'Supprimer']);
+    // Done, and cancelled: the API refuses any change on a closed lot, so no icon at all.
+    expect(names('Newcastle')).toEqual([]);
+    expect(names('Marek fait')).toEqual([]);
+    const cancelled = screen.getAllByRole('row').find((r) => within(r).queryByText('Annulé'));
+    expect(within(cancelled!).queryAllByRole('button')).toEqual([]);
+
+    const user = userEvent.setup();
+    await user.click(within(rowOf('Gumboro')).getByRole('button', { name: 'Annuler' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: "Annuler l'intervention" }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/health-acts/a1/cancel' });
+    await user.click(within(rowOf('Marek libre')).getByRole('button', { name: 'Supprimer' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Supprimer' }));
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()[1]).toMatchObject({ method: 'DELETE', url: '/api/health-acts/a6' });
   });
 
-  it('on an animal that left: no add, no row action', async () => {
+  it('on an animal that left: the same, planned acts only', async () => {
     animalData = { ...ANIMAL, status: 'VENDU', exitDate: '2026-11-01', exitReason: 'VENDU' };
     mount(<AnimalDetail id="p1" />);
     await screen.findByText('TR-021', { selector: 'h1' });
@@ -749,6 +813,52 @@ describe('Santé tab is read-only when the target is closed', () => {
     expect(screen.queryByRole('button', { name: 'Ajouter' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Marquer réalisé' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Modifier' })).toBeNull();
+    expect(names('Gumboro')).toEqual(['Annuler', 'Supprimer']);
+    expect(names('Newcastle')).toEqual([]);
+  });
+
+  it('keeps the planned acts untouchable without the daily permission', async () => {
+    lotData = { ...LOT, status: 'CLOTURE', closedAt: '2026-11-01' };
+    mount(<LotDetail id="l1" />, { perms: { ...FULL, sante: ['read'], lots: ['read'] } });
+    await screen.findByText('LC-2026-14', { selector: 'h1' });
+    await openTab('Santé');
+    await screen.findByText('Gumboro');
+    expect(names('Gumboro')).toEqual([]);
+  });
+});
+
+describe('the day an act was done', () => {
+  it('shows it under the planned date when they differ, and nowhere else', async () => {
+    mountPage();
+    await screen.findByText('Marek fait');
+    expect(within(rowOf('Marek fait')).getByText('Réalisé le 2026-10-02')).toBeInTheDocument();
+    expect(within(rowOf('Newcastle')).queryByText(/Réalisé le/)).toBeNull();
+    expect(within(rowOf('Gumboro')).queryByText(/Réalisé le/)).toBeNull();
+  });
+
+  it('edits the day it was done of an act completed from a plan, apart from its planned date', async () => {
+    mountPage();
+    await screen.findByText('Marek fait');
+    const user = userEvent.setup();
+    await user.click(within(rowOf('Marek fait')).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Date prévue')).toHaveValue('2026-09-30');
+    const done = within(dialog).getByLabelText('Date de réalisation');
+    expect(done).toHaveValue('2026-10-02');
+    fireEvent.change(done, { target: { value: '2026-10-03' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toEqual({ method: 'PATCH', url: '/api/health-acts/a8', body: { doneDate: '2026-10-03' } });
+  });
+
+  it('has a single Date field for an act entered as done, where the API moves both dates', async () => {
+    mountPage();
+    await screen.findByText('Newcastle');
+    await userEvent.setup().click(within(rowOf('Newcastle')).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-10-18');
+    expect(within(dialog).queryByLabelText('Date de réalisation')).toBeNull();
+    expect(within(dialog).queryByLabelText('Date prévue')).toBeNull();
   });
 });
 

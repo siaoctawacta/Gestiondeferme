@@ -58,6 +58,14 @@ export interface PurchaseStep {
 /** `GET /purchases/:id`. */
 export interface PurchaseData extends PurchaseRow {
   supplierId: string;
+  /** The `DA-NNNN` request number, kept once the order has a `BC-NNNN` (`reference`). */
+  requestNumber: string;
+  orderNumber: string | null;
+  /** `YYYY-MM-DD`: the day the goods were received; null before the reception. */
+  receivedDate: string | null;
+  /** Why the purchase was cancelled; null unless it was. */
+  cancelReason: string | null;
+  note: string | null;
   supplierPhone: string | null;
   supplierAddress: string | null;
   /** ISO timestamp of the order (`BC-NNNN` assigned); null before it. */

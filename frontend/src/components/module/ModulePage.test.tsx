@@ -31,7 +31,7 @@ const calls: Call[] = [];
 const fetchMock = vi.fn<typeof fetch>();
 let handler: (c: Call) => Response | undefined;
 
-function setup({ perms = ALL, farm, config = batiments, list = false, scope }: { perms?: string[]; farm?: string; config?: ModuleConfig<Building>; list?: boolean; scope?: Record<string, string> } = {}) {
+function setup({ perms = ALL, farm, config = batiments, list = false, scope, readOnly }: { perms?: string[]; farm?: string; config?: ModuleConfig<Building>; list?: boolean; scope?: Record<string, string>; readOnly?: boolean } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
   handler = () => undefined;
   fetchMock.mockImplementation(async (input, init) => {
@@ -58,7 +58,7 @@ function setup({ perms = ALL, farm, config = batiments, list = false, scope }: {
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter>
         <AuthProvider>
-          {list ? <ModuleList config={config} scope={scope} /> : <ModulePage config={config} />}
+          {list ? <ModuleList config={config} scope={scope} readOnly={readOnly} /> : <ModulePage config={config} />}
         </AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -508,6 +508,43 @@ describe('ModulePage kit extensions', () => {
     expect(screen.queryByText('Total enregistrements')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
     expect(listCalls().every((c) => c.url.includes('buildingId=b9'))).toBe(true);
+  });
+
+  describe('a read-only list (closed lot, exited animal)', () => {
+    const run = vi.fn();
+    const withGates = (whenReadOnly?: ModuleConfig<Building>['whenReadOnly']): ModuleConfig<Building> => ({
+      ...batiments,
+      actions: [
+        { key: 'view', label: 'Voir détail', icon: Eye, run },
+        { key: 'close', label: 'Clore', icon: Eye, run },
+      ],
+      whenReadOnly,
+    });
+    const names = (row: string) => within(screen.getByText(row).closest('tr')!).queryAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
+
+    it('hides every write control when the config lets nothing through', async () => {
+      setup({ list: true, readOnly: true, config: withGates() });
+      await screen.findByText('Poulailler A');
+      expect(names('Poulailler A')).toEqual([]);
+      expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+    });
+
+    it('keeps only the actions and the deletions the config names, row by row', async () => {
+      setup({ list: true, readOnly: true, config: withGates({ actions: { close: (b) => b.id === 'b1' }, canDelete: (b) => b.id === 'b2' }) });
+      await screen.findByText('Poulailler A');
+      expect(names('Poulailler A')).toEqual(['Clore']);
+      expect(names('Porcherie 2')).toEqual(['Supprimer']);
+      expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+      await userEvent.setup().click(within(screen.getByText('Porcherie 2').closest('tr')!).getByRole('button', { name: 'Supprimer' }));
+      await userEvent.setup().click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Supprimer' }));
+      await waitFor(() => expect(calls.some((c) => c.method === 'DELETE' && c.url === '/api/buildings/b2')).toBe(true));
+    });
+
+    it('still asks for the permission and never works under all farms', async () => {
+      setup({ list: true, readOnly: true, perms: ['read'], config: withGates({ actions: { close: () => true }, canDelete: () => true }) });
+      await screen.findByText('Poulailler A');
+      expect(names('Poulailler A')).toEqual([]);
+    });
   });
 
   it('gives a custom form the effective scope', async () => {

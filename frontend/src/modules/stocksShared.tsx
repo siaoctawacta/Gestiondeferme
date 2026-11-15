@@ -1,5 +1,7 @@
 import type { ComponentType } from 'react';
 import { ActionDialog } from '../components/module/ActionDialog';
+import { allPages } from '../components/module/allPages';
+import { LoadedRecord } from '../components/module/LoadedRecord';
 import type { Field, ModuleConfig } from '../components/module/types';
 import { Pill, type PillTone } from '../components/ui/Pill';
 import { api } from '../lib/api';
@@ -40,9 +42,16 @@ export interface StockItemDetailData extends StockRow {
   batches: { id: string; lotNumber: string | null; expiryDate: string | null; receivedDate: string; quantity: number }[];
 }
 
-/** `GET /stock/movements`. `quantity` is signed (negative out). `sourceType` is set when another operation wrote it. */
+/**
+ * `GET /stock/movements`. `quantity` is signed (negative out). `sourceType` is set when another operation wrote it.
+ * An exit taken from several lots is one row per lot piece, all sharing an `operationId`: the API edits and deletes
+ * the whole operation whichever piece is addressed.
+ */
 export interface MovementRow {
   id: string;
+  operationId: string;
+  /** The exit was asked from this lot (an edit keeps it there) rather than picked by FEFO. */
+  lotExplicit: boolean;
   /** `YYYY-MM-DD` */
   date: string;
   itemId: string;
@@ -68,7 +77,7 @@ export interface InventoryRow {
 
 /** `GET /inventories/:id`. */
 export interface InventoryData extends InventoryRow {
-  lines: { stockItemId: string; itemName: string; unit: string; theoreticalQty: number; countedQty: number }[];
+  lines: { itemId: string; itemName: string; unit: string; theoreticalQty: number; countedQty: number; difference: number }[];
 }
 
 /* --------------------------------------------------------------------------------------------- */
@@ -129,7 +138,8 @@ function typeFields(type: MovementType): Field[] {
         noteField,
       ];
     case 'SORTIE':
-      return [dateField, quantityField, { name: 'reason', label: 'Motif', type: 'select', required: true, options: EXIT_REASONS }, noteField];
+      // The reason is fixed once recorded: the API does not let an exit change it.
+      return [dateField, quantityField, { name: 'reason', label: 'Motif', type: 'select', required: true, only: 'create', options: EXIT_REASONS }, noteField];
     case 'AJUSTEMENT':
       return [dateField, { name: 'quantity', label: 'Écart (signé)', type: 'number', required: true, step: 0.01 }, noteField];
   }
@@ -157,7 +167,7 @@ export function MovementDialog({ title, type, itemId, row, onClose, onDone }: Mo
     <ActionDialog
       title={title}
       mode={row ? 'update' : 'create'}
-      initial={row ? { date: row.date, quantity: row.type === 'AJUSTEMENT' ? row.quantity : Math.abs(row.quantity), unitCost: row.unitCost, reason: row.reason, note: row.note } : undefined}
+      initial={row ? { date: row.date, quantity: row.type === 'AJUSTEMENT' ? row.quantity : Math.abs(row.quantity), unitCost: row.unitCost, note: row.note } : undefined}
       fields={(values) => {
         const t = fixed ?? (values.type as MovementType | undefined);
         return [
@@ -176,10 +186,10 @@ export function MovementDialog({ title, type, itemId, row, onClose, onDone }: Mo
       toPayload={(v: Values, mode) => {
         const t = fixed ?? (v.type as MovementType);
         if (mode === 'update') {
-          return { date: v.date, quantity: num(v.quantity), unitCost: t === 'ENTREE' ? num(v.unitCost) : undefined, reason: t === 'SORTIE' ? v.reason : undefined, note: v.note };
+          return { date: v.date, quantity: num(v.quantity), unitCost: t === 'ENTREE' ? num(v.unitCost) : undefined, note: v.note };
         }
         return {
-          stockItemId: itemId ?? v.stockItemId,
+          itemId: itemId ?? v.stockItemId,
           date: v.date,
           type: t,
           quantity: num(v.quantity),
@@ -197,10 +207,27 @@ export function MovementDialog({ title, type, itemId, row, onClose, onDone }: Mo
   );
 }
 
+/**
+ * An exit is edited by the quantity of its whole operation (the API re-plans every piece), so the form shows the
+ * sum of the pieces sharing the clicked row's `operationId`, read from that item's movements of that day.
+ */
+async function operationTotal(row: MovementRow): Promise<MovementRow> {
+  const day = await allPages<MovementRow>('/stock/movements', { itemId: row.itemId, from: row.date, to: row.date, type: row.type });
+  const pieces = day.filter((m) => m.operationId === row.operationId);
+  return { ...row, quantity: pieces.reduce((sum, m) => sum + m.quantity, 0) || row.quantity };
+}
+
 const MovementForm: ComponentType<{ row?: MovementRow; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }> =
-  ({ row, scope, onSaved, onClose }) => (
-    <MovementDialog title={`${row ? 'Modifier' : 'Ajouter'} — Mouvements`} row={row} itemId={scope?.itemId} onClose={onClose} onDone={onSaved} />
-  );
+  ({ row, scope, onSaved, onClose }) => {
+    const title = `${row ? 'Modifier' : 'Ajouter'} — Mouvements`;
+    const dialog = (r?: MovementRow) => <MovementDialog title={title} row={r} itemId={scope?.itemId} onClose={onClose} onDone={onSaved} />;
+    if (row?.type !== 'SORTIE') return dialog(row);
+    return (
+      <LoadedRecord<MovementRow> title={title} queryKey={['/stock/movements', 'operation', row.operationId]} load={() => operationTotal(row)} onClose={onClose}>
+        {dialog}
+      </LoadedRecord>
+    );
+  };
 
 const SOURCE_LOCK = "Mouvement issu d'une autre opération";
 const manualOnly = (m: MovementRow): string | true => (m.sourceType ? SOURCE_LOCK : true);

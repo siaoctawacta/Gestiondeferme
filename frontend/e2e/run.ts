@@ -86,7 +86,8 @@ try {
     await new Promise(() => {});
   }
   // `npm run e2e -- production` runs only the specs whose file name contains one of the words.
-  const only = process.argv.slice(2).filter((a) => !a.startsWith('--'));
+  // (`--trace off` is accepted and ignored: the specs drive Playwright's library, which never records a trace.)
+  const only = process.argv.slice(2).filter((a, i, all) => !a.startsWith('--') && all[i - 1] !== '--trace');
   const specs = readdirSync(here)
     .filter((f) => f.endsWith('.spec.ts') && (only.length === 0 || only.some((w) => f.includes(w))))
     .sort()

@@ -28,7 +28,8 @@ const SUPPLIERS = [
   { id: 'sup3', name: 'Couvoir du Golfe', products: "Poussins d'un jour", phone: '+228 92 77 88 99', email: 'info@couvoirgolfe.tg', balance: 0 },
 ];
 
-const base = { supplierId: 'sup1', orderNumber: null, note: null };
+// The detail carries these beside the list row (`requestNumber` stays after the order, `orderNumber` is the BC).
+const base = { supplierId: 'sup1', orderNumber: null, note: null, requestNumber: 'DA-0001', receivedDate: null, cancelReason: null };
 const LIST = [
   { id: 'p1', date: '2026-10-20', reference: 'BC-0142', supplierName: 'Agro Provende SA', article: 'Aliment ponte', quantity: 3000, status: 'COMMANDEE', amount: 930000, paid: 0, remaining: 930000 },
   { id: 'p2', date: '2026-10-15', reference: 'BC-0141', supplierName: 'VetoPlus', article: 'Vaccin Gumboro', quantity: 10, status: 'RECUE', amount: 120000, paid: 0, remaining: 120000 },
@@ -73,6 +74,18 @@ DETAILS.p6 = {
     line({ itemId: 's2', itemName: 'Aliment ponte', quantity: 3000, unitPrice: 310 }),
     line({ itemId: 's1', itemName: 'Aliment croissance chair', quantity: 500, unitPrice: 300 }),
     line({ itemId: 's4', itemName: 'Vaccin Gumboro', unit: 'flacons', quantity: 10, unitPrice: 12000 }),
+  ],
+};
+// A purchase worth 0 is paid as soon as it is received; a cancelled one owes nothing and keeps its reason.
+DETAILS.p7 = {
+  ...(DETAILS.p2 as object), id: 'p7', reference: 'BC-0160', status: 'PAYEE', amount: 0, paid: 0, remaining: 0, payments: [],
+  lines: [line({ itemId: 's4', itemName: 'Vaccin Gumboro', unit: 'flacons', quantity: 10, unitPrice: 0, receivedQuantity: 10 })],
+};
+DETAILS.p8 = {
+  ...(DETAILS.p1 as object), id: 'p8', reference: 'BC-0161', status: 'ANNULEE', remaining: 0, cancelReason: 'Doublon de commande',
+  history: [
+    { step: 'DEMANDE', at: '2026-10-18T09:00:00.000Z', by: 'Koffi' },
+    { step: 'ANNULEE', at: '2026-10-19T09:00:00.000Z', by: 'Awa', note: 'Doublon de commande' },
   ],
 };
 const VALIDEE = { id: 'p5', date: '2026-10-23', reference: 'DA-0090', supplierName: 'VetoPlus', article: 'Vaccin Gumboro', quantity: 5, status: 'VALIDEE', amount: 60000, paid: 0, remaining: 60000 };
@@ -334,6 +347,25 @@ describe('achats list', () => {
     });
   });
 
+  it('caps the received quantity at the ordered one, with the API message, before any request', async () => {
+    mountList(achats);
+    await screen.findByText('BC-0142');
+    const user = userEvent.setup();
+    await user.click(rowOf('BC-0142').getByRole('button', { name: 'Réceptionner' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Réceptionner — BC-0142' });
+    const received = await within(dialog).findByLabelText('Quantité reçue ligne 1');
+    await user.clear(received);
+    await user.type(received, '3001');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('La quantité reçue dépasse la quantité commandée')).toBeInTheDocument();
+    expect(writes()).toHaveLength(0);
+    // Exactly the ordered quantity is allowed.
+    await user.clear(received);
+    await user.type(received, '3000');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+  });
+
   it('shows the API refusal in the receive and the cancel dialogs', async () => {
     mountList(achats);
     await screen.findByText('BC-0142');
@@ -496,6 +528,28 @@ describe('purchase detail', () => {
     expect(cells(screen.getAllByText('Aliment ponte')[0].closest('tr'))).toContain('3 000 kg 310 FCFA');
     expect(screen.getByRole('button', { name: 'Réceptionner' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Valider' })).not.toBeInTheDocument();
+  });
+
+  it('offers no payment on a purchase worth 0, paid at reception', async () => {
+    mountDetail('p7');
+    expect(await screen.findByRole('heading', { name: 'BC-0160' })).toBeInTheDocument();
+    expect(screen.getByText('Payée')).toBeInTheDocument();
+    expect(flat(screen.getByText('Reste', { selector: 'p' }).nextElementSibling!.textContent)).toBe('0 FCFA');
+    expect(screen.queryByRole('button', { name: 'Payer' })).not.toBeInTheDocument();
+  });
+
+  it('shows the cancellation reason of a cancelled purchase, which owes nothing', async () => {
+    mountDetail('p8');
+    expect(await screen.findByRole('heading', { name: 'BC-0161' })).toBeInTheDocument();
+    expect(screen.getByText("Motif de l'annulation : Doublon de commande")).toBeInTheDocument();
+    expect(flat(screen.getByText('Reste', { selector: 'p' }).nextElementSibling!.textContent)).toBe('0 FCFA');
+    for (const name of ['Réceptionner', 'Payer', 'Annuler', 'Valider']) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
+  });
+
+  it('prints the request number beside the order number on the bon de commande', async () => {
+    mountDetail('p1');
+    const sheet = await screen.findByRole('region', { name: 'Bon de commande' });
+    expect(within(sheet).getByText('Demande : DA-0001')).toBeInTheDocument();
   });
 
   it('shows the not-found card for an unknown purchase', async () => {

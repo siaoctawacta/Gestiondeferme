@@ -372,12 +372,50 @@ Livraison en cinq tranches ; chacune se termine par une application qui tourne e
 - Tests : bout en bout Playwright du parcours de production (lot, mortalité, ponte, saillie, mise bas, distribution,
   droits d'un agent d'élevage, audit) et captures des écrans comparées à la maquette (`docs/reference/built/`).
 
+**Tranche 3 — Stocks, achats, santé : terminée.**
+
+- Stocks : articles (aliments, médicaments, vaccins, matériel, consommables) avec seuils par ferme, niveaux `ok` /
+  `faible` / `critique`, jours de stock, lots avec date de péremption, coût moyen pondéré. Une quantité n'est jamais
+  saisie : c'est la somme des mouvements (entrées, sorties, ajustements) ; une sortie qui rendrait le stock négatif est
+  refusée. Une sortie prise sur plusieurs lots reste une seule opération (la corriger ou la supprimer agit sur
+  l'ensemble).
+- Inventaires : un brouillon de comptage, enregistré puis validé ; la validation recalcule la quantité théorique et
+  enregistre les écarts comme ajustements.
+- Alimentation : une distribution consomme le stock de l'aliment lié et prend le coût moyen pondéré du stock.
+- Fournisseurs et achats : demande → validation → commande (bon de commande imprimable) → réception → paiement, ou
+  annulation avant la réception. La réception entre en stock (lot, péremption) ; on ne peut pas recevoir plus que la
+  quantité commandée. Le solde d'un fournisseur est la somme de ses achats reçus moins les paiements.
+- Santé et biosécurité : vaccinations, traitements, désinfections et diagnostics (planifiés, réalisés, en retard), plans
+  vaccinaux appliqués à un lot, délais d'attente affichés sur le lot et l'animal, quarantaines, incidents, relevés de
+  biosécurité. Un acte réalisé avec un produit en stock en retire la quantité du stock.
+- Alertes du tableau de bord : « Stock faible / critique », produits périmés ou bientôt périmés, « Vaccination en
+  retard / à venir », traitements et désinfections en retard.
+- Tests : parcours bout en bout Playwright (demande, validation, commande, réception, stock, distribution, inventaire,
+  vaccination avec lot de produit, délai d'attente, alertes, droits du comptable) et captures de Stocks, Fournisseurs,
+  Achats et Santé comparées à la maquette (`docs/reference/built/`), vérifiées aussi sur un écran de 375 px.
+
+À savoir après une mise à jour : la tranche 3 ajoute plusieurs migrations de base de données. Après avoir récupéré le
+code, lancez `npx prisma migrate deploy` dans `backend/` (ou `./scripts/dev.sh`).
+
+Qui peut faire quoi sur les achats et les stocks :
+
+| Action | Rôles |
+|---|---|
+| Créer, corriger ou supprimer une demande d'achat (tant qu'elle est en « Demande ») | Responsable stock, Directeur de ferme |
+| Valider, commander, annuler, enregistrer ou supprimer un paiement | Directeur de ferme, Propriétaire |
+| Réceptionner une commande | Magasinier, Responsable stock, Directeur de ferme |
+| Enregistrer un mouvement de stock, compter un inventaire | Magasinier, Responsable stock, Directeur de ferme |
+| Valider un inventaire | Responsable stock, Directeur de ferme (pas le Magasinier) |
+| Créer ou modifier un article, ses seuils, un fournisseur | Responsable stock, Directeur de ferme |
+| Lire les achats et les fournisseurs | Comptable, Auditeur et les rôles ci-dessus (sans bouton d'action) |
+
+Le paiement par le Comptable reste une question ouverte pour la tranche 4 (finance).
+
 **À venir**
 
-3. Santé et biosécurité, stocks et inventaires (décrément du stock à chaque distribution), fournisseurs et achats.
-4. Clients et ventes (devis → paiement, sorties de lots), finance et rentabilité.
-5. Personnel et tâches, équipements et maintenance, rapports, alertes complètes, QR, calendrier des chaleurs, exports,
-   jeu de données de démonstration (« Ferme Kpalimé »), documentation.
+4. Clients et ventes (devis → paiement, sorties de lots), finance et rentabilité (les achats y deviennent des dépenses).
+5. Personnel et tâches, équipements et maintenance, rapports, alertes complètes, QR (articles de stock, produits),
+   calendrier des chaleurs, exports, jeu de données de démonstration (« Ferme Kpalimé »), documentation.
 
-Les modules des tranches 3 à 5 apparaissent dans le menu avec la mention « Module en cours de construction » tant qu'ils
-ne sont pas livrés.
+Les modules des tranches 4 et 5 apparaissent dans le menu avec la mention « Module en cours de construction » tant
+qu'ils ne sont pas livrés.

@@ -27,10 +27,14 @@ const STOCK = [
 ];
 const LEVEL_COUNTS = { ok: 3, faible: 1, critique: 1 };
 
+// Rows as the API sends them: every piece carries its `operationId`; an exit split across two lots is two rows.
+const mv = (o: { id: string; date: string } & Record<string, unknown>) => ({ lotExplicit: false, unit: 'kg', unitCost: 300, lotNumber: null, sourceType: null, note: null, ...o });
 const MOVEMENTS = [
-  { id: 'm1', date: '2026-11-02', itemId: 's2', itemName: 'Aliment ponte', type: 'ENTREE', quantity: 1000, unitCost: 300, reason: 'ACHAT', lotNumber: 'L-01', sourceType: 'PURCHASE', note: null },
-  { id: 'm2', date: '2026-11-03', itemId: 's2', itemName: 'Aliment ponte', type: 'SORTIE', quantity: -100, unitCost: 300, reason: 'PERTE', lotNumber: null, sourceType: null, note: null },
-  { id: 'm3', date: '2026-11-04', itemId: 's2', itemName: 'Aliment ponte', type: 'AJUSTEMENT', quantity: -20, unitCost: 300, reason: 'INVENTAIRE', lotNumber: null, sourceType: 'INVENTORY', note: null },
+  mv({ id: 'm1', operationId: 'op1', date: '2026-11-02', itemId: 's2', itemName: 'Aliment ponte', type: 'ENTREE', quantity: 1000, reason: 'ACHAT', lotNumber: 'L-01', sourceType: 'PURCHASE' }),
+  mv({ id: 'm2', operationId: 'op2', date: '2026-11-03', itemId: 's2', itemName: 'Aliment ponte', type: 'SORTIE', quantity: -100, reason: 'PERTE' }),
+  mv({ id: 'm3', operationId: 'op3', date: '2026-11-04', itemId: 's2', itemName: 'Aliment ponte', type: 'AJUSTEMENT', quantity: -20, reason: 'INVENTAIRE', sourceType: 'INVENTORY' }),
+  mv({ id: 'm4', operationId: 'op4', date: '2026-11-05', itemId: 's2', itemName: 'Aliment ponte', type: 'SORTIE', quantity: -300, reason: 'CONSOMMATION', lotNumber: 'L-01' }),
+  mv({ id: 'm5', operationId: 'op4', date: '2026-11-05', itemId: 's2', itemName: 'Aliment ponte', type: 'SORTIE', quantity: -50, reason: 'CONSOMMATION', lotNumber: 'L-02' }),
 ];
 
 const plusDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
@@ -46,7 +50,7 @@ const DETAIL = {
 const DRAFT = { id: 'i1', date: '2026-11-10', status: 'BROUILLON', note: null, lineCount: 0, lines: [] };
 const DONE = {
   id: 'i2', date: '2026-11-01', status: 'VALIDEE', note: null, lineCount: 1,
-  lines: [{ stockItemId: 's2', itemName: 'Aliment ponte', unit: 'kg', theoreticalQty: 900, countedQty: 880 }],
+  lines: [{ itemId: 's2', itemName: 'Aliment ponte', unit: 'kg', theoreticalQty: 900, countedQty: 880, difference: -20 }],
 };
 
 interface Call { method: string; url: string; body?: unknown }
@@ -73,7 +77,12 @@ function mount(ui: React.ReactNode, { perms = ALL, farm }: { perms?: string[]; f
       return json(201, { id: 'new1' });
     }
     const url = call.url;
-    if (url.startsWith('/api/stock/movements')) return page(MOVEMENTS);
+    if (url.startsWith('/api/stock/movements')) {
+      // The operation loader asks for one day of one item: answer it like the API would.
+      const q = new URL(url, 'http://x').searchParams;
+      const day = q.get('from');
+      return page(day ? MOVEMENTS.filter((m) => m.date === day) : MOVEMENTS);
+    }
     if (/^\/api\/stock\/s2(\?|$)/.test(url)) return json(200, detailData);
     if (/^\/api\/stock\/s9(\?|$)/.test(url)) return json(404, { message: 'Introuvable' });
     if (url.startsWith('/api/stock')) return page(STOCK, { levelCounts: LEVEL_COUNTS });
@@ -157,7 +166,7 @@ describe('stocks list', () => {
     expect(writes()[0]).toMatchObject({
       method: 'POST',
       url: '/api/stock/movements',
-      body: { stockItemId: 's2', date: todayIso(), type: 'SORTIE', quantity: 5000, reason: 'PERTE' },
+      body: { itemId: 's2', date: todayIso(), type: 'SORTIE', quantity: 5000, reason: 'PERTE' },
     });
 
     failWith = null;
@@ -182,7 +191,7 @@ describe('stocks list', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0].body).toEqual({
-      stockItemId: 's2', date: todayIso(), type: 'ENTREE', quantity: 1000, unitCost: 320, reason: 'ACHAT', lotNumber: 'L-77', expiryDate: '2027-03-01',
+      itemId: 's2', date: todayIso(), type: 'ENTREE', quantity: 1000, unitCost: 320, reason: 'ACHAT', lotNumber: 'L-77', expiryDate: '2027-03-01',
     });
 
     await user.click(ponte().getByRole('button', { name: 'Ajustement' }));
@@ -282,6 +291,52 @@ describe('stock movements tab', () => {
   });
 });
 
+describe('stock movements: the API contract', () => {
+  async function openMovements() {
+    mountPage();
+    await screen.findByText('Aliment ponte');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Mouvements' }));
+    await screen.findByText('2026-11-03');
+    return user;
+  }
+
+  it('edits a split exit by the quantity of the whole operation, not of the piece clicked', async () => {
+    const user = await openMovements();
+    // The two pieces (300 on L-01, 50 on L-02) are one operation of 350.
+    const piece = screen.getByText('L-02').closest('tr')!;
+    await user.click(within(piece).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Mouvements' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Quantité')).toHaveValue(350));
+    expect(calls.some((c) => c.url.startsWith('/api/stock/movements?') && c.url.includes('itemId=s2') && c.url.includes('from=2026-11-05') && c.url.includes('to=2026-11-05'))).toBe(true);
+    await user.clear(within(dialog).getByLabelText('Quantité'));
+    await user.type(within(dialog).getByLabelText('Quantité'), '320');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/stock/movements/m5', body: { quantity: 320 } });
+  });
+
+  it('does not offer the reason of an exit on edit (the API cannot change it) and sends only what changed', async () => {
+    const user = await openMovements();
+    await user.click(within(screen.getByText('2026-11-03').closest('tr')!).getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Mouvements' });
+    expect(within(dialog).queryByLabelText('Motif')).not.toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText('Note'), 'sac percé');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).toEqual({ note: 'sac percé' });
+  });
+
+  it('deletes a movement through its own id (the API removes the whole operation)', async () => {
+    const user = await openMovements();
+    await user.click(within(screen.getByText('L-02').closest('tr')!).getByRole('button', { name: 'Supprimer' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Supprimer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'DELETE', url: '/api/stock/movements/m5' });
+  });
+});
+
 describe('stock item detail', () => {
   it('shows the tiles, the batches with expiry pills and the item movements', async () => {
     mountDetail('s2');
@@ -336,7 +391,7 @@ describe('inventories', () => {
 
     await user.click(screen.getByRole('button', { name: 'Enregistrer le brouillon' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
-    expect(writes()[0]).toMatchObject({ method: 'PUT', url: '/api/inventories/i1/lines', body: { lines: [{ stockItemId: 's2', countedQty: 880 }] } });
+    expect(writes()[0]).toMatchObject({ method: 'PUT', url: '/api/inventories/i1/lines', body: { lines: [{ itemId: 's2', countedQty: 880 }] } });
 
     await user.click(screen.getByRole('button', { name: "Valider l'inventaire" }));
     const dialog = await screen.findByRole('dialog');

@@ -1,0 +1,519 @@
+import assert from 'node:assert/strict';
+import { after, before, describe, it } from 'node:test';
+import type { Browser, Page } from 'playwright';
+import {
+  api, apiLogin, enrollAdmin, enrollUser, launch, newPage, PASSWORD, uiLoginWithBackupCode, uiLoginWithPassword, WEB_URL,
+  type EnrolledAdmin, type EnrolledUser,
+} from './helpers.ts';
+import { ensureItem, ensureSupplier, REFERENCE_ITEMS, REFERENCE_SUPPLIERS } from './logisticsData.ts';
+
+/** Text with every kind of space (thin, no-break) turned into a plain one, so `1 170 000` matches however it is grouped. */
+const flat = (text: string) => text.replace(/\s+/g, ' ').trim();
+const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
+/** Waits until the page's main text (spaces flattened) matches: a figure that follows a save arrives with the refetch. */
+const mainShows = (page: Page, re: RegExp) =>
+  page.waitForFunction(
+    ([source, flags]) => new RegExp(source, flags).test(document.querySelector('main')?.innerText.replace(/\s+/g, ' ') ?? ''),
+    [re.source, re.flags] as const,
+  );
+
+// The flow of the slice, one role per step, through the real UI; set-up that is not the point of a step goes through
+// the API. The tests below run in order and SHARE STATE (one farm, one purchase, one lot...), as in production.spec.ts.
+// The figures are worked out here: 1 000 kg of `Aliment ponte` at 280 (stock already there) + 3 000 kg received at 310
+// give a weighted average of (280 000 + 930 000) / 4 000 = 302.5; a distribution of 500 kg costs 500 x 302.5 = 151 250
+// and leaves 3 500 kg; a count of 3 400 adjusts by -100.
+describe('logistique : achat, réception, stock, distribution, inventaire, santé et alertes', () => {
+  let browser: Browser;
+  let admin: EnrolledAdmin;
+  let farmId = '';
+  let lotCode = '';
+  let lotId = '';
+  let ponteId = '';
+  let vaccineId = '';
+  let bcNumber = '';
+  const users: Record<string, EnrolledUser | { email: string }> = {};
+  const emails = {
+    stock: 'resp-stock@e2e.test',
+    director: 'directeur-logistique@e2e.test',
+    storekeeper: 'magasinier@e2e.test',
+    vet: 'veterinaire@e2e.test',
+    accountant: 'comptable@e2e.test',
+  };
+
+  /** A browser session of one role (a fresh context: the roles never share a session). */
+  async function asRole(email: string): Promise<Page> {
+    const { page } = await newPage(browser);
+    const user = users[email] as EnrolledUser | undefined;
+    if (user && 'backupCodes' in user) {
+      // A Directeur de ferme and a Comptable must enrol a second factor: each UI login burns one backup code.
+      await uiLoginWithBackupCode(page, email, user.backupCodes.shift()!);
+    } else {
+      await uiLoginWithPassword(page, email);
+    }
+    await page.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
+    return page;
+  }
+
+  /** The reference of the purchase row (`DA-0001`, then `BC-0001` once ordered) after a text filter. */
+  const purchaseRow = (page: Page, re: RegExp) => page.getByRole('row', { name: re });
+
+  before(async () => {
+    browser = await launch();
+    admin = await enrollAdmin('logistics');
+    // A farm of its own: the seeded one is shared with the other specs, so the stock and dashboard figures are exactly this flow's.
+    farmId = (await api<{ id: string }>('/farms', { method: 'POST', token: admin.token, body: { name: 'Ferme Logistique' } })).id;
+    const as = { token: admin.token, farmId };
+    const call = <T = { id: string }>(path: string, method = 'GET', body?: unknown) => api<T>(path, { method, token: admin.token, farmId, body });
+
+    const roles: [string, string, string][] = [
+      [emails.stock, 'RESP_STOCK', 'Responsable Stock'],
+      [emails.director, 'DIRECTEUR_FERME', 'Directrice Logistique'],
+      [emails.storekeeper, 'MAGASINIER', 'Magasinier Test'],
+      [emails.vet, 'VETERINAIRE', 'Vétérinaire Test'],
+      [emails.accountant, 'COMPTABLE', 'Comptable Test'],
+    ];
+    for (const [email, role, name] of roles) {
+      await call('/users', 'POST', { name, email, role, farmIds: [farmId], password: PASSWORD });
+    }
+    users[emails.director] = await enrollUser(emails.director);
+    users[emails.accountant] = await enrollUser(emails.accountant);
+
+    // Set-up: a laying house and its lot (the veterinarian's target), the articles, the supplier, a feed linked to the
+    // article, 1 000 kg of it already in stock at 280, and the thresholds that make 4 000 kg `ok` and 3 500 `faible`.
+    const site = await call('/sites', 'POST', { name: 'Site Logistique' });
+    const building = await call('/buildings', 'POST', { name: 'Poulailler L', type: 'AVICOLE', siteId: site.id, capacity: 6000, status: 'ACTIF' });
+    const lot = await call<{ id: string; code: string }>('/batches', 'POST', {
+      species: 'AVICOLE', type: 'CHAIR', buildingId: building.id, entryDate: day(-30), initialCount: 5000,
+    });
+    lotId = lot.id;
+    lotCode = lot.code;
+    ponteId = await ensureItem(as, REFERENCE_ITEMS.ponte);
+    vaccineId = await ensureItem(as, { name: 'Vaccin Newcastle', category: 'VACCIN', unit: 'flacons' });
+    await ensureSupplier(as, REFERENCE_SUPPLIERS.agro);
+    await call(`/stock/${ponteId}/thresholds`, 'PUT', { minQty: 4000 });
+    await call(`/stock/${vaccineId}/thresholds`, 'PUT', { minQty: 5 });
+    await call('/stock/movements', 'POST', { itemId: ponteId, type: 'ENTREE', date: day(-10), quantity: 1000, unitCost: 280, reason: 'ACHAT' });
+    await call('/feed-products', 'POST', { name: 'Ponte logistique', kind: 'ALIMENT_COMPLET', unitCost: 310, stockItemId: ponteId });
+  });
+
+  after(async () => {
+    // The articles are shared with the visual spec's reference stock list: this one is not a reference article, so it is
+    // deactivated, like every article this spec created (a deactivated article drops out of the list of a farm where it holds nothing).
+    if (vaccineId) {
+      const referenced = new Set<string>(Object.values(REFERENCE_ITEMS).map((i) => i.name));
+      const items = await api<{ items: { id: string; name: string; active: boolean }[] }>('/stock-items?pageSize=200', { token: admin.token });
+      for (const item of items.items.filter((i) => i.active && !referenced.has(i.name))) {
+        await api(`/stock-items/${item.id}`, { method: 'PATCH', token: admin.token, body: { active: false } });
+      }
+    }
+    await browser.close();
+  });
+
+  it('Responsable stock : crée une demande d’achat de deux lignes, au total calculé, sans pouvoir la valider', async () => {
+    const page = await asRole(emails.stock);
+    await page.goto(`${WEB_URL}/m/achats`);
+    await page.getByRole('button', { name: 'Ajouter' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Fournisseur').selectOption({ label: 'Agro Provende SA' });
+    await dialog.getByLabel('Article ligne 1').selectOption({ label: 'Aliment ponte' });
+    await dialog.getByLabel('Quantité ligne 1').fill('3000');
+    await dialog.getByLabel('Prix unitaire ligne 1').fill('310');
+    await dialog.getByRole('button', { name: 'Ajouter une ligne' }).click();
+    await dialog.getByLabel('Article ligne 2').selectOption({ label: 'Vaccin Newcastle' });
+    await dialog.getByLabel('Quantité ligne 2').fill('20');
+    await dialog.getByLabel('Prix unitaire ligne 2').fill('12000');
+    // 3 000 x 310 + 20 x 12 000
+    assert.match(flat(await dialog.innerText()), /Total : 1 170 000 FCFA/);
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+
+    const row = purchaseRow(page, /DA-\d{4}/);
+    await row.waitFor();
+    const text = flat(await row.innerText());
+    assert.match(text, /Agro Provende SA/);
+    assert.match(text, /Aliment ponte \+1/);
+    assert.match(text, /1 170 000 FCFA/);
+    await row.getByText('Demande', { exact: true }).waitFor();
+    // The stock manager enters and corrects requests; validating them is the director's.
+    assert.equal(await row.getByRole('button', { name: 'Modifier' }).count(), 1);
+    assert.equal(await row.getByRole('button', { name: 'Valider' }).count(), 0);
+    assert.equal(await row.getByRole('button', { name: 'Réceptionner' }).count(), 0);
+    await page.context().close();
+  });
+
+  it('Directeur : valide puis commande ; le bon de commande reçoit son numéro', async () => {
+    const page = await asRole(emails.director);
+    await page.goto(`${WEB_URL}/m/achats`);
+    let row = purchaseRow(page, /DA-\d{4}/);
+    await row.getByRole('button', { name: 'Valider' }).click();
+    let dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Valider' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await row.getByText('Validée', { exact: true }).waitFor();
+
+    await row.getByRole('button', { name: 'Commander' }).click();
+    dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Commander' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    row = purchaseRow(page, /BC-\d{4}/);
+    await row.getByText('Commandée', { exact: true }).waitFor();
+    bcNumber = flat(await row.innerText()).match(/BC-\d{4}/)![0];
+    // The director neither receives (storekeeper) nor edits an order.
+    assert.equal(await row.getByRole('button', { name: 'Réceptionner' }).count(), 1);
+    assert.equal(await row.getByRole('button', { name: 'Modifier' }).getAttribute('aria-disabled'), 'true');
+
+    // The detail page carries the request number and the lines; the stock has not moved yet.
+    // The link is on the first cell (the date).
+    await row.getByRole('link').first().click();
+    await page.getByRole('heading', { name: bcNumber }).waitFor();
+    await mainShows(page, /Montant 1 170 000 FCFA/);
+    await page.getByRole('tab', { name: 'Historique' }).click();
+    const history = flat(await page.getByRole('tabpanel').innerText());
+    for (const step of ['Demande', 'Validée', 'Commandée']) assert.match(history, new RegExp(step));
+    const stock = (await api<{ items: { id: string; quantity: number }[] }>('/stock', { token: admin.token, farmId })).items;
+    assert.equal(stock.find((s) => s.id === ponteId)!.quantity, 1000);
+    await page.context().close();
+  });
+
+  it('Magasinier : réceptionne (plafond à la quantité commandée, n° de lot, péremption) ; il ne valide ni ne crée', async () => {
+    const page = await asRole(emails.storekeeper);
+    await page.goto(`${WEB_URL}/m/achats`);
+    const row = purchaseRow(page, new RegExp(bcNumber));
+    await row.waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Ajouter' }).count(), 0);
+    for (const name of ['Valider', 'Commander', 'Annuler', 'Payer', 'Modifier', 'Supprimer']) {
+      assert.equal(await row.getByRole('button', { name }).count(), 0, `the storekeeper has no « ${name} »`);
+    }
+    await row.getByRole('button', { name: 'Réceptionner' }).click();
+    const dialog = page.getByRole('dialog');
+    // The grid is the order's own lines, prefilled with the ordered quantities.
+    assert.equal(await dialog.getByLabel('Quantité reçue ligne 1').inputValue(), '3000');
+    assert.equal(await dialog.getByLabel('Quantité reçue ligne 2').inputValue(), '20');
+    // More than ordered is refused with the API's own message, before any request.
+    await dialog.getByLabel('Quantité reçue ligne 1').fill('3001');
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.getByText('La quantité reçue dépasse la quantité commandée').waitFor();
+    await dialog.getByLabel('Quantité reçue ligne 1').fill('3000');
+    await dialog.getByLabel('N° de lot ligne 1').fill('PO-2026-11');
+    await dialog.getByLabel('Péremption ligne 1').fill(day(180));
+    await dialog.getByLabel('N° de lot ligne 2').fill('NC-2026-11');
+    await dialog.getByLabel('Péremption ligne 2').fill(day(200));
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await row.getByText('Reçue', { exact: true }).waitFor();
+
+    // Stocks: 1 000 + 3 000 = 4 000 kg, exactly the minimum (`ok`); the vaccine 20 flacons.
+    await page.goto(`${WEB_URL}/m/stocks`);
+    const ponte = page.getByRole('row', { name: /Aliment ponte/ });
+    await ponte.waitFor();
+    let text = flat(await ponte.innerText());
+    assert.match(text, /Aliment ponte Aliment 4 000 kg 4 000 ok/);
+    await ponte.getByText('ok', { exact: true }).waitFor();
+    const vaccine = flat(await page.getByRole('row', { name: /Vaccin Newcastle/ }).innerText());
+    assert.match(vaccine, /Vaccin Newcastle Vaccin 20 flacons 5 ok/);
+
+    // The article's page: the weighted-average cost and the two lots.
+    await page.getByRole('link', { name: 'Aliment ponte' }).click();
+    await page.getByRole('heading', { name: 'Aliment ponte' }).waitFor();
+    await mainShows(page, /Quantité 4 000 kg/);
+    await mainShows(page, /Valeur 1 210 000 FCFA/);
+    await mainShows(page, /Coût moyen 302\.5 FCFA\/kg/);
+    text = flat(await page.getByRole('tabpanel').innerText());
+    assert.match(text, /PO-2026-11 .* 3 000/);
+    await page.context().close();
+  });
+
+  it('Responsable stock : crée un article, enregistre deux entrées, une sortie répartie sur deux lots, la corrige puis la supprime', async () => {
+    const page = await asRole(emails.stock);
+    await page.goto(`${WEB_URL}/m/stocks`);
+    await page.getByRole('button', { name: 'Ajouter' }).click();
+    let dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Nom').fill('Seaux de test');
+    await dialog.getByLabel('Catégorie').selectOption({ label: 'Consommable' });
+    await dialog.getByLabel('Unité').fill('seaux');
+    await dialog.getByLabel('Seuil minimum').fill('10');
+    // The item is created active, with its thresholds for this farm.
+    assert.equal(await dialog.getByRole('checkbox', { name: 'Actif' }).isChecked(), true);
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    const item = page.getByRole('row', { name: /Seaux de test/ });
+    await mainShows(page, /Seaux de test Consommable 0 seaux 10 critique/);
+
+    const entry = async (quantity: string, cost: string, lot: string, expiry: string) => {
+      await item.getByRole('button', { name: 'Entrée' }).click();
+      dialog = page.getByRole('dialog', { name: 'Entrée — Seaux de test' });
+      await dialog.getByLabel('Quantité').fill(quantity);
+      await dialog.getByLabel('Coût unitaire (FCFA)').fill(cost);
+      await dialog.getByLabel('N° de lot').fill(lot);
+      await dialog.getByLabel('Péremption').fill(expiry);
+      await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+      await dialog.waitFor({ state: 'detached' });
+    };
+    await entry('100', '50', 'SEA-A', day(100));
+    await entry('50', '70', 'SEA-B', day(200));
+    await mainShows(page, /Seaux de test Consommable 150 seaux 10 ok/);
+
+    // 120 leave: the lot expiring first (100), then the next (20): one operation, two rows.
+    await item.getByRole('button', { name: 'Sortie' }).click();
+    dialog = page.getByRole('dialog', { name: 'Sortie — Seaux de test' });
+    await dialog.getByLabel('Quantité').fill('120');
+    await dialog.getByLabel('Motif').selectOption({ label: 'Perte' });
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await mainShows(page, /Seaux de test Consommable 30 seaux/);
+
+    await page.getByRole('tab', { name: 'Mouvements' }).click();
+    const piece = (lot: string) => page.getByRole('row', { name: new RegExp(`Sortie .* ${lot}`) });
+    await piece('SEA-A').waitFor();
+    assert.match(flat(await piece('SEA-A').innerText()), /Sortie -100 .* Perte SEA-A/);
+    assert.match(flat(await piece('SEA-B').innerText()), /Sortie -20 .* Perte SEA-B/);
+
+    // Correcting one piece corrects the operation: the form shows the 120 of the whole operation, not the 20 clicked.
+    await piece('SEA-B').getByRole('button', { name: 'Modifier' }).click();
+    dialog = page.getByRole('dialog', { name: 'Modifier — Mouvements' });
+    await dialog.getByLabel('Quantité').waitFor();
+    assert.equal(await dialog.getByLabel('Quantité').inputValue(), '120');
+    assert.equal(await dialog.getByLabel('Motif').count(), 0, 'the reason of an exit cannot be edited');
+    await dialog.getByLabel('Quantité').fill('130');
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await piece('SEA-B').getByText('-30', { exact: true }).waitFor();
+    assert.match(flat(await piece('SEA-A').innerText()), /Sortie -100/);
+
+    // Deleting one piece removes the whole operation.
+    await piece('SEA-B').getByRole('button', { name: 'Supprimer' }).click();
+    dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Supprimer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await piece('SEA-A').waitFor({ state: 'detached' });
+    await page.getByRole('tab', { name: 'Stocks' }).click();
+    await mainShows(page, /Seaux de test Consommable 150 seaux 10 ok/);
+    await page.context().close();
+  });
+
+  it('Directeur : une distribution de 500 kg est valorisée au coût moyen pondéré ; le stock baisse et le mouvement apparaît', async () => {
+    const page = await asRole(emails.director);
+    await page.goto(`${WEB_URL}/m/alimentation`);
+    await page.getByRole('tab', { name: 'Distributions' }).click();
+    await page.getByRole('button', { name: 'Ajouter' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('combobox', { name: 'Lot' }).selectOption({ label: lotCode });
+    await dialog.getByRole('combobox', { name: 'Aliment' }).selectOption({ label: 'Ponte logistique' });
+    await dialog.getByLabel('Quantité (kg)').fill('500');
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    const row = page.getByRole('row', { name: new RegExp(lotCode) });
+    await row.waitFor();
+    // 500 kg x 302.5 (not the catalogue price of 310, which would be 155 000)
+    assert.match(flat(await row.innerText()), /151 250 FCFA/);
+
+    await page.goto(`${WEB_URL}/m/stocks`);
+    const ponte = page.getByRole('row', { name: /Aliment ponte/ });
+    await ponte.waitFor();
+    assert.match(flat(await ponte.innerText()), /Aliment ponte Aliment 3 500 kg 4 000 faible/);
+    await ponte.getByText('faible', { exact: true }).waitFor();
+
+    await page.getByRole('tab', { name: 'Mouvements' }).click();
+    const exit = page.getByRole('row', { name: /Consommation/ });
+    await exit.waitFor();
+    const text = flat(await exit.innerText());
+    assert.match(text, /Aliment ponte Sortie -500 302\.5 FCFA Consommation/);
+    // Written by the feed distribution: corrected there, so locked here with the reason.
+    assert.equal(await exit.getByRole('button', { name: 'Modifier' }).getAttribute('aria-disabled'), 'true');
+    assert.equal(await exit.getByRole('button', { name: 'Supprimer' }).getAttribute('title'), "Mouvement issu d'une autre opération");
+    await page.context().close();
+  });
+
+  it('Magasinier compte 3 400 kg ; Responsable stock valide : le niveau est ajusté de −100', async () => {
+    let page = await asRole(emails.storekeeper);
+    await page.goto(`${WEB_URL}/m/stocks`);
+    await page.getByRole('tab', { name: 'Inventaires' }).click();
+    await page.getByRole('button', { name: 'Ajouter' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    // `/m/stocks/inv-{id}` goes through the router to the count sheet.
+    await page.getByRole('link', { name: day(0) }).click();
+    await page.waitForURL(/\/m\/stocks\/inv-/);
+    await page.getByRole('heading', { name: `Inventaire du ${day(0)}` }).waitFor();
+    const inventoryUrl = page.url();
+    const line = page.locator('fieldset div.flex.items-center.gap-2').filter({ hasText: 'Aliment ponte' });
+    assert.match(flat(await line.innerText()), /Théorique ligne \d : 3 500/);
+    await line.getByLabel(/^Compté ligne/).fill('3400');
+    assert.match(flat(await line.innerText()), /−100/);
+    await page.getByRole('button', { name: 'Enregistrer le brouillon' }).click();
+    await page.getByText('Brouillon enregistré').waitFor();
+    // Validating needs the `validate` permission, which the storekeeper does not hold.
+    assert.equal(await page.getByRole('button', { name: "Valider l'inventaire" }).count(), 0);
+    await page.context().close();
+
+    page = await asRole(emails.stock);
+    await page.goto(inventoryUrl);
+    await page.getByRole('heading', { name: `Inventaire du ${day(0)}` }).waitFor();
+    const counted = page.locator('fieldset div.flex.items-center.gap-2').filter({ hasText: 'Aliment ponte' }).getByLabel(/^Compté ligne/);
+    assert.equal(await counted.inputValue(), '3400');
+    await page.getByRole('button', { name: "Valider l'inventaire" }).click();
+    const confirm = page.getByRole('dialog');
+    await confirm.getByRole('button', { name: 'Valider' }).click();
+    await confirm.waitFor({ state: 'detached' });
+    await page.getByText('Validée', { exact: true }).waitFor();
+    assert.equal(await page.getByRole('button', { name: "Valider l'inventaire" }).count(), 0);
+    assert.equal(await page.getByLabel(/^Compté ligne/).first().isDisabled(), true);
+
+    await page.goto(`${WEB_URL}/m/stocks`);
+    const ponte = page.getByRole('row', { name: /Aliment ponte/ });
+    await ponte.waitFor();
+    assert.match(flat(await ponte.innerText()), /Aliment ponte Aliment 3 400 kg 4 000 faible/);
+    await page.getByRole('tab', { name: 'Mouvements' }).click();
+    const adjustment = page.getByRole('row', { name: /Ajustement/ });
+    await adjustment.waitFor();
+    assert.match(flat(await adjustment.innerText()), /Aliment ponte Ajustement -100 .* Inventaire/);
+    await page.context().close();
+  });
+
+  it('Vétérinaire : planifie deux vaccinations, réalise l’une depuis un lot de produit (le stock baisse), traite avec délai d’attente', async () => {
+    const page = await asRole(emails.vet);
+    await page.goto(`${WEB_URL}/m/sante`);
+    const add = async (fill: (dialog: ReturnType<Page['getByRole']>) => Promise<void>) => {
+      await page.getByRole('button', { name: 'Ajouter' }).click();
+      const dialog = page.getByRole('dialog');
+      await fill(dialog);
+      await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+      await dialog.waitFor({ state: 'detached' });
+    };
+    // A vaccination planned for tomorrow with the stock vaccine, then one planned two days ago (overdue) in free text.
+    await add(async (dialog) => {
+      await dialog.getByRole('radio', { name: 'Vaccination' }).check();
+      await dialog.getByRole('radio', { name: 'Planifié' }).check();
+      await dialog.getByLabel('Lot', { exact: true }).selectOption({ label: lotCode });
+      await dialog.getByLabel('Date').fill(day(1));
+      await dialog.getByLabel('Produit en stock').selectOption({ label: 'Vaccin Newcastle' });
+      await dialog.getByLabel('Vétérinaire').fill('Dr Koffi');
+    });
+    await add(async (dialog) => {
+      await dialog.getByRole('radio', { name: 'Vaccination' }).check();
+      await dialog.getByRole('radio', { name: 'Planifié' }).check();
+      await dialog.getByLabel('Lot', { exact: true }).selectOption({ label: lotCode });
+      await dialog.getByLabel('Date').fill(day(-2));
+      await dialog.getByLabel('Produit (texte libre)').fill('Gumboro');
+    });
+    const newcastle = page.getByRole('row', { name: /Newcastle|Vaccin Newcastle/ });
+    await newcastle.waitFor();
+    assert.match(flat(await newcastle.innerText()), new RegExp(`${day(1)} ${lotCode} Vaccination Vaccin Newcastle Dr Koffi Planifié`));
+    const late = page.getByRole('row', { name: /Gumboro/ });
+    await late.getByText('En retard', { exact: true }).waitFor();
+    // Tiles: 2 acts, 1 planned, 0 done, 1 overdue.
+    await mainShows(page, /Total enregistrements 2 Planifié 1 Réalisé 0 En retard 1/);
+
+    // Done from a batch of the product: 4 of the 20 flacons.
+    await newcastle.getByRole('button', { name: 'Marquer réalisé' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByLabel('Quantité').fill('4');
+    await dialog.getByLabel('Lot de produit').selectOption({ label: 'NC-2026-11 (20)' });
+    await dialog.getByRole('button', { name: 'Enregistrer' }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await newcastle.getByText('Réalisé', { exact: true }).waitFor();
+    await page.goto(`${WEB_URL}/m/stocks`);
+    const vaccine = page.getByRole('row', { name: /Vaccin Newcastle/ });
+    await vaccine.waitFor();
+    assert.match(flat(await vaccine.innerText()), /Vaccin Newcastle Vaccin 16 flacons 5 ok/);
+    await page.goto(`${WEB_URL}/m/stocks`);
+    await page.getByRole('link', { name: 'Vaccin Newcastle' }).click();
+    await page.getByRole('heading', { name: 'Vaccin Newcastle' }).waitFor();
+    assert.match(flat(await page.getByRole('tabpanel').innerText()), /NC-2026-11 .* 16/);
+
+    // A treatment: 3 days of treatment and 7 of withdrawal: the lot is under withdrawal for 10 days from today.
+    await page.goto(`${WEB_URL}/m/sante`);
+    await add(async (d) => {
+      await d.getByRole('radio', { name: 'Traitement' }).check();
+      await d.getByLabel('Lot', { exact: true }).selectOption({ label: lotCode });
+      await d.getByLabel('Produit (texte libre)').fill('Amoxicilline');
+      await d.getByLabel('Durée (jours)').fill('3');
+      await d.getByLabel("Délai d'attente (jours)").fill('7');
+    });
+    await page.getByRole('row', { name: /Amoxicilline/ }).waitFor();
+    await page.goto(`${WEB_URL}/m/lots/${lotId}`);
+    await page.getByRole('heading', { name: lotCode }).waitFor();
+    await page.getByText(`Délai d'attente jusqu'au ${day(10)}`).waitFor();
+    await page.context().close();
+  });
+
+  it('Vétérinaire : sur un lot clôturé, un acte planifié peut être annulé ; un acte réalisé n’offre aucune action', async () => {
+    // Set-up through the API: a second lot with a done and a planned vaccination, then sold out and closed.
+    const vetToken = await apiLogin(emails.vet);
+    const buildings = await api<{ items: { id: string; name: string }[] }>('/buildings', { token: admin.token, farmId });
+    const lot = await api<{ id: string; code: string }>('/batches', {
+      method: 'POST', token: admin.token, farmId,
+      body: { species: 'AVICOLE', type: 'CHAIR', buildingId: buildings.items.find((b) => b.name === 'Poulailler L')!.id, entryDate: day(-20), initialCount: 100 },
+    });
+    const act = (body: object) => api('/health-acts', { method: 'POST', token: vetToken, farmId, body: { type: 'VACCINATION', batchId: lot.id, ...body } });
+    await act({ status: 'REALISE', date: day(-5), productName: 'Newcastle fait' });
+    await act({ status: 'PLANIFIE', date: day(3), productName: 'Marek prévu' });
+    await api(`/batches/${lot.id}/events`, { method: 'POST', token: admin.token, farmId, body: { type: 'VENTE', date: day(-1), quantity: 100 } });
+    await api(`/batches/${lot.id}/close`, { method: 'POST', token: admin.token, farmId, body: {} });
+
+    const page = await asRole(emails.vet);
+    await page.goto(`${WEB_URL}/m/lots/${lot.id}`);
+    await page.getByRole('heading', { name: lot.code }).waitFor();
+    await page.getByRole('tab', { name: 'Santé' }).click();
+    const planned = page.getByRole('row', { name: /Marek prévu/ });
+    const done = page.getByRole('row', { name: /Newcastle fait/ });
+    await planned.waitFor();
+    // Planned: cancel and delete (the API allows both on a closed lot), neither complete nor edit. Done: nothing.
+    const icons = async (row: typeof planned) => (await row.getByRole('button').all()).map(async (b) => b.getAttribute('aria-label'));
+    assert.deepEqual(await Promise.all(await icons(planned)), ['Annuler', 'Supprimer']);
+    assert.deepEqual(await Promise.all(await icons(done)), []);
+    assert.equal(await page.getByRole('button', { name: 'Ajouter' }).count(), 0);
+
+    await planned.getByRole('button', { name: 'Annuler' }).click();
+    const dialog = page.getByRole('dialog');
+    await dialog.getByRole('button', { name: "Annuler l'intervention" }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await planned.getByText('Annulé', { exact: true }).waitFor();
+    // A cancelled act on a closed lot can no longer be changed.
+    assert.deepEqual(await Promise.all(await icons(planned)), []);
+    await page.context().close();
+  });
+
+  it('Directeur : le tableau de bord liste « Stock faible » et « Vaccination en retard »', async () => {
+    const page = await asRole(emails.director);
+    await page.goto(`${WEB_URL}/`);
+    await page.getByText('Stock faible : Aliment ponte').waitFor();
+    assert.match(flat(await page.locator('main').innerText()), /Stock faible : Aliment ponte 3400 kg \(seuil 4000\)/);
+    await page.getByText('Vaccination en retard').waitFor();
+    assert.match(flat(await page.locator('main').innerText()), new RegExp(`Vaccination en retard ${lotCode} — Gumboro`));
+    // The vaccine is at 16 (minimum 5) and not near expiry: no alert for it.
+    assert.equal(await page.getByText(/Stock (faible|critique) : Vaccin Newcastle/).count(), 0);
+    await page.context().close();
+  });
+
+  it('Comptable : lit les achats et les fournisseurs, sans aucun bouton de workflow', async () => {
+    const page = await asRole(emails.accountant);
+    await page.goto(`${WEB_URL}/m/achats`);
+    const row = purchaseRow(page, new RegExp(bcNumber));
+    await row.waitFor();
+    const text = flat(await row.innerText());
+    assert.match(text, /Agro Provende SA Aliment ponte \+1 3 000 Reçue 1 170 000 FCFA/);
+    assert.equal(await page.getByRole('button', { name: 'Ajouter' }).count(), 0);
+    assert.equal(await row.getByRole('button').count(), 0, 'no row icon at all');
+
+    // The link is on the first cell (the date).
+    await row.getByRole('link').first().click();
+    await page.getByRole('heading', { name: bcNumber }).waitFor();
+    await mainShows(page, /Montant 1 170 000 FCFA Payé 0 FCFA Reste 1 170 000 FCFA/);
+    for (const name of ['Valider', 'Commander', 'Réceptionner', 'Payer', 'Annuler']) {
+      assert.equal(await page.getByRole('button', { name }).count(), 0, `the accountant has no « ${name} »`);
+    }
+    // The order and the receipt are in the history.
+    await page.getByRole('tab', { name: 'Historique' }).click();
+    assert.match(flat(await page.getByRole('tabpanel').innerText()), /Reçue/);
+
+    await page.goto(`${WEB_URL}/m/fournisseurs`);
+    const supplier = page.getByRole('row', { name: /Agro Provende SA/ });
+    await supplier.waitFor();
+    // What the farm owes: the received goods, nothing paid.
+    assert.match(flat(await supplier.innerText()), /Agro Provende SA .* 1 170 000 FCFA/);
+    assert.equal(await page.getByRole('button', { name: 'Ajouter' }).count(), 0);
+    await page.context().close();
+  });
+});

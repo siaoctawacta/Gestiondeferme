@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
 import { createHmac } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import type { Browser, BrowserContext, Page } from 'playwright';
-import { ADMINS, API_URL, PASSWORD, WEB_URL } from './config.ts';
+import { ADMINS, API_URL, DATABASE_URL, PASSWORD, WEB_URL } from './config.ts';
 
 // ESM imports ignore NODE_PATH; require() honours it. Look in the project first, then in the global root.
 function loadPlaywright(): typeof import('playwright') {
@@ -60,8 +61,12 @@ export async function launch(): Promise<Browser> {
   return chromium.launch({ executablePath: process.env.E2E_CHROMIUM_PATH || undefined });
 }
 
-export async function newPage(browser: Browser, viewport = { width: 1440, height: 900 }): Promise<{ context: BrowserContext; page: Page }> {
-  const context = await browser.newContext({ viewport, locale: 'fr-FR' });
+export async function newPage(
+  browser: Browser,
+  viewport = { width: 1440, height: 900 },
+  deviceScaleFactor = 1,
+): Promise<{ context: BrowserContext; page: Page }> {
+  const context = await browser.newContext({ viewport, locale: 'fr-FR', deviceScaleFactor });
   return { context, page: await context.newPage() };
 }
 
@@ -140,4 +145,40 @@ export async function uiLoginWithBackupCode(page: Page, email: string, backupCod
   await page.getByRole('button', { name: 'Se connecter' }).click();
   await page.getByLabel('Code de vérification').fill(backupCode);
   await page.getByRole('button', { name: 'Vérifier' }).click();
+}
+
+/**
+ * Logs in a user whose role does not need a second factor (storekeeper, stock manager, veterinarian...) through the
+ * API and returns its access token, for seeding and assertions made as that user.
+ */
+export async function apiLogin(email: string): Promise<string> {
+  const res = await api<{ accessToken?: string }>('/auth/login', { method: 'POST', body: { email, password: PASSWORD } });
+  if (!res.accessToken) throw new Error(`${email} needs a second factor: ${JSON.stringify(res)}`);
+  return res.accessToken;
+}
+
+/** Logs in through the UI with the password alone (roles without a mandatory second factor). */
+export async function uiLoginWithPassword(page: Page, email: string): Promise<void> {
+  await page.goto(`${WEB_URL}/login`);
+  await page.getByLabel('Adresse e-mail').fill(email);
+  await page.getByLabel('Mot de passe').fill(PASSWORD);
+  await page.getByRole('button', { name: 'Se connecter' }).click();
+}
+
+/**
+ * Runs one SQL statement on the e2e database, for the few things no API offers (moving a numbering counter
+ * forward). `pg` lives in the backend's dependencies.
+ */
+export async function sql<T = Record<string, unknown>>(query: string, params: unknown[] = []): Promise<T[]> {
+  const backend = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'backend', 'package.json');
+  const { Client } = createRequire(backend)('pg') as {
+    Client: new (o: { connectionString: string }) => { connect(): Promise<void>; end(): Promise<void>; query(q: string, p: unknown[]): Promise<{ rows: unknown[] }> };
+  };
+  const client = new Client({ connectionString: DATABASE_URL });
+  await client.connect();
+  try {
+    return (await client.query(query, params)).rows as T[];
+  } finally {
+    await client.end();
+  }
 }

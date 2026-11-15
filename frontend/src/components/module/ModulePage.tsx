@@ -127,7 +127,8 @@ function ModuleView<T extends { id: string }>({
   const writable = !scoped || farmId !== 'all';
   const canCreate = !readOnly && !noCreate && can(config.slug, config.createPermission ?? 'create') && writable;
   const canEditRows = !readOnly && can(config.slug, config.editPermission ?? 'update') && writable;
-  const canDeleteRows = !readOnly && can(config.slug, config.deletePermission ?? 'delete') && writable;
+  const closedGates = readOnly ? config.whenReadOnly : undefined;
+  const canDeleteRows = (!readOnly || Boolean(closedGates?.canDelete)) && can(config.slug, config.deletePermission ?? 'delete') && writable;
   const readOnlyBecauseAllFarms =
     !writable && (can(config.slug, 'create') || can(config.slug, 'update') || can(config.slug, 'delete'));
 
@@ -138,12 +139,12 @@ function ModuleView<T extends { id: string }>({
   };
 
   const tableActions: TableAction<T>[] = (config.actions ?? [])
-    .filter((a) => canRunAction(a.permission, config.slug, can, writable && !readOnly && !(a.needsFarm && farmId === 'all')))
+    .filter((a) => (!readOnly || closedGates?.actions?.[a.key]) && canRunAction(a.permission, config.slug, can, writable && !(a.needsFarm && farmId === 'all')))
     .map((a) => ({
       key: a.key,
       label: a.label,
       icon: a.icon,
-      visible: a.visible,
+      visible: readOnly ? (row: T) => (a.visible?.(row) ?? true) && closedGates!.actions![a.key](row) : a.visible,
       run: (row) => {
         if (a.dialog) {
           setActing({ action: a, row });
@@ -249,7 +250,7 @@ function ModuleView<T extends { id: string }>({
               onEdit={canEditRows ? setEditing : undefined}
               onDelete={canDeleteRows ? setDeleting : undefined}
               canEdit={config.canEdit}
-              canDelete={config.canDelete}
+              canDelete={closedGates?.canDelete ? (row) => (closedGates.canDelete!(row) ? (config.canDelete?.(row) ?? true) : false) : config.canDelete}
             />
           </div>
         )}

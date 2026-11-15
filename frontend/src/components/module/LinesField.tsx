@@ -43,7 +43,7 @@ export function LinesField({ field, value: rows, onChange, errors = [], fixed = 
   const name = (c: CellField, i: number) => `${c.label} ligne ${i + 1}`;
 
   return (
-    <fieldset className="space-y-2" aria-describedby={errors.length ? `${id}-errors` : undefined}>
+    <fieldset className="min-w-0 space-y-2" aria-describedby={errors.length ? `${id}-errors` : undefined}>
       <legend className="block text-sm font-medium">{field.label}</legend>
       <div className="space-y-2 overflow-x-auto">
       <div className="flex items-center gap-2 text-xs text-muted-foreground" aria-hidden>

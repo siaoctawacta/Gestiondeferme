@@ -65,6 +65,9 @@ function CancelDialog({ row, onClose, onDone }: PurchaseDialogProps) {
   );
 }
 
+/** The API's own refusal, raised before the request: nothing more than ordered can be received (a surplus is a stock entry). */
+const OVER_RECEIVED = 'La quantité reçue dépasse la quantité commandée';
+
 const withoutBlank = (o: Record<string, unknown>) => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== '' && v !== undefined));
 
 /**
@@ -104,6 +107,7 @@ function ReceiveForm({ order, onClose, onDone }: { order: PurchaseData; onClose:
           expiryDate: r.expiryDate,
         })),
       })}
+      validate={(v) => ((v.lines as Record<string, string>[]).some((r) => Number(r.receivedQuantity) > Number(r.quantity)) ? OVER_RECEIVED : null)}
       onSubmit={(body) => post(order.id, 'receive', body)}
       onClose={onClose}
       onDone={onDone}

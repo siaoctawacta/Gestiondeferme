@@ -12,6 +12,7 @@ export const PASSWORD = 'E2e-Throwaway-Passw0rd!';
 export const ADMINS = {
   auth: 'admin-auth@e2e.test',
   batiments: 'admin-batiments@e2e.test',
+  logistics: 'admin-logistics@e2e.test',
   production: 'admin-production@e2e.test',
   visual: 'admin-visual@e2e.test',
 } as const;

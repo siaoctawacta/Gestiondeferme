@@ -50,11 +50,11 @@ const cell = (n: number | null | undefined) => (n === null || n === undefined ? 
 
 /** A draft lists every active item: the counts already saved, the others at the current level. */
 function draftRows(data: InventoryData, stock: StockRow[]): LineRow[] {
-  const saved = new Map(data.lines.map((l) => [l.stockItemId, l]));
+  const saved = new Map(data.lines.map((l) => [l.itemId, l]));
   return stock.map((s) => {
     const line = saved.get(s.id);
     return {
-      stockItemId: s.id,
+      itemId: s.id,
       itemName: s.name,
       theoreticalQty: cell(line ? line.theoreticalQty : s.quantity),
       countedQty: cell(line?.countedQty),
@@ -64,7 +64,7 @@ function draftRows(data: InventoryData, stock: StockRow[]): LineRow[] {
 
 const savedRows = (data: InventoryData): LineRow[] =>
   data.lines.map((l) => ({
-    stockItemId: l.stockItemId,
+    itemId: l.itemId,
     itemName: l.itemName,
     theoreticalQty: cell(l.theoreticalQty),
     countedQty: cell(l.countedQty),
@@ -93,7 +93,7 @@ function Sheet({ data, initial }: { data: InventoryData; initial: LineRow[] }) {
 
   const save = () =>
     api.put(`/inventories/${data.id}/lines`, {
-      lines: rows.filter((r) => r.countedQty !== '').map((r) => ({ stockItemId: r.stockItemId, countedQty: Number(r.countedQty) })),
+      lines: rows.filter((r) => r.countedQty !== '').map((r) => ({ itemId: r.itemId, countedQty: Number(r.countedQty) })),
     });
 
   const saveDraft = async () => {

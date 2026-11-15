@@ -12,7 +12,9 @@ export interface LoadedRecordProps<D> {
   /** Query key of the record, under the active farm; share it with the detail screen to reuse its cache. */
   queryKey: unknown[];
   /** `GET` path of the record. */
-  path: string;
+  path?: string;
+  /** Loads what is not one `GET` of a path (e.g. the pieces of one operation); used instead of `path`. */
+  load?: () => Promise<D>;
   onClose: () => void;
   /** The edit form, rendered once the record is loaded. */
   children: (record: D) => ReactNode;
@@ -22,8 +24,8 @@ export interface LoadedRecordProps<D> {
  * Loads one record before its edit form opens (a list row does not carry every stored field), so the form shows
  * the stored values and can clear them. Shows a loading or an error dialog until then.
  */
-export function LoadedRecord<D>({ title, queryKey, path, onClose, children }: LoadedRecordProps<D>) {
-  const query = useFarmQuery<D>(queryKey, () => api.get<D>(path));
+export function LoadedRecord<D>({ title, queryKey, path, load, onClose, children }: LoadedRecordProps<D>) {
+  const query = useFarmQuery<D>(queryKey, () => (load ? load() : api.get<D>(path!)));
   if (query.isPending || query.isError) {
     return (
       <Dialog open onClose={onClose} title={title}>

@@ -10,6 +10,7 @@ import { ActionButton } from '../../components/module/DataTable';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
 import { canRunAction } from '../../components/module/rowActions';
+import { Alert } from '../../components/ui/Alert';
 import { Button } from '../../components/ui/Button';
 import { Card } from '../../components/ui/Card';
 import { Pill } from '../../components/ui/Pill';
@@ -29,7 +30,7 @@ const EMPTY = <TR><TD colSpan={9} className="py-10 text-center text-muted-foregr
 /** `plain`: no tinted background (the printed sheet rules a border instead). */
 function Heads({ labels, plain = false }: { labels: string[]; plain?: boolean }) {
   return (
-    <THead className={plain ? 'bg-transparent! border-b-2 border-foreground' : ''}>
+    <THead className={plain ? 'bg-transparent! border-b-2 border-foreground [&_th]:text-foreground!' : ''}>
       <TR className="border-b!">{labels.map((h) => <TH key={h}>{h}</TH>)}</TR>
     </THead>
   );
@@ -133,6 +134,7 @@ function PurchaseOrderSheet({ data, farmName, legal }: { data: PurchaseData; far
         <div className="text-right">
           <h2 className="text-2xl font-bold">Bon de commande</h2>
           <p>Référence : {data.reference}</p>
+          {data.requestNumber !== data.reference && <p>Demande : {data.requestNumber}</p>}
           <p>Date : {formatDate(data.orderedAt ?? data.date)}</p>
         </div>
       </header>
@@ -200,6 +202,7 @@ function Loaded({ data }: { data: PurchaseData }) {
               )}
             </>
           }
+          notice={data.cancelReason ? <Alert className="mb-4">{`Motif de l'annulation : ${data.cancelReason}`}</Alert> : undefined}
           stats={[
             { label: 'Montant', value: formatMoney(data.amount) },
             { label: 'Payé', value: formatMoney(data.paid) },

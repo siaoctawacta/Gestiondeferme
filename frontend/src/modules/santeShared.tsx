@@ -18,6 +18,11 @@ export interface HealthActRow {
   id: string;
   /** `YYYY-MM-DD` (planned date, or the day it was done when entered as done) */
   date: string;
+  /**
+   * `YYYY-MM-DD` the act was done (null while planned or cancelled). Equal to `date` for an act entered as done;
+   * an act completed from a plan keeps its planned `date` and may have been done another day.
+   */
+  doneDate: string | null;
   /** Lot code, animal tag or building name. */
   target: string;
   targetKind: TargetKind;
@@ -28,6 +33,8 @@ export interface HealthActRow {
   productName: string | null;
   /** Veterinary stock article the act draws on (category MEDICAMENT or VACCIN). */
   stockItemId: string | null;
+  /** Lot of the stock article the act drew on, when one was named. */
+  stockBatchId: string | null;
   dose: string | null;
   /** Quantity of the stock article consumed (done acts with a stock article). */
   quantity: number | null;
@@ -128,6 +135,10 @@ export const LOG_TYPES: { value: BiosecurityType; label: string }[] = [
   { value: 'PEDILUVE', label: 'Pédiluve' },
   { value: 'VISITEUR', label: 'Visiteur' },
 ];
+
+/** An act completed from a plan on another day than planned: its two dates are told apart (and edited apart). */
+export const doneAnotherDay = (a: Pick<HealthActRow, 'status' | 'date' | 'doneDate'>): boolean =>
+  a.status === 'REALISE' && a.doneDate !== null && a.doneDate !== a.date;
 
 /** Under withdrawal up to and including `until`: the notice shows on that day and is gone the next. */
 export const underWithdrawal = (until: string | null | undefined): until is string => Boolean(until) && until! >= todayIso();
