@@ -1,6 +1,7 @@
 import { ApiProperty } from '@nestjs/swagger';
 
-export const ACTIVITIES = ['Avicole', 'Porcin', 'Général'] as const;
+/** The activity of a figure, as the finance enum (the screens label it: Avicole, Porcin, Général). */
+export const ACTIVITIES = ['AVICOLE', 'PORCIN', 'GENERAL'] as const;
 export type Activity = (typeof ACTIVITIES)[number];
 export const ALERT_LEVELS = ['A_VOIR', 'URGENT'] as const;
 export type AlertLevel = (typeof ALERT_LEVELS)[number];
@@ -38,6 +39,8 @@ export class ActivityTotalsDto {
   @ApiProperty({ enum: ACTIVITIES }) activity!: Activity;
   @ApiProperty() revenue!: number;
   @ApiProperty() expenses!: number;
+  @ApiProperty({ description: 'revenue − expenses, computed by the API' })
+  margin!: number;
 }
 
 export class AlertItemDto {
@@ -72,12 +75,22 @@ export class DashboardDto {
   @ApiProperty({ type: KpisDto }) kpis!: KpisDto;
   @ApiProperty({ type: [EggPointDto], description: 'Last 5 recorded days' })
   eggSeries!: EggPointDto[];
-  @ApiProperty({ type: ProfitabilityDto }) profitability!: ProfitabilityDto;
+  @ApiProperty({
+    type: ProfitabilityDto,
+    nullable: true,
+    description: 'Month to date; null for a role without finance read',
+  })
+  profitability!: ProfitabilityDto | null;
   @ApiProperty() activeBuildings!: number;
   @ApiProperty({ description: 'Last recorded day' }) feedDistributedKg!: number;
   @ApiProperty({ description: 'Last recorded day' }) waterConsumedL!: number;
-  @ApiProperty({ type: [ActivityTotalsDto] })
-  revenueVsExpenses!: ActivityTotalsDto[];
+  @ApiProperty({
+    type: [ActivityTotalsDto],
+    nullable: true,
+    description:
+      'Month to date per activity; null for a role without finance read',
+  })
+  revenueVsExpenses!: ActivityTotalsDto[] | null;
   @ApiProperty({ type: AlertsDto }) alerts!: AlertsDto;
   @ApiProperty({ type: [UpcomingTaskDto] }) upcomingTasks!: UpcomingTaskDto[];
 }

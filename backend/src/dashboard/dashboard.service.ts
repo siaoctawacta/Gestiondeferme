@@ -1,8 +1,13 @@
 import { Injectable } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
+import { can } from '../access/permissions';
 import { SettingsService } from '../admin/settings/settings.service';
 import { BuildingStatus } from '../generated/prisma/enums';
 import { formatDay } from '../common/days';
+import {
+  FinanceSummaryService,
+  type FinanceSummary,
+} from '../finance/finance-summary.service';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import type { AlertSettings } from '../indicators/alerts/alert.types';
 import { AlertsRegistry } from '../indicators/alerts/alerts-registry';
@@ -10,7 +15,6 @@ import { layingRate, mortalityRate } from '../indicators/indicators';
 import { HerdListService } from '../pigs/herd-list.service';
 import { PrismaService } from '../prisma/prisma.service';
 import {
-  ACTIVITIES,
   type ActivityTotalsDto,
   type AlertsDto,
   type DashboardDto,
@@ -38,6 +42,7 @@ export class DashboardService {
     private readonly herdList: HerdListService,
     private readonly settings: SettingsService,
     private readonly alertsRegistry: AlertsRegistry,
+    private readonly finance: FinanceSummaryService,
   ) {}
 
   async get(ctx: RequestContext): Promise<DashboardDto> {
@@ -49,6 +54,7 @@ export class DashboardService {
       feedDistributedKg,
       waterConsumedL,
       alerts,
+      money,
     ] = await Promise.all([
       this.farmName(ctx),
       this.activeBuildings(ctx),
@@ -57,17 +63,18 @@ export class DashboardService {
       this.feedDistributedKg(ctx),
       this.waterConsumedL(ctx),
       this.alerts(ctx),
+      this.money(ctx),
     ]);
     return {
       farmName,
       tasks: this.tasks(),
       kpis,
       eggSeries,
-      profitability: this.profitability(),
+      profitability: this.profitability(money),
       activeBuildings,
       feedDistributedKg,
       waterConsumedL,
-      revenueVsExpenses: this.revenueVsExpenses(),
+      revenueVsExpenses: this.revenueVsExpenses(money),
       alerts: {
         total: alerts.total,
         items: alerts.items.slice(0, DASHBOARD_ALERTS),
@@ -187,14 +194,23 @@ export class DashboardService {
       .map((d) => ({ date: formatDay(d.date), eggs: d._sum.collected ?? 0 }));
   }
 
-  private profitability(): ProfitabilityDto {
-    return {
-      revenue: 0,
-      expenses: 0,
-      margin: 0,
-      marginPct: null,
-      receivables: 0,
-    };
+  /** « Rentabilité du mois »: the finance summary of the calendar month to date; null without `finance:read`. */
+  private money(ctx: RequestContext): Promise<FinanceSummary | null> {
+    return can(ctx.user.role, 'finance', 'read')
+      ? this.finance.summary(ctx, {}, { byFarm: false })
+      : Promise.resolve(null);
+  }
+
+  private profitability(money: FinanceSummary | null): ProfitabilityDto | null {
+    return (
+      money && {
+        revenue: money.revenue,
+        expenses: money.expenses,
+        margin: money.margin,
+        marginPct: money.marginPct,
+        receivables: money.receivables,
+      }
+    );
   }
 
   /** Sum over the farms of each one's latest day with any distribution. */
@@ -229,12 +245,10 @@ export class DashboardService {
     return Number(total._sum.liters ?? 0);
   }
 
-  private revenueVsExpenses(): ActivityTotalsDto[] {
-    return ACTIVITIES.map((activity) => ({
-      activity,
-      revenue: 0,
-      expenses: 0,
-    }));
+  private revenueVsExpenses(
+    money: FinanceSummary | null,
+  ): ActivityTotalsDto[] | null {
+    return money && money.byActivity;
   }
 
   /** Every open alert (the dashboard list shows the first few); thresholds are read once for all rules. */

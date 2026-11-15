@@ -180,6 +180,7 @@ model Farm {
   invoices          Invoice[]
   customerPayments  CustomerPayment[]
   creditNotes       CreditNote[]
+  financeEntries    FinanceEntry[]
   healthActs        HealthAct[]
   quarantines       Quarantine[]
   healthIncidents   HealthIncident[]
@@ -282,6 +283,7 @@ model User {
   invoicesCancelled    Invoice[]          @relation("InvoiceCancelledBy")
   customerPayments     CustomerPayment[]
   creditNotes          CreditNote[]
+  financeEntries       FinanceEntry[]
 }
 
 model UserFarm {
@@ -433,6 +435,7 @@ model AnimalBatch {
   healthIncidents     HealthIncident[]
   quoteLines          QuoteLine[]
   invoiceLines        InvoiceLine[]
+  financeEntries      FinanceEntry[]
 
   @@unique([farmId, code])
   @@index([farmId])
@@ -1554,4 +1557,36 @@ model CreditNoteLine {
 
   @@unique([creditNoteId, invoiceLineId])
   @@index([invoiceLineId])
+}
+
+enum FinanceKind {
+  DEPENSE
+  RECETTE
+}
+
+/// A manual finance entry (salaries, energy, ...). Everything else the finance screens list is derived at read time from its documents by the SQL view "FinanceLedgerView" (not modelled here: nothing writes it).
+model FinanceEntry {
+  id          String          @id @default(cuid())
+  farmId      String
+  farm        Farm            @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  date        DateTime        @db.Date
+  kind        FinanceKind
+  label       String
+  activity    Activity
+  category    FinanceCategory
+  /// > 0, CHECKed in SQL (a credit note is negative only in the view).
+  amount      Decimal         @db.Decimal(14, 2)
+  /// The lot an expense is attributed to (DEPENSE on AVICOLE / PORCIN only, CHECKed in SQL).
+  batchId     String?
+  batch       AnimalBatch?    @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  note        String?
+  createdById String
+  createdBy   User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([farmId])
+  @@index([farmId, date])
+  @@index([batchId])
+  @@index([createdById])
 }

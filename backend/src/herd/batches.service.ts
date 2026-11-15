@@ -77,7 +77,7 @@ export interface BatchItem {
   notes: string | null;
 }
 
-const TYPE_LABEL: Record<BatchType, string> = {
+export const TYPE_LABEL: Record<BatchType, string> = {
   CHAIR: 'Chair',
   PONDEUSE: 'Pondeuse',
   POUSSIN: 'Poussin',
@@ -85,7 +85,7 @@ const TYPE_LABEL: Record<BatchType, string> = {
   PORCELET: 'Porcelet',
   ENGRAISSEMENT: 'Engraissement',
 };
-const STATUS_LABEL: Record<BatchStatus, string> = {
+export const STATUS_LABEL: Record<BatchStatus, string> = {
   EN_COURS: 'En cours',
   CLOTURE: 'Clôturé',
 };

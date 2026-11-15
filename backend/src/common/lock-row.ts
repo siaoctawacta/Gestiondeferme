@@ -15,6 +15,7 @@ export type LockableTable =
   | 'Purchase'
   | 'Quote'
   | 'Invoice'
+  | 'FinanceEntry'
   | 'HealthAct'
   | 'Quarantine'
   | 'HealthIncident'
@@ -35,6 +36,7 @@ const TABLE: Record<LockableTable, Prisma.Sql> = {
   Purchase: Prisma.raw('"Purchase"'),
   Quote: Prisma.raw('"Quote"'),
   Invoice: Prisma.raw('"Invoice"'),
+  FinanceEntry: Prisma.raw('"FinanceEntry"'),
   HealthAct: Prisma.raw('"HealthAct"'),
   Quarantine: Prisma.raw('"Quarantine"'),
   HealthIncident: Prisma.raw('"HealthIncident"'),

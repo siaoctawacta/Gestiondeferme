@@ -8,6 +8,7 @@ import { CustomersModule } from './customers/customers.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { EggsModule } from './eggs/eggs.module';
 import { FeedModule } from './feed/feed.module';
+import { FinanceModule } from './finance/finance.module';
 import { HerdModule } from './herd/herd.module';
 import { HealthController } from './health/health.controller';
 import { HealthModule } from './health/health.module';
@@ -37,6 +38,7 @@ import { SuppliersModule } from './suppliers/suppliers.module';
     PurchasesModule,
     CustomersModule,
     SalesModule,
+    FinanceModule,
     IndicatorsModule,
     DashboardModule,
   ],

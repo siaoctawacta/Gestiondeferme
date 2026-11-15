@@ -1,4 +1,5 @@
-/** Pure KPI functions: no Nest, no Prisma. A missing input or a non-positive denominator gives `null`. */
+/** Pure KPI functions: no Nest, no database (money uses Decimal). A missing input or a non-positive denominator gives `null`. */
+import { Decimal } from '@prisma/client/runtime/client';
 
 type Num = number | null | undefined;
 
@@ -59,3 +60,37 @@ export const occupationRate = (occupation: Num, capacity: Num) =>
 
 /** A stock quantity as text: up to 2 decimals (the stock precision), no float noise, no trailing zeros. */
 export const quantityText = (n: number): string => String(Number(n.toFixed(2)));
+
+/* Money figures (finance): exact in Decimal; a plain number is accepted for convenience (tests, counts). */
+
+type Money = Decimal | number | string;
+
+const money = (value: Money): Decimal => new Decimal(value);
+
+/** revenue − costs, exact. */
+export const margin = (revenue: Money, costs: Money): Decimal =>
+  money(revenue).sub(money(costs));
+
+/** margin / revenue as an integer percent (half away from zero); null when the revenue is not positive. */
+export const marginRate = (m: Money, revenue: Money): number | null => {
+  const r = money(revenue);
+  return ratio(money(m).mul(100).toNumber(), r.toNumber(), 0);
+};
+
+/** `total / count` to 2 decimals (half away from zero); null when the denominator is not positive. */
+function perUnit(total: Money, count: Money): number | null {
+  const d = money(count);
+  if (!d.isFinite() || d.lte(0)) return null;
+  return money(total)
+    .div(d)
+    .toDecimalPlaces(2, Decimal.ROUND_HALF_UP)
+    .toNumber();
+}
+
+/** Total cost of a lot / animals counted (alive + net sold); null when there is none. */
+export const costPerAnimal = (totalCost: Money, animals: Money) =>
+  perUnit(totalCost, animals);
+
+/** Total cost of a lot / net kilograms invoiced; null when no weight is known. */
+export const costPerKg = (totalCost: Money, kg: Money) =>
+  perUnit(totalCost, kg);

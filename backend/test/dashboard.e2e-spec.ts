@@ -4,6 +4,7 @@ import type { App } from 'supertest/types';
 import { HealthAlertsService } from '../src/indicators/alerts/health-alerts.service';
 import { StockAlertsService } from '../src/indicators/alerts/stock-alerts.service';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { countQueries } from './query-counter';
 import { StockLedgerService } from '../src/stock/stock-ledger.service';
 import type { DashboardDto } from '../src/dashboard/dashboard.types';
 import {
@@ -101,9 +102,9 @@ describe('Dashboard (e2e)', () => {
       receivables: 0,
     });
     expect(body.revenueVsExpenses).toEqual([
-      { activity: 'Avicole', revenue: 0, expenses: 0 },
-      { activity: 'Porcin', revenue: 0, expenses: 0 },
-      { activity: 'Général', revenue: 0, expenses: 0 },
+      { activity: 'AVICOLE', revenue: 0, expenses: 0, margin: 0 },
+      { activity: 'PORCIN', revenue: 0, expenses: 0, margin: 0 },
+      { activity: 'GENERAL', revenue: 0, expenses: 0, margin: 0 },
     ]);
     expect(body.eggSeries).toEqual([]);
     expect(body.upcomingTasks).toEqual([]);
@@ -140,6 +141,122 @@ describe('Dashboard (e2e)', () => {
 
   it('requires authentication', async () => {
     await http().get('/api/dashboard').expect(401);
+  });
+
+  describe('profitability and revenue versus expenses', () => {
+    const firstOfMonth = () => new Date().toISOString().slice(0, 8) + '01';
+    const lastMonth = () =>
+      new Date(new Date(firstOfMonth()).getTime() - DAY_MS)
+        .toISOString()
+        .slice(0, 10);
+    const as = async (role: 'COMPTABLE' | 'AGENT_ELEVAGE', farms = [farmA]) => {
+      const user = await createUser({
+        organizationId: orgId,
+        role,
+        farmIds: farms,
+      });
+      return {
+        Authorization: `Bearer ${await tokenFor(user.id)}`,
+        'X-Farm-Id': farms[0],
+      };
+    };
+    const post = (h: Record<string, string>, body: object) =>
+      http().post('/api/finance/entries').set(h).send(body).expect(201);
+    const entry = (over: Record<string, unknown>) => ({
+      date: dayStr(0),
+      kind: 'DEPENSE',
+      label: 'Écriture',
+      activity: 'AVICOLE',
+      category: 'ALIMENT',
+      amount: 1000,
+      ...over,
+    });
+    const dashboard = async (h: Record<string, string>) =>
+      (await http().get('/api/dashboard').set(h).expect(200))
+        .body as DashboardDto;
+
+    it('shows the month to date to a role that reads finance, from the same summary', async () => {
+      const accountant = await as('COMPTABLE');
+      await post(accountant, entry({}));
+      await post(
+        accountant,
+        entry({
+          kind: 'RECETTE',
+          category: 'AUTRE_RECETTE',
+          amount: 3000,
+          label: 'Vente',
+        }),
+      );
+      await post(
+        accountant,
+        entry({ activity: 'GENERAL', category: 'ENERGIE', amount: 200 }),
+      );
+      // last month does not belong to « Rentabilité du mois »
+      await post(accountant, entry({ date: lastMonth(), amount: 99999 }));
+      const body = await dashboard(accountant);
+      expect(body.profitability).toEqual({
+        revenue: 3000,
+        expenses: 1200,
+        margin: 1800,
+        marginPct: 60,
+        receivables: 0,
+      });
+      expect(body.revenueVsExpenses).toEqual([
+        { activity: 'AVICOLE', revenue: 3000, expenses: 1000, margin: 2000 },
+        { activity: 'PORCIN', revenue: 0, expenses: 0, margin: 0 },
+        { activity: 'GENERAL', revenue: 0, expenses: 200, margin: -200 },
+      ]);
+      const summary = (
+        await http().get('/api/finance/summary').set(accountant).expect(200)
+      ).body as { revenue: number; expenses: number; byActivity: unknown };
+      expect(summary).toMatchObject({ revenue: 3000, expenses: 1200 });
+      expect(summary.byActivity).toEqual(body.revenueVsExpenses);
+    });
+
+    it('is null for a role without finance read, and for the others a read-only view', async () => {
+      const accountant = await as('COMPTABLE');
+      await post(accountant, entry({}));
+      const agent = await as('AGENT_ELEVAGE');
+      const body = await dashboard(agent);
+      expect(body.profitability).toBeNull();
+      expect(body.revenueVsExpenses).toBeNull();
+      // the rest of the dashboard is untouched
+      expect(body.farmName).toBe('Ferme Kpalimé');
+      expect(body.activeBuildings).toBe(2);
+      const owner = await dashboard(headersFor(farmA));
+      expect(owner.profitability?.expenses).toBe(1000);
+      // all farms: summed over the visible farms
+      expect((await dashboard(headersFor('all'))).profitability?.expenses).toBe(
+        1000,
+      );
+    });
+
+    it('runs the same number of queries whatever the number of entries', async () => {
+      const accountant = await as('COMPTABLE');
+      await post(accountant, entry({}));
+      const count = (h: Record<string, string> = accountant) =>
+        countQueries(app, async () => {
+          await dashboard(h);
+        });
+      const one = await count();
+      for (let i = 0; i < 5; i++) {
+        await post(accountant, entry({ amount: 10 + i, category: 'EAU' }));
+        await post(
+          accountant,
+          entry({ kind: 'RECETTE', category: 'AUTRE_RECETTE', amount: 5 }),
+        );
+      }
+      expect(await count()).toBe(one);
+      // without finance read the dashboard makes none of the finance reads (a raw query each)
+      const agent = await as('AGENT_ELEVAGE');
+      const raw = jest.spyOn(app.get(PrismaService), '$queryRaw');
+      try {
+        await dashboard(agent);
+        expect(raw).not.toHaveBeenCalled();
+      } finally {
+        raw.mockRestore();
+      }
+    });
   });
 
   describe('production figures and alerts', () => {

@@ -1,5 +1,10 @@
+import { Decimal } from '@prisma/client/runtime/client';
 import {
   breakageRate,
+  costPerAnimal,
+  costPerKg,
+  margin,
+  marginRate,
   dailyGain,
   feedConversion,
   fertilityRate,
@@ -80,5 +85,37 @@ describe('indicators', () => {
     expect(feedConversion(-1, 100)).toBeNull();
     expect(dailyGain(1500, 1400, 10)).toBe(-10);
     expect(ratio(-1, 4)).toBe(-0.3);
+  });
+
+  describe('finance figures', () => {
+    it('computes the reference margin and its rate', () => {
+      const m = margin(new Decimal(3970000), new Decimal(2835000));
+      expect(m).toBeInstanceOf(Decimal);
+      expect(m.toNumber()).toBe(1135000);
+      expect(marginRate(1135000, 3970000)).toBe(29);
+      expect(marginRate(new Decimal(1135000), new Decimal(3970000))).toBe(29);
+    });
+
+    it('rounds the margin rate half away from zero and keeps its sign', () => {
+      expect(marginRate(5, 200)).toBe(3);
+      expect(marginRate(-5, 200)).toBe(-3);
+      expect(marginRate(-827400, 945000)).toBe(-88);
+      expect(Object.is(marginRate(0, 100), 0)).toBe(true);
+    });
+
+    it('has no margin rate without revenue', () => {
+      expect(marginRate(100, 0)).toBeNull();
+      expect(marginRate(100, -50)).toBeNull();
+    });
+
+    it('computes a cost per animal and per kg to 2 decimals, null without a denominator', () => {
+      expect(costPerAnimal(1772400, 4820)).toBe(367.72);
+      expect(costPerAnimal(new Decimal('1772400.00'), 4820)).toBe(367.72);
+      expect(costPerAnimal(100, 0)).toBeNull();
+      expect(costPerKg(1000000, 690)).toBe(1449.28);
+      expect(costPerKg(1000000, 0)).toBeNull();
+      expect(costPerKg(1000000, new Decimal('0.00'))).toBeNull();
+      expect(costPerAnimal(1, 8)).toBe(0.13);
+    });
   });
 });
