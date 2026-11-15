@@ -5,7 +5,6 @@ import { Printer } from 'lucide-react';
 import { api, ApiError } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { formatDate, formatMoney, formatNumber } from '../../lib/format';
-import { lineAmount } from '../../lib/money';
 import { farmKey, useFarmQuery } from '../../lib/query';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
@@ -80,11 +79,10 @@ function HistoryTab({ data }: { data: QuoteData }) {
 }
 
 /**
- * The devis sheet: shown only when printing (`print:block`), the screen layout being hidden then. The legal block
+ * The devis sheet (the API's amounts and total, never recomputed): shown only when printing (`print:block`), the screen layout being hidden then. The legal block
  * comes from the settings and is left out when the user cannot read them.
  */
 function QuoteSheet({ data, farmName, legal }: { data: QuoteData; farmName: string | undefined; legal: Legal | undefined }) {
-  const total = data.lines.reduce((sum, l) => sum + lineAmount(l.quantity, l.unitPrice), 0);
   return (
     <section aria-label="Devis" className="hidden space-y-6 text-sm print:block">
       <header className="flex items-start justify-between gap-6 border-b border-border pb-4">
@@ -116,12 +114,12 @@ function QuoteSheet({ data, farmName, legal }: { data: QuoteData; farmName: stri
               <TD>{l.designation}</TD>
               <TD>{quantityOf(l)}</TD>
               <TD>{formatMoney(l.unitPrice)}</TD>
-              <TD>{formatMoney(lineAmount(l.quantity, l.unitPrice))}</TD>
+              <TD>{formatMoney(l.amount)}</TD>
             </TR>
           ))}
         </tbody>
       </Table>
-      <p className="text-right text-base font-bold">Total : {formatMoney(Math.round(total * 100) / 100)}</p>
+      <p className="text-right text-base font-bold">Total : {formatMoney(data.total)}</p>
     </section>
   );
 }

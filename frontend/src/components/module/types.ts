@@ -64,7 +64,17 @@ export type LineRow = Record<string, string>;
  */
 export type CellField =
   | (CellBase & { type: 'text' | 'date' })
-  | (CellBase & { type: 'number'; min?: number; max?: number; step?: number })
+  | (CellBase & {
+      type: 'number';
+      min?: number;
+      max?: number;
+      /** A step may depend on the row (a whole quantity for a lot, hundredths for a service). */
+      step?: number | ((row: LineRow) => number);
+      /** Whole numbers only (checked on submit), always or for the rows the function says. */
+      integer?: boolean | ((row: LineRow) => boolean);
+      /** The message of a refused decimal, shown as `Ligne n : {message}` (default: `le champ « {label} » doit être un nombre entier`). */
+      integerMessage?: string;
+    })
   | (CellBase & {
       type: 'select';
       /**
@@ -85,8 +95,15 @@ export type CellField =
        */
       dependsOnCell?: string;
       /**
+       * The label of the row's current value when the options do not offer it any more (a lot sold out since): shown as
+       * a disabled option instead of `Valeur actuelle`. A value picked in this grid remembers its own label.
+       */
+      currentLabel?: (row: LineRow) => string | undefined;
+      /**
        * Called when the user picks an option in this cell: the cells it returns are set in the same row (the
-       * designation and unit of a sellable). They count as chosen after the row's current parent value.
+       * designation and unit of a sellable). They count as chosen after the row's current parent value. A cell the
+       * user filled in is never overwritten: only an empty one, or one still holding the previous pick's prefill, is set;
+       * and when this cell is cleared by its parent, the prefills of its pick that the user left alone are cleared with it.
        */
       onPick?: (option: OptionItem, row: LineRow) => Partial<LineRow>;
     });
@@ -130,6 +147,8 @@ export type Field =
        * carry over to this one.
        */
       dependsOn?: string;
+      /** Label of the current value when the options do not offer it (shown disabled instead of `Valeur actuelle`). */
+      currentLabel?: string;
       /** The endpoint options need this permission (see `OptionsPermission`); without it `required` does not apply. */
       optionsPermission?: OptionsPermission;
     })

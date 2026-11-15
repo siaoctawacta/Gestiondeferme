@@ -175,7 +175,7 @@ const KINDS = [{ value: 'LOT', label: 'Lot' }, { value: 'OEUFS', label: 'Œufs' 
 const SELLABLES: Record<string, unknown[]> = {
   LOT: [
     { id: 'l1', label: 'LC-2026-14 — Poulets de chair', designation: 'Poulets de chair', sellable: true, reason: null },
-    { id: 'l2', label: 'LC-2026-15 — Poulets de chair', designation: 'Poulets de chair', sellable: true, reason: null },
+    { id: 'l2', label: 'LC-2026-15 — Poulets de chair', designation: 'Poulets de ponte', sellable: true, reason: null },
     { id: 'l3', label: 'LT-9 — Poussins', designation: 'Poussins', sellable: false, reason: "Délai d'attente jusqu'au 2026-11-20" },
   ],
   OEUFS: [{ id: 'e1', label: 'LP-2026-03 — 4 710 œufs disponibles', designation: 'Œufs (plateau)', sellable: true, reason: null }],
@@ -299,8 +299,8 @@ describe('LinesField, row-dependent cells', () => {
     await user.selectOptions(within(dialog).getByLabelText('Type ligne 1'), 'Œufs');
     await waitFor(() => expect(within(dialog).getByLabelText('Source ligne 1')).toHaveValue(''));
     expect(within(dialog).getByLabelText('Source ligne 2')).toHaveValue('l2');
-    // The designation is not a dependent cell: it stays.
-    expect(within(dialog).getByLabelText('Désignation ligne 1')).toHaveValue('Poulets de chair');
+    // The designation was typed (stored) before the pick: no prefill touched it, and none clears it.
+    expect(within(dialog).getByLabelText('Désignation ligne 1')).toHaveValue('A');
     // A source picked after the change is live.
     await user.selectOptions(within(dialog).getByLabelText('Source ligne 1'), 'e1');
     expect(within(dialog).getByLabelText('Source ligne 1')).toHaveValue('e1');
@@ -378,5 +378,69 @@ describe('LinesField, row-dependent cells', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(onDone).toHaveBeenCalled());
     expect(onSubmit).toHaveBeenCalledWith({ lines: [{ kind: 'LOT', sourceId: 'l9', designation: 'A' }] });
+  });
+
+  it('shows the stored label of a current value the options no longer offer (currentLabel), « Valeur actuelle » without one', async () => {
+    const base = rowLines({ defaultValue: [{ kind: 'LOT', sourceId: 'gone', designation: 'A', unit: '' }, { kind: 'LOT', sourceId: 'gone2', designation: 'B', unit: '' }] }) as Extract<Field, { type: 'lines' }>;
+    const columns = base.columns.map((c) => (c.name === 'sourceId' && c.type === 'select'
+      ? { ...c, currentLabel: (row: Record<string, string>) => (row.sourceId === 'gone' ? 'LC-OLD — Poulets de chair' : undefined) }
+      : c));
+    mountRows({ ...base, columns });
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getAllByRole('option', { name: 'LC-2026-14 — Poulets de chair' })).toHaveLength(2));
+    expect(within(dialog).getByRole('option', { name: 'LC-OLD — Poulets de chair' })).toBeDisabled();
+    expect(within(dialog).getAllByRole('option', { name: 'Valeur actuelle' })).toHaveLength(1);
+  });
+
+  it('never overwrites a sibling cell the user typed with a prefill, but replaces the previous prefill', async () => {
+    mountRows(rowLines({ defaultValue: [{ kind: 'LOT' }, { kind: 'LOT' }] }));
+    const user = userEvent.setup();
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getAllByRole('option', { name: 'LC-2026-14 — Poulets de chair' })).toHaveLength(2));
+    // Row 1: prefill, then another pick: the prefill is replaced.
+    await user.selectOptions(within(dialog).getByLabelText('Source ligne 1'), 'l1');
+    expect(within(dialog).getByLabelText('Désignation ligne 1')).toHaveValue('Poulets de chair');
+    await user.selectOptions(within(dialog).getByLabelText('Source ligne 1'), 'l2');
+    expect(within(dialog).getByLabelText('Désignation ligne 1')).toHaveValue('Poulets de ponte');
+    // Row 2: the user typed a designation first: a pick leaves it alone.
+    await user.type(within(dialog).getByLabelText('Désignation ligne 2'), 'Mon texte');
+    await user.selectOptions(within(dialog).getByLabelText('Source ligne 2'), 'l1');
+    expect(within(dialog).getByLabelText('Désignation ligne 2')).toHaveValue('Mon texte');
+  });
+
+  it('clears what a pick prefilled when its parent cell changes, but keeps what the user typed', async () => {
+    mountRows(rowLines({ defaultValue: [{ kind: 'LOT' }, { kind: 'LOT' }] }));
+    const user = userEvent.setup();
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getAllByRole('option', { name: 'LC-2026-14 — Poulets de chair' })).toHaveLength(2));
+    await user.selectOptions(within(dialog).getByLabelText('Source ligne 1'), 'l1');
+    await user.selectOptions(within(dialog).getByLabelText('Source ligne 2'), 'l1');
+    await user.type(within(dialog).getByLabelText('Désignation ligne 2'), ' bio');
+    await user.selectOptions(within(dialog).getByLabelText('Type ligne 1'), 'Prestation');
+    await user.selectOptions(within(dialog).getByLabelText('Type ligne 2'), 'Prestation');
+    expect(within(dialog).getByLabelText('Désignation ligne 1')).toHaveValue('');
+    expect(within(dialog).getByLabelText('Désignation ligne 2')).toHaveValue('Poulets de chair bio');
+  });
+
+  it('lets a number cell be an integer, with its own step, depending on its row', async () => {
+    const field = rowLines({ defaultValue: [{ kind: 'LOT', sourceId: 'l1', designation: 'A', quantity: '2.5' }, { kind: 'SERVICE', designation: 'T', quantity: '2.5' }] }) as Extract<Field, { type: 'lines' }>;
+    const withQty: Field = {
+      ...field,
+      columns: [...field.columns, {
+        name: 'quantity', label: 'Quantité', type: 'number', required: true, min: 0.01,
+        step: (row: Record<string, string>) => (row.kind === 'LOT' ? 1 : 0.01),
+        integer: (row: Record<string, string>) => row.kind === 'LOT',
+        integerMessage: 'La quantité doit être un nombre entier',
+      }],
+    };
+    const { onSubmit } = mountRows(withQty);
+    const user = userEvent.setup();
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Quantité ligne 1')).toHaveAttribute('step', '1');
+    expect(within(dialog).getByLabelText('Quantité ligne 2')).toHaveAttribute('step', '0.01');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Ligne 1 : La quantité doit être un nombre entier')).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Ligne 2/)).not.toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
   });
 });

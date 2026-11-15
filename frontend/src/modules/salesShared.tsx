@@ -9,11 +9,11 @@ import type { Field, ModuleConfig, RowAction, StatusDef } from '../components/mo
 import { useEndpointOptions } from '../components/module/useEndpointOptions';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
-import { formatMoney, todayIso } from '../lib/format';
+import { formatDate, formatMoney, todayIso } from '../lib/format';
 import type { Action } from '../lib/modules';
 import { farmKey } from '../lib/query';
 import { LOCKED } from './purchasingShared';
-import { saleLinesField, saleLinesToForm, saleLinesToPayload, type SaleLineData } from './saleLines';
+import { saleLineLabels, saleLinesField, saleLinesToForm, saleLinesToPayload, type SaleLineData } from './saleLines';
 
 export type { EggUnit, SaleLineData, SaleLineKind, Sellable } from './saleLines';
 
@@ -189,7 +189,7 @@ function QuoteDialog({ title, record, onClose, onDone }: { title: string; record
     { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
     { name: 'validUntil', label: "Valable jusqu'au", type: 'date' },
     // The sources offered are those sellable on the quote's date.
-    saleLinesField(String(values.date ?? '')),
+    saleLinesField(String(values.date ?? ''), record ? saleLineLabels(record.lines) : undefined),
   ];
   return (
     <ActionDialog
@@ -248,7 +248,7 @@ export const devis: ModuleConfig<QuoteRow> = {
   subtitle: 'Propositions commerciales, envoi, acceptation et facturation.',
   endpoint: '/quotes',
   columns: [
-    { key: 'date', header: 'DATE' },
+    { key: 'date', header: 'DATE', render: (q) => formatDate(q.date) },
     {
       key: 'reference',
       header: 'N° DEVIS',
@@ -257,7 +257,7 @@ export const devis: ModuleConfig<QuoteRow> = {
     { key: 'customerName', header: 'CLIENT' },
     { key: 'product', header: 'PRODUIT' },
     { key: 'total', header: 'TOTAL', render: (q) => formatMoney(q.total) },
-    { key: 'validUntil', header: 'VALIDITÉ', render: (q) => q.validUntil ?? '—' },
+    { key: 'validUntil', header: 'VALIDITÉ', render: (q) => (q.validUntil ? formatDate(q.validUntil) : '—') },
     { key: 'status', header: 'STATUT' },
   ],
   statuses: QUOTE_STATUSES,

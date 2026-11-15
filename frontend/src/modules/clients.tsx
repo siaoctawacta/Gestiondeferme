@@ -14,7 +14,7 @@ const FIELDS: Field[] = [
 
 /**
  * Customers belong to the organisation, not to a farm, and are master data: every write needs `update` on `clients`
- * (delete is its own button right) and stays possible under "all farms", like suppliers.
+ * (whatever the verb, like suppliers) and stays possible under "all farms", like suppliers.
  */
 export const clients: ModuleConfig<CustomerRow> = {
   slug: 'clients',
@@ -32,6 +32,6 @@ export const clients: ModuleConfig<CustomerRow> = {
   fields: FIELDS,
   createPermission: 'update',
   editPermission: 'update',
-  deletePermission: 'delete',
+  deletePermission: 'update',
   detail: CustomerDetail,
 };

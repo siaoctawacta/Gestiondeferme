@@ -79,14 +79,17 @@ const pick = (option: OptionItem, row: LineRow): Partial<LineRow> => {
   };
 };
 
+const isWhole = (kind: string) => kind === 'LOT' || kind === 'ANIMAL' || kind === 'OEUFS';
+
 const rowAmount = (row: LineRow) => lineAmount(Number(row.quantity || 0), Number(row.unitPrice || 0));
 
 /**
  * The `lines` field shared by the quote and invoice forms. `Source` is a row-dependent cell: its options are the
  * sellable sources of the row's `Type` at `date` (the document date), none for a prestation; picking one prefills
- * the designation (and the unit of eggs). The footer is the document total, round per line then sum.
+ * the designation (and the unit of eggs); no source is asked for while the date is empty. `labels` names the sources
+ * already stored (id -> label), shown when they are no longer offered. The footer is the document total, round per line then sum.
  */
-export function saleLinesField(date: string): Extract<Field, { type: 'lines' }> {
+export function saleLinesField(date: string, labels: Record<string, string> = {}): Extract<Field, { type: 'lines' }> {
   return {
     name: 'lines',
     label: 'Lignes',
@@ -104,14 +107,25 @@ export function saleLinesField(date: string): Extract<Field, { type: 'lines' }> 
         dependsOnCell: 'kind',
         // Listing the sources is a daily-entry right on ventes; without it the grid keeps what is stored.
         optionsPermission: { module: 'ventes', action: 'create' },
-        options: (row) => (row.kind && row.kind !== 'SERVICE'
+        options: (row) => (date && row.kind && row.kind !== 'SERVICE'
           ? { endpoint: '/sales/sellables', params: { kind: row.kind, date }, select: sellableOptions }
           : null),
+        currentLabel: (row) => labels[row.sourceId],
         onPick: pick,
       },
       { name: 'designation', label: 'Désignation', type: 'text', required: true },
       { name: 'unit', label: 'Unité', type: 'select', required: true, dependsOnCell: 'kind', options: (row) => (row.kind === 'OEUFS' ? EGG_UNITS : null) },
-      { name: 'quantity', label: 'Quantité', type: 'number', required: true, min: 0.01, step: 0.01 },
+      {
+        name: 'quantity',
+        label: 'Quantité',
+        type: 'number',
+        required: true,
+        min: 0.01,
+        // Birds, animals and eggs are counted whole; feed and services may have decimals.
+        step: (row) => (isWhole(row.kind) ? 1 : 0.01),
+        integer: (row) => isWhole(row.kind),
+        integerMessage: 'La quantité doit être un nombre entier',
+      },
       { name: 'unitPrice', label: 'Prix unitaire', type: 'number', required: true, min: 0, step: 0.01 },
       { name: 'amount', label: 'Total', type: 'text', computed: (row) => formatMoney(rowAmount(row)) },
     ],
@@ -145,3 +159,10 @@ export function saleLinesToPayload(rows: LineRow[]): Record<string, unknown>[] {
       return line;
     });
 }
+
+/** The label of each stored source (by id), for the sources a document names that are no longer sellable. */
+export const saleLineLabels = (lines: SaleLineData[]): Record<string, string> =>
+  Object.fromEntries(lines.flatMap((l) => {
+    const id = l.batchId ?? l.animalId ?? l.stockItemId;
+    return id ? [[id, l.sourceLabel ?? l.designation]] : [];
+  }));

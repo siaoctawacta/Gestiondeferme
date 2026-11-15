@@ -84,7 +84,9 @@ export function validateLines(field: Extract<Field, { type: 'lines' }>, rows: Li
       const v = (row[c.name] ?? '').trim();
       const at = `Ligne ${i + 1} : le champ « ${c.label} »`;
       if (c.required && v === '') out.push(`${at} est requis`);
-      else if (c.type === 'number' && v !== '' && c.min !== undefined && Number(v) < c.min) out.push(`${at} doit être supérieur ou égal à ${c.min}`);
+      else if (c.type === 'number' && v !== '' && Number.isFinite(Number(v)) && (typeof c.integer === 'function' ? c.integer(row) : c.integer) && !Number.isInteger(Number(v))) {
+        out.push(c.integerMessage ? `Ligne ${i + 1} : ${c.integerMessage}` : `${at} doit être un nombre entier`);
+      } else if (c.type === 'number' && v !== '' && c.min !== undefined && Number(v) < c.min) out.push(`${at} doit être supérieur ou égal à ${c.min}`);
       else if (c.type === 'number' && v !== '' && c.max !== undefined && Number(v) > c.max) out.push(`${at} doit être inférieur ou égal à ${c.max}`);
     }
   }
@@ -172,7 +174,7 @@ function LabelledControl({ field, value, onChange, parentValue, waitingFor }: Fi
           onChange={(e) => onChange(e.target.value)}
         />
       ) : (
-        <CellControl id={id} field={field} value={value} onChange={(v) => onChange(v)} parentValue={parentValue} waitingFor={waitingFor} />
+        <CellControl id={id} field={field} value={value} onChange={(v) => onChange(v)} parentValue={parentValue} waitingFor={waitingFor} currentLabel={field.type === 'select' ? field.currentLabel : undefined} />
       )}
     </div>
   );

@@ -1,8 +1,7 @@
 import type { CellField, LineRow, OptionsDef } from './types';
 
 /** The options of a select cell for its row: static, or computed from the row (`null`: none for this row). */
-export function cellOptions(column: CellField, row: LineRow): OptionsDef | null {
-  if (column.type !== 'select') return [];
+export function cellOptions(column: { options: OptionsDef | ((row: LineRow) => OptionsDef | null) }, row: LineRow): OptionsDef | null {
   return typeof column.options === 'function' ? column.options(row) : column.options;
 }
 

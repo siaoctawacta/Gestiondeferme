@@ -30,11 +30,13 @@ function Sheet({ data }: { data: CustomerData }) {
   );
 }
 
-/** The customer's invoices: the `ventes` list embedded, scoped to this customer (nothing when the module is not registered or not readable). */
+/** The customer's invoices: the `ventes` list embedded, scoped to this customer. */
 function Invoices({ customerId }: { customerId: string }) {
   const { can } = useAuth();
   const ventes = MODULES.ventes;
-  if (!ventes || !can('ventes', 'read')) return <Card className="p-6 text-sm text-muted-foreground">Aucune facture à afficher</Card>;
+  // Task 8 registers the ventes list here: until then there is nothing to show.
+  if (!ventes) return null;
+  if (!can('ventes', 'read')) return <Card className="p-6 text-sm text-muted-foreground">Factures non accessibles avec votre rôle</Card>;
   return <ModuleList config={ventes} scope={{ customerId }} readOnly />;
 }
 

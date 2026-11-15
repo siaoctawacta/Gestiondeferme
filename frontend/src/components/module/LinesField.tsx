@@ -1,4 +1,4 @@
-import { useId } from 'react';
+import { useId, useRef } from 'react';
 import { Plus, Trash2 } from 'lucide-react';
 import { Button } from '../ui/Button';
 import { formatNumber } from '../../lib/format';
@@ -31,13 +31,41 @@ function shown(column: CellField, value: string): string {
  */
 export function LinesField({ field, value: rows, onChange, errors = [], disabled = false }: LinesFieldProps) {
   const id = useId();
+  // What `onPick`s prefilled, by row then cell (and the column that did it): a prefill is replaced by the next pick and
+  // cleared with its pick, but a cell the user filled in is left alone.
+  const prefilled = useRef<Record<number, Record<string, { by: string; value: string }>>>({});
   const setCell = (at: number, column: CellField, v: string, option?: OptionItem) => {
-    // A picked option may prefill other cells of its row (`onPick`); they count as set by the user too.
-    const picked = (column.type === 'select' && option ? column.onPick?.(option, { ...rows[at], [column.name]: v }) ?? {} : {}) as LineRow;
+    const row = rows[at];
+    const known = prefilled.current[at] ?? {};
+    const picks = (column.type === 'select' && option ? column.onPick?.(option, { ...row, [column.name]: v }) ?? {} : {}) as LineRow;
+    const applied: LineRow = {};
+    for (const [cell, value] of Object.entries(picks)) {
+      if ((row[cell] ?? '') === '' || row[cell] === known[cell]?.value) {
+        applied[cell] = value;
+        known[cell] = { by: column.name, value };
+      }
+    }
+    const cleared: LineRow = {};
+    if ((row[column.name] ?? '') !== v) {
+      // The cells prefilled by a pick of a column that depends on this one go when it is cleared.
+      const gone = field.columns.filter((d) => d.type === 'select' && d.dependsOnCell === column.name).map((d) => d.name);
+      for (const [cell, record] of Object.entries(known)) {
+        if (!gone.includes(record.by) || cell in applied) continue;
+        if ((row[cell] ?? '') === record.value) cleared[cell] = '';
+        delete known[cell];
+      }
+    }
+    prefilled.current[at] = known;
     onChange(
-      rows.map((r, i) => (i === at ? { ...r, [column.name]: v, ...picked } : r)),
-      { row: at, cells: [column.name, ...Object.keys(picked)] },
+      rows.map((r, i) => (i === at ? { ...r, [column.name]: v, ...cleared, ...applied } : r)),
+      { row: at, cells: [column.name, ...Object.keys(cleared), ...Object.keys(applied)] },
     );
+  };
+  const removeRow = (at: number) => {
+    const next: typeof prefilled.current = {};
+    for (const [i, record] of Object.entries(prefilled.current)) if (Number(i) !== at) next[Number(i) > at ? Number(i) - 1 : Number(i)] = record;
+    prefilled.current = next;
+    onChange(rows.filter((_, i) => i !== at), { remove: at });
   };
   const taken = (column: CellField, at: number) =>
     column.type === 'select' && column.unique ? rows.filter((_, i) => i !== at).map((r) => r[column.name]).filter(Boolean) : undefined;
@@ -77,6 +105,7 @@ export function LinesField({ field, value: rows, onChange, errors = [], disabled
                   disabled={disabled}
                   excluded={taken(c, i)}
                   row={row}
+                  currentLabel={c.type === 'select' ? c.currentLabel?.(row) : undefined}
                   onChange={(v, option) => setCell(i, c, String(v), option)}
                 />
               )}
@@ -88,7 +117,7 @@ export function LinesField({ field, value: rows, onChange, errors = [], disabled
               size="sm"
               aria-label={`Retirer la ligne ${i + 1}`}
               disabled={rows.length <= (field.minRows ?? 0)}
-              onClick={() => onChange(rows.filter((_, at) => at !== i), { remove: i })}
+              onClick={() => removeRow(i)}
             >
               <Trash2 aria-hidden className="size-4" />
             </Button>

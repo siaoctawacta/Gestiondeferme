@@ -1,3 +1,4 @@
+import { useRef } from 'react';
 import { Input } from '../ui/Input';
 import { Select } from '../ui/Select';
 import { cellOptions } from './cellOptions';
@@ -24,13 +25,17 @@ export interface CellControlProps {
   waitingFor?: string;
   /** A `lines` cell: its row, which computes the options of a row-dependent select. */
   row?: LineRow;
+  /** Select: label of the current value when the options do not offer it. */
+  currentLabel?: string;
 }
 
 /**
  * THE bare input of the kit: text, date, time, number, password and select (static or endpoint options). The form
  * wraps it in a label (`FieldInput`); a `lines` row uses it as a cell.
  */
-export function CellControl({ field, value, onChange, id, disabled, excluded, parentValue, waitingFor, row, ...aria }: CellControlProps) {
+export function CellControl({ field, value, onChange, id, disabled, excluded, parentValue, waitingFor, row, currentLabel, ...aria }: CellControlProps) {
+  // Labels of the values this control has been offered: one picked and since gone keeps its label.
+  const seen = useRef<Record<string, string>>({});
   const { can } = useAuth();
   const dependsOn = field.type === 'select' && 'dependsOn' in field ? field.dependsOn : undefined;
   // `null`: a row-dependent cell with nothing to offer for this row.
@@ -47,6 +52,7 @@ export function CellControl({ field, value, onChange, id, disabled, excluded, pa
   );
   if (field.type === 'select') {
     const current = none ? '' : String(value);
+    for (const o of options) seen.current[o.value] = o.label;
     return (
       <Select
         id={id}
@@ -59,7 +65,7 @@ export function CellControl({ field, value, onChange, id, disabled, excluded, pa
         <option value="">{none ? '—' : waitingFor !== undefined ? `Choisir d'abord ${waitingFor}` : 'Sélectionner…'}</option>
         {/* A stored value the options no longer offer (a closed lot, an inactive article, options not readable) stays the current choice and is resent unchanged. */}
         {current !== '' && !options.some((o) => o.value === current) && (
-          <option value={current} disabled>{allowed ? 'Valeur actuelle' : 'Valeur conservée'}</option>
+          <option value={current} disabled>{seen.current[current] ?? currentLabel ?? (allowed ? 'Valeur actuelle' : 'Valeur conservée')}</option>
         )}
         {options.filter((o) => o.value === current || !excluded?.includes(o.value)).map((o) => (
           <option key={o.value} value={o.value} disabled={o.disabled}>{o.label}</option>
@@ -75,7 +81,7 @@ export function CellControl({ field, value, onChange, id, disabled, excluded, pa
       disabled={disabled}
       min={field.type === 'number' ? field.min : undefined}
       max={field.type === 'number' ? field.max : undefined}
-      step={field.type === 'number' ? field.step : undefined}
+      step={field.type === 'number' ? (typeof field.step === 'function' ? field.step(row ?? {}) : field.step) : undefined}
       autoComplete={field.type === 'password' ? 'new-password' : undefined}
       value={String(value)}
       onChange={(e) => onChange(e.target.value)}
