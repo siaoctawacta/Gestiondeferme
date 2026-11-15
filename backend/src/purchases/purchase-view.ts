@@ -1,5 +1,5 @@
 import { formatDay, formatDayOrNull } from '../common/days';
-import { remainingOf, sumAmounts, toMoney } from '../common/money';
+import { lineAmount, remainingOf, sumAmounts, toMoney } from '../common/money';
 import type { Prisma } from '../generated/prisma/client';
 import type { Activity } from '../generated/prisma/enums';
 import type { ExportColumn } from '../listing/export';
@@ -61,6 +61,10 @@ export interface PurchaseLineView {
   quantity: number;
   unitPrice: number;
   receivedQuantity: number | null;
+  /** The stored amount of the line: its received quantity × price once received, else the ordered one. */
+  amount: number;
+  /** Ordered quantity × price, whatever was received: what the bon de commande states. */
+  orderedAmount: number;
   lotNumber: string | null;
   expiryDate: string | null;
 }
@@ -203,6 +207,8 @@ export function toDetail(p: PurchaseFull): PurchaseDetail {
       quantity: i.quantity.toNumber(),
       unitPrice: toMoney(i.unitPrice),
       receivedQuantity: i.receivedQuantity?.toNumber() ?? null,
+      amount: toMoney(i.amount),
+      orderedAmount: toMoney(lineAmount(i.quantity, i.unitPrice)),
       lotNumber: i.lotNumber,
       expiryDate: formatDayOrNull(i.expiryDate),
     })),

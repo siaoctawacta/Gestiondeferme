@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import type { Role } from '../src/generated/prisma/enums';
+import { lineAmount } from '../src/common/money';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { daysAgo, Headers, Id, Msg, World } from './fixtures';
 import {
@@ -17,6 +18,8 @@ interface Line {
   quantity: number;
   unitPrice: number;
   receivedQuantity: number | null;
+  amount: number;
+  orderedAmount: number;
   lotNumber: string | null;
   expiryDate: string | null;
 }
@@ -792,7 +795,7 @@ describe('Suppliers and purchases (e2e)', () => {
             orderNumber,
             date: new Date(date),
             status,
-            amount: qty * price,
+            amount: lineAmount(qty, price),
             requestedById: userId,
             ...(status === 'COMMANDEE'
               ? {
@@ -809,7 +812,7 @@ describe('Suppliers and purchases (e2e)', () => {
                   position: 0,
                   quantity: qty,
                   unitPrice: price,
-                  amount: qty * price,
+                  amount: lineAmount(qty, price),
                 },
               ],
             },
@@ -1150,7 +1153,7 @@ describe('Suppliers and purchases (e2e)', () => {
             position: 0,
             quantity,
             unitPrice,
-            amount: (receivedQuantity ?? quantity) * unitPrice,
+            amount: lineAmount(receivedQuantity ?? quantity, unitPrice),
             ...(receivedQuantity
               ? { expenseCategory: 'ALIMENT' as const }
               : {}),
@@ -1738,6 +1741,34 @@ describe('Suppliers and purchases (e2e)', () => {
       expect(got).toMatchObject({ status: 'PAYEE', amount: 0 });
       expect((await stored(free.id)).amount).toBe('0.00');
       expect(await drifting()).toEqual([]);
+    });
+
+    it('returns on every line the stored amount and the ordered amount', async () => {
+      const second = (await stockItem('Maïs')).id;
+      const p = await ordered({
+        lines: [
+          { itemId, quantity: 10, unitPrice: 5 },
+          { itemId: second, quantity: 0.7, unitPrice: 12.25 },
+        ],
+      });
+      const open = await get(p.id);
+      expect(open.lines.map((l) => [l.amount, l.orderedAmount])).toEqual([
+        [50, 50],
+        [8.58, 8.58],
+      ]);
+      await act(keeper, p.id, 'receive', {
+        date: daysAgo(2),
+        lines: [
+          { itemId, receivedQuantity: 8 },
+          { itemId: second, receivedQuantity: 0.7 },
+        ],
+      });
+      const got = await get(p.id);
+      expect(got.lines.map((l) => [l.amount, l.orderedAmount])).toEqual([
+        [40, 50],
+        [8.58, 8.58],
+      ]);
+      expect(got.amount).toBe(48.58);
     });
 
     it('gives a line received at 0 neither a category nor an amount', async () => {

@@ -938,7 +938,6 @@ model Supplier {
   @@unique([organizationId, name])
 }
 
-/// A purchase request (DA-NNNN) that becomes an order (BC-NNNN), is received into the stock ledger, then paid.
 /// What an expense or a revenue is about; a purchase line snapshots its category at reception.
 enum FinanceCategory {
   ANIMAUX
@@ -966,6 +965,7 @@ enum Activity {
   GENERAL
 }
 
+/// A purchase request (DA-NNNN) that becomes an order (BC-NNNN), is received into the stock ledger, then paid.
 model Purchase {
   id             String            @id @default(cuid())
   organizationId String

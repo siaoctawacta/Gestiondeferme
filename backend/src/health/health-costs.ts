@@ -1,6 +1,5 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
-import { formatDay } from '../common/days';
 import type { Prisma } from '../generated/prisma/client';
 import {
   HEALTH_COST,
@@ -9,23 +8,26 @@ import {
   type LotCostSource,
 } from '../indicators/lot-cost';
 import { PrismaService } from '../prisma/prisma.service';
+import { operationCosts } from '../stock/operation-costs';
 
 /**
  * What the medicines and vaccines used on a lot cost: the stock ledger's exits
  * written by its done acts (sourceType `HEALTH_ACT`), valued as the ledger
- * holds them NOW (a back-dated entry re-costs them). One query for every lot,
- * on the date the act was done; a planned or cancelled act has no exit, and an
+ * holds them NOW (a back-dated entry re-costs them) and rounded like every
+ * other reader (`operationCosts`: per operation, then summed). Two queries for
+ * every lot: the done acts of the lots (on the day they were done, bounds
+ * inclusive), then their exits. A planned or cancelled act has no exit, and an
  * act on an animal or a building has no lot, so none of them costs a lot.
  */
 @Injectable()
 export class HealthCosts implements LotCostSource, OnModuleInit {
   constructor(
     private readonly prisma: PrismaService,
-    private readonly costs?: LotCostRegistry,
+    private readonly costs: LotCostRegistry,
   ) {}
 
   onModuleInit(): void {
-    this.costs?.register(this);
+    this.costs.register(this);
   }
 
   async costsFor(
@@ -36,23 +38,31 @@ export class HealthCosts implements LotCostSource, OnModuleInit {
     const result = new Map<string, LotCost[]>();
     if (batchIds.length === 0) return result;
     const client = tx ?? this.prisma;
-    // Both bounds inclusive, on the day the act was done; an absent bound is no bound.
-    const from = range.from ? formatDay(range.from) : null;
-    const to = range.to ? formatDay(range.to) : null;
-    const rows = await client.$queryRaw<{ batchId: string; amount: Decimal }[]>`
-      SELECT a."batchId", ROUND(SUM(ABS(m."quantity") * m."unitCost"), 2) AS amount
-      FROM "StockMovement" m
-      JOIN "HealthAct" a ON a."id" = m."sourceId"
-      WHERE m."sourceType" = 'HEALTH_ACT'
-        AND a."status" = 'REALISE'
-        AND a."batchId" = ANY(${batchIds}::text[])
-        AND (${from}::date IS NULL OR a."doneDate" >= ${from}::date)
-        AND (${to}::date IS NULL OR a."doneDate" <= ${to}::date)
-      GROUP BY a."batchId"`;
-    for (const r of rows) {
-      result.set(r.batchId, [
-        { category: HEALTH_COST, amount: new Decimal(r.amount) },
-      ]);
+    const acts = await client.healthAct.findMany({
+      where: {
+        batchId: { in: batchIds },
+        status: 'REALISE',
+        ...(range.from || range.to
+          ? { doneDate: { gte: range.from, lte: range.to } }
+          : {}),
+      },
+      select: { id: true, batchId: true },
+    });
+    const costs = await operationCosts(client, {
+      sourceType: 'HEALTH_ACT',
+      sourceIds: acts.map((a) => a.id),
+    });
+    const totals = new Map<string, Decimal>();
+    for (const a of acts) {
+      const cost = costs.get(a.id);
+      if (!a.batchId || !cost) continue;
+      totals.set(
+        a.batchId,
+        (totals.get(a.batchId) ?? new Decimal(0)).add(cost),
+      );
+    }
+    for (const [batchId, amount] of totals) {
+      result.set(batchId, [{ category: HEALTH_COST, amount }]);
     }
     return result;
   }

@@ -157,6 +157,35 @@ describe('Health as a lot cost source (e2e)', () => {
     expect(all.get(quiet)).toEqual([]);
   });
 
+  it('rounds per act (one ledger operation) then sums, like feed: two acts of 0.5 flacon at 13 363.63 cost 13 363.64', async () => {
+    await entry(vaccineId, 10, 13363.63);
+    await act({ quantity: 0.5 });
+    await act({ quantity: 0.5 });
+    // 0.5 × 13 363.63 = 6 681.815 → 6 681.82 each; rounding the lot's sum once would give 13 363.63.
+    expect(amountOf((await costs()).get(lotId), 'sante')).toBe('13363.64');
+  });
+
+  it('filters on the day the act was done, not on its planned date', async () => {
+    await entry(vaccineId, 12, 12000);
+    const planned = await act({
+      status: 'PLANIFIE',
+      date: daysAgo(10),
+      quantity: undefined,
+    });
+    await http()
+      .post(`/api/health-acts/${planned.id}/complete`)
+      .set(h)
+      .send({ doneDate: daysAgo(2), quantity: 2 })
+      .expect(200);
+    const day = (n: number) => new Date(`${daysAgo(n)}T00:00:00.000Z`);
+    const sante = async (range: { from?: Date; to?: Date }) =>
+      amountOf((await costs([lotId], range)).get(lotId), 'sante');
+    // Planned 10 days ago, done 2 days ago: only the done date counts.
+    expect(await sante({ to: day(5) })).toBeUndefined();
+    expect(await sante({ from: day(3), to: day(2) })).toBe('24000');
+    expect(await sante({ from: day(11), to: day(9) })).toBeUndefined();
+  });
+
   it('limits the cost to the acts done within the range, both bounds inclusive', async () => {
     await entry(vaccineId, 12, 12000);
     await act({ date: daysAgo(10), doneDate: daysAgo(10), quantity: 1 });

@@ -16,6 +16,7 @@ import {
   type LotCostSource,
 } from '../indicators/lot-cost';
 import { PrismaService } from '../prisma/prisma.service';
+import { operationCosts } from '../stock/operation-costs';
 import {
   StockLedgerService,
   type RecordInput,
@@ -75,26 +76,12 @@ export class FeedService
   ): Promise<Map<string, { cost: Decimal; unitCost: Decimal }>> {
     const result = new Map<string, { cost: Decimal; unitCost: Decimal }>();
     if (rows.length === 0) return result;
-    const exits = await client.stockMovement.findMany({
-      where: {
-        sourceType: 'FEED_DISTRIBUTION',
-        sourceId: { in: rows.map((r) => r.id) },
-      },
-      select: {
-        sourceId: true,
-        operationId: true,
-        quantity: true,
-        unitCost: true,
-      },
+    const ledger = await operationCosts(client, {
+      sourceType: 'FEED_DISTRIBUTION',
+      sourceIds: rows.map((r) => r.id),
     });
-    const bySource = new Map<string, typeof exits>();
-    for (const e of exits) {
-      const group = bySource.get(e.sourceId ?? '');
-      if (group) group.push(e);
-      else bySource.set(e.sourceId ?? '', [e]);
-    }
     for (const row of rows) {
-      result.set(row.id, currentCost(row, bySource.get(row.id) ?? []));
+      result.set(row.id, currentCost(row, ledger.get(row.id)));
     }
     return result;
   }

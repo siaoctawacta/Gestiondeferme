@@ -11,33 +11,23 @@ const row = (over: Partial<CostRow> = {}): CostRow => ({
   unlinkedCost: D(0),
   ...over,
 });
-const exit = (operationId: string, quantity: number, unitCost: number) => ({
-  sourceId: 'd1',
-  operationId,
-  quantity: D(quantity),
-  unitCost: D(unitCost),
-});
 
 describe('currentCost', () => {
   it('shows the snapshot when the ledger holds no exit for the distribution', () => {
-    expect(currentCost(row(), [])).toEqual({ cost: D(7000), unitCost: D(70) });
+    expect(currentCost(row(), undefined)).toEqual({
+      cost: D(7000),
+      unitCost: D(70),
+    });
   });
 
-  it('sums the exits as the ledger now values them, an operation split across lots rounded once', () => {
-    const r = currentCost(row(), [
-      exit('op', -30, 100.005),
-      exit('op', -30, 100.005),
-      exit('other', -40, 50),
-    ]);
-    // op: 60 x 100.005 = 6000.30; other: 2000.
+  it('takes the ledger cost of the exits and divides it by the quantity', () => {
+    const r = currentCost(row(), D('8000.3'));
     expect(r.cost.toNumber()).toBe(8000.3);
     expect(r.unitCost.toNumber()).toBe(80);
   });
 
   it('adds the part the ledger does not value', () => {
-    const r = currentCost(row({ unlinkedCost: D('2000.5') }), [
-      exit('op', -60, 100),
-    ]);
+    const r = currentCost(row({ unlinkedCost: D('2000.5') }), D(6000));
     expect(r.cost.toNumber()).toBe(8000.5);
   });
 });

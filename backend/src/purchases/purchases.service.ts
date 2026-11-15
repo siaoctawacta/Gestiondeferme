@@ -15,6 +15,7 @@ import {
   linesAmount,
   remainingOf,
   sumAmounts,
+  toMoney,
 } from '../common/money';
 import { expenseCategoryOf } from '../finance/finance-categories';
 import type { Prisma } from '../generated/prisma/client';
@@ -686,7 +687,7 @@ export class PurchasesService {
         {
           purchaseId: id,
           date: dto.date,
-          amount: amount.toNumber(),
+          amount: toMoney(amount),
           method: dto.method,
           reference: payment.reference,
           status: after.status,
@@ -723,7 +724,7 @@ export class PurchasesService {
         {
           purchaseId: id,
           date: formatDay(payment.date),
-          amount: payment.amount.toNumber(),
+          amount: toMoney(payment.amount),
           method: payment.method,
           reference: payment.reference,
           status: before.status,

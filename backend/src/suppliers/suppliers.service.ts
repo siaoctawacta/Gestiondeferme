@@ -7,6 +7,7 @@ import { Decimal } from '@prisma/client/runtime/client';
 import { AccessService } from '../access/access.service';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
+import { toMoney } from '../common/money';
 import type { Prisma, Supplier } from '../generated/prisma/client';
 import type { AuditAction } from '../generated/prisma/enums';
 import type { ExportColumn } from '../listing/export';
@@ -61,7 +62,7 @@ const sheet = (s: Supplier) => ({
 
 const toItem = (s: Supplier, balance: Decimal): SupplierItem => ({
   ...sheet(s),
-  balance: balance.toNumber(),
+  balance: toMoney(balance),
 });
 
 /**
