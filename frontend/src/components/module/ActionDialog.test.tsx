@@ -298,3 +298,38 @@ describe('ActionDialog: options that need a permission', () => {
     expect(urls.some((u) => u.startsWith('/api/zones'))).toBe(false);
   });
 });
+
+describe('ActionDialog: three-level chains and required options', () => {
+  const OPTS = (p: string) => [{ value: `${p}1`, label: `${p.toUpperCase()}1` }, { value: `${p}2`, label: `${p.toUpperCase()}2` }];
+  const chain: Field[] = [
+    { name: 'a', label: 'Niveau A', type: 'select', options: OPTS('a') },
+    { name: 'b', label: 'Niveau B', type: 'select', dependsOn: 'a', options: OPTS('b') },
+    { name: 'c', label: 'Niveau C', type: 'select', dependsOn: 'b', options: OPTS('c') },
+  ];
+
+  it('does not bring back the grandchild value when the cleared middle value is picked again', async () => {
+    const { onSubmit } = mount({ fields: chain });
+    const dialog = await screen.findByRole('dialog');
+    const user = userEvent.setup();
+    await user.selectOptions(within(dialog).getByLabelText('Niveau A'), 'A1');
+    await user.selectOptions(within(dialog).getByLabelText('Niveau B'), 'B1');
+    await user.selectOptions(within(dialog).getByLabelText('Niveau C'), 'C1');
+    await user.selectOptions(within(dialog).getByLabelText('Niveau A'), 'A2');
+    expect(within(dialog).getByLabelText('Niveau B')).toHaveValue('');
+    await user.selectOptions(within(dialog).getByLabelText('Niveau B'), 'B1');
+    expect(within(dialog).getByLabelText('Niveau C')).toHaveValue('');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ a: 'a2', b: 'b1' }));
+  });
+
+  it('does not block on a required select whose options the user may not read', async () => {
+    const fields: Field[] = [
+      { name: 'zoneId', label: 'Zone', type: 'select', required: true, options: { endpoint: '/zones' }, optionsPermission: { module: 'stocks', action: 'read' } },
+      { name: 'note', label: 'Note', type: 'text' },
+    ];
+    const { onSubmit } = mount({ fields });
+    await userEvent.setup().click(await screen.findByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({}));
+    expect(urls.some((u) => u.startsWith('/api/zones'))).toBe(false);
+  });
+});

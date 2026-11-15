@@ -103,7 +103,7 @@ export type Field =
        * carry over to this one.
        */
       dependsOn?: string;
-      /** The endpoint options need this permission (see `OptionsPermission`). */
+      /** The endpoint options need this permission (see `OptionsPermission`); without it `required` does not apply. */
       optionsPermission?: OptionsPermission;
     })
   /**

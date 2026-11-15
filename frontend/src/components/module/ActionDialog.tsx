@@ -1,4 +1,5 @@
 import { useState, type FormEvent, type ReactNode } from 'react';
+import { useAuth } from '../../lib/auth';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Dialog, DialogActions } from '../ui/Dialog';
@@ -68,7 +69,11 @@ export function ActionDialog({
   const [meta, setMeta] = useState<{ rev: Record<string, number>; bound: Record<string, { parent: string; rev: number }> }>({ rev: {}, bound: {} });
 
   const all = typeof fields === 'function' ? fields({ ...initial, ...edited }) : fields;
-  const shown = all.filter((f) => !f.only || f.only === mode);
+  const { can } = useAuth();
+  const shown = all
+    .filter((f) => !f.only || f.only === mode)
+    // Options the user may not read cannot be chosen: such a select is never required.
+    .map((f) => (f.type === 'select' && f.required && f.optionsPermission && !can(f.optionsPermission.module, f.optionsPermission.action) ? { ...f, required: false } : f));
   const values = valuesOf(edited, initial, shown, mode);
 
   const live = (f: Field, depth = 0): boolean => {
@@ -83,7 +88,8 @@ export function ActionDialog({
   /** Sets a field; selects depending on it (and theirs in turn) lose their value, shown or not. */
   const setField = (name: string, v: unknown) => {
     setLineErrors((e) => (e?.name === name ? null : e));
-    const was = name in edited ? edited[name] : initial[name];
+    // Against what the user sees: a value cleared by its parent counts as empty, so picking it again is a change.
+    const was = name in values ? values[name] : name in edited ? edited[name] : initial[name];
     const changed = JSON.stringify(was ?? '') !== JSON.stringify(v ?? '');
     const dependsOn = all.find((f) => f.name === name && f.type === 'select');
     setMeta((m) => {
