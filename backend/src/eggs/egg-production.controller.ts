@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { Ctx, RequirePermission } from '../access/decorators';
+import { Ctx, RequirePermission, RequireDaily } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import { sendList } from '../listing/list-helpers';
 import {
@@ -38,13 +38,13 @@ export class EggProductionController {
   }
 
   @Post()
-  @RequirePermission('ponte', 'create')
+  @RequireDaily('ponte')
   create(@Ctx() ctx: RequestContext, @Body() dto: CreateEggProductionDto) {
     return this.eggs.create(ctx, dto);
   }
 
   @Patch(':id')
-  @RequirePermission('ponte', 'update')
+  @RequireDaily('ponte')
   update(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -54,7 +54,7 @@ export class EggProductionController {
   }
 
   @Delete(':id')
-  @RequirePermission('ponte', 'delete')
+  @RequireDaily('ponte')
   async remove(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     await this.eggs.remove(ctx, id);
   }

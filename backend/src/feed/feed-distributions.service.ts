@@ -43,8 +43,14 @@ export interface FeedDistributionItem {
   feedProductId: string | null;
   formulaId: string | null;
   quantityKg: number;
-  /** Water recorded for the same target and date. */
+  /** Water recorded for the same target and date, shown on its first distribution only. */
   waterLiters: number | null;
+  /**
+   * True when this row carries (or, with no water record yet, would carry) the
+   * day's water of its target: the first distribution of that target and date.
+   * Only then may `PATCH` set or clear `waterLiters`.
+   */
+  waterEditable: boolean;
   unitCost: number;
   cost: number;
   note: string | null;
@@ -61,6 +67,8 @@ export const DISTRIBUTION_COLUMNS: ExportColumn<FeedDistributionItem>[] = [
 
 const NEED_FEED = 'Indiquez un aliment ou une formule';
 const NOT_FOUND = 'Distribution introuvable';
+export const WATER_ROW =
+  "La consommation d'eau du jour est portée par la première distribution";
 const SORTABLE = ['date', 'quantityKg', 'cost'];
 
 @Injectable()
@@ -128,6 +136,7 @@ export class FeedDistributionsService {
         formulaId: r.formulaId,
         quantityKg: Number(r.quantityKg),
         waterLiters: first.get(k) === r.id ? (liters.get(k) ?? null) : null,
+        waterEditable: first.get(k) === r.id,
         unitCost: Number(r.unitCost),
         cost: Number(r.cost),
         note: r.note,
@@ -140,6 +149,7 @@ export class FeedDistributionsService {
     const to = q.to ? requireDay(q.to) : undefined;
     const where: Prisma.FeedDistributionWhereInput = {
       farmId: { in: ctx.farmIds },
+      AND: [this.targets.visibleRows(ctx)],
       ...(q.batchId ? { batchId: q.batchId } : {}),
       ...(q.buildingId ? { buildingId: q.buildingId } : {}),
       ...(from || to ? { date: { gte: from, lte: to } } : {}),
@@ -242,6 +252,58 @@ export class FeedDistributionsService {
     );
   }
 
+  /**
+   * Runs the stock seam, applies the unit cost it returns, and re-reads the
+   * row, so the response and the audit row show what the seam did.
+   */
+  private async settle(
+    tx: Tx,
+    ctx: RequestContext,
+    before: Row | null,
+    after: Row | null,
+  ): Promise<Row> {
+    const result = await this.feed.afterDistributionChange(
+      tx,
+      ctx,
+      before,
+      after,
+    );
+    if (!after) return before as Row;
+    if (result?.unitCost) {
+      await tx.feedDistribution.update({
+        where: { id: after.id },
+        data: {
+          unitCost: result.unitCost,
+          cost: lineCost(after.quantityKg, result.unitCost),
+        },
+      });
+    }
+    return this.find(tx, ctx, after.id);
+  }
+
+  /** Whether this row is the first distribution of its target and date, the one that carries the day's water. */
+  private async carriesWater(
+    tx: Tx,
+    row: {
+      id: string;
+      date: Date;
+      batchId: string | null;
+      buildingId: string | null;
+    },
+  ): Promise<boolean> {
+    const first = await tx.feedDistribution.findFirst({
+      where: {
+        date: row.date,
+        ...(row.batchId
+          ? { batchId: row.batchId }
+          : { buildingId: row.buildingId }),
+      },
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
+      select: { id: true },
+    });
+    return first?.id === row.id;
+  }
+
   create(
     ctx: RequestContext,
     dto: CreateFeedDistributionDto,
@@ -268,9 +330,9 @@ export class FeedDistributionsService {
       if (dto.waterLiters !== undefined) {
         await this.water.upsertFor(tx, ctx, target, date, dto.waterLiters);
       }
-      const [item] = await this.toItems([created], tx);
+      const settled = await this.settle(tx, ctx, null, created);
+      const [item] = await this.toItems([settled], tx);
       await this.log(tx, ctx, 'CREATE', item, undefined, item);
-      await this.feed.afterDistributionChange(tx, null, created);
       return item;
     });
   }
@@ -315,11 +377,17 @@ export class FeedDistributionsService {
         relationLoadStrategy: 'join',
       });
       if (dto.waterLiters !== undefined) {
-        await this.water.upsertFor(tx, ctx, target, date, dto.waterLiters);
+        if (!(await this.carriesWater(tx, updated)))
+          throw new BadRequestException(WATER_ROW);
+        if (dto.waterLiters === null) {
+          await this.water.clearFor(tx, ctx, target, date);
+        } else {
+          await this.water.upsertFor(tx, ctx, target, date, dto.waterLiters);
+        }
       }
-      const [item] = await this.toItems([updated], tx);
+      const settled = await this.settle(tx, ctx, before, updated);
+      const [item] = await this.toItems([settled], tx);
       await this.log(tx, ctx, 'UPDATE', item, was, item);
-      await this.feed.afterDistributionChange(tx, before, updated);
       return item;
     });
   }
@@ -331,8 +399,8 @@ export class FeedDistributionsService {
       const before = await this.find(tx, ctx, id);
       const [was] = await this.toItems([before], tx);
       await tx.feedDistribution.delete({ where: { id } });
+      await this.settle(tx, ctx, before, null);
       await this.log(tx, ctx, 'DELETE', was, was);
-      await this.feed.afterDistributionChange(tx, before, null);
     });
   }
 }

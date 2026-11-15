@@ -85,6 +85,32 @@ describe('mortalityAlerts', () => {
   });
 });
 
+describe('litter lots', () => {
+  const deaths = { date: '2026-11-14', deaths: 2, liveAtStart: 12 };
+
+  it('are not judged before weaning: pre-weaning loss is followed by the breeding figures', () => {
+    const litter = lot({
+      initialCount: 12,
+      deaths: 2,
+      recentDays: [deaths],
+      litter: { weaned: false },
+    });
+    expect(mortalityAlerts([litter], SETTINGS)).toEqual([]);
+  });
+
+  it('are judged like any lot once weaned, whereas the same loss on a purchased lot alerts', () => {
+    const weaned = lot({
+      initialCount: 12,
+      deaths: 2,
+      recentDays: [deaths],
+      litter: { weaned: true },
+    });
+    expect(mortalityAlerts([weaned], SETTINGS)[0]?.level).toBe('URGENT');
+    const bought = lot({ initialCount: 12, deaths: 2, recentDays: [deaths] });
+    expect(mortalityAlerts([bought], SETTINGS)[0]?.level).toBe('URGENT');
+  });
+});
+
 describe('mortality thresholds are compared on raw rates', () => {
   it('cumulative: alerts at the threshold, not below, not by rounding', () => {
     const at = lot({ initialCount: 3000, deaths: 90 });

@@ -8,7 +8,13 @@ import type { Prisma } from '../generated/prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import type { AccessClaims } from './access-token';
 import type { RequestContext } from './decorators';
-import { Action, can, ModuleKey } from './permissions';
+import {
+  Action,
+  can,
+  DAILY_WRITE,
+  MASTER_WRITE,
+  ModuleKey,
+} from './permissions';
 import { ALL_FARMS_ROLES } from './roles';
 
 @Injectable()
@@ -23,6 +29,16 @@ export class AccessService {
     if (!can(ctx.user.role, module, action)) {
       throw new ForbiddenException('Permission insuffisante');
     }
+  }
+
+  /** Master-data write on a module only known at request time (see `MASTER_WRITE`). */
+  assertMaster(ctx: RequestContext, module: ModuleKey): void {
+    this.assertCan(ctx, module, MASTER_WRITE);
+  }
+
+  /** Daily-operation write on a module only known at request time (see `DAILY_WRITE`). */
+  assertDaily(ctx: RequestContext, module: ModuleKey): void {
+    this.assertCan(ctx, module, DAILY_WRITE);
   }
 
   /** Loads the user fresh from the DB: role and active flag come from the row, not the token. */

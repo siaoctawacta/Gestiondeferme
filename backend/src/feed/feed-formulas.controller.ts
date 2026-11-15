@@ -9,7 +9,12 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { Ctx, NoFarm, RequirePermission } from '../access/decorators';
+import {
+  Ctx,
+  NoFarm,
+  RequirePermission,
+  RequireMaster,
+} from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import {
   CreateFeedFormulaDto,
@@ -32,13 +37,13 @@ export class FeedFormulasController {
   }
 
   @Post()
-  @RequirePermission('alimentation', 'create')
+  @RequireMaster('alimentation')
   create(@Ctx() ctx: RequestContext, @Body() dto: CreateFeedFormulaDto) {
     return this.formulas.create(ctx, dto);
   }
 
   @Patch(':id')
-  @RequirePermission('alimentation', 'update')
+  @RequireMaster('alimentation')
   update(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -48,7 +53,7 @@ export class FeedFormulasController {
   }
 
   @Delete(':id')
-  @RequirePermission('alimentation', 'delete')
+  @RequireMaster('alimentation')
   remove(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     return this.formulas.remove(ctx, id);
   }

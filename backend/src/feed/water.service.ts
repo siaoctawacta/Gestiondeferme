@@ -57,6 +57,7 @@ export class WaterService {
     const to = q.to ? requireDay(q.to) : undefined;
     const where: Prisma.WaterConsumptionWhereInput = {
       farmId: { in: ctx.farmIds },
+      AND: [this.targets.visibleRows(ctx)],
       ...(q.batchId ? { batchId: q.batchId } : {}),
       ...(q.buildingId ? { buildingId: q.buildingId } : {}),
       ...(from || to ? { date: { gte: from, lte: to } } : {}),
@@ -164,6 +165,25 @@ export class WaterService {
       DUPLICATE,
     );
     await this.log(tx, ctx, 'CREATE', created);
+  }
+
+  /** Deletes the water record of `target` on `date` when there is one (audited). */
+  async clearFor(
+    tx: Tx,
+    ctx: RequestContext,
+    target: FeedTarget,
+    date: Date,
+  ): Promise<void> {
+    const existing = await tx.waterConsumption.findFirst({
+      where: target.batchId
+        ? { batchId: target.batchId, date }
+        : { buildingId: target.buildingId, date },
+      include,
+      relationLoadStrategy: 'join',
+    });
+    if (!existing) return;
+    await tx.waterConsumption.delete({ where: { id: existing.id } });
+    await this.log(tx, ctx, 'DELETE', existing, toItem(existing));
   }
 
   create(ctx: RequestContext, dto: CreateWaterDto): Promise<WaterItem> {

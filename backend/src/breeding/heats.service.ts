@@ -13,7 +13,7 @@ import { EXITED } from '../common/messages';
 import type { ListQueryDto } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
 import { PrismaService } from '../prisma/prisma.service';
-import type { CreateHeatDto } from './dto/breeding.dto';
+import type { CreateHeatDto, UpdateHeatDto } from './dto/breeding.dto';
 
 export interface HeatItem {
   id: string;
@@ -103,6 +103,50 @@ export class HeatsService {
     });
   }
 
+  /** Corrects a heat of an animal still on the farm, within the same date rules as the creation. */
+  update(
+    ctx: RequestContext,
+    animalId: string,
+    heatId: string,
+    dto: UpdateHeatDto,
+  ): Promise<HeatItem> {
+    return this.prisma.$transaction(async (tx) => {
+      await lockRow(tx, 'Animal', animalId, ctx.farmIds);
+      const animal = await this.animal(ctx, animalId, tx);
+      if (!['ACTIF', 'GESTANTE', 'ALLAITANTE'].includes(animal.status)) {
+        throw new ConflictException(EXITED);
+      }
+      const heat = await tx.heat.findFirst({
+        where: { id: heatId, animalId, farmId: { in: ctx.farmIds } },
+      });
+      if (!heat) throw new NotFoundException('Chaleur introuvable');
+      let date: Date | undefined;
+      if (dto.date) {
+        date = requireDay(dto.date);
+        assertNotFuture(date);
+        if (animal.birthDate && date < animal.birthDate) {
+          throw new BadRequestException(
+            "La date est antérieure à la naissance de l'animal",
+          );
+        }
+      }
+      const updated = await tx.heat.update({
+        where: { id: heatId },
+        data: { date, note: dto.note },
+      });
+      await this.log(
+        tx,
+        ctx,
+        'UPDATE',
+        heatId,
+        animal.tag,
+        toItem(heat),
+        toItem(updated),
+      );
+      return toItem(updated);
+    });
+  }
+
   remove(ctx: RequestContext, animalId: string, heatId: string): Promise<void> {
     return this.prisma.$transaction(async (tx) => {
       await lockRow(tx, 'Animal', animalId, ctx.farmIds);
@@ -119,7 +163,7 @@ export class HeatsService {
   private log(
     tx: Parameters<AuditService['log']>[1],
     ctx: RequestContext,
-    action: 'CREATE' | 'DELETE',
+    action: 'CREATE' | 'UPDATE' | 'DELETE',
     recordId: string,
     tag: string,
     before?: HeatItem,

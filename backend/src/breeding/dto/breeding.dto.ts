@@ -112,6 +112,20 @@ export class FailBreedingDto {
   note?: string;
 }
 
+export class UpdateHeatDto {
+  @ApiPropertyOptional({ example: '2026-11-02' })
+  @IsOptional()
+  @IsDay()
+  date?: string;
+
+  @ApiPropertyOptional({ nullable: true })
+  @IsOptional()
+  @Trim()
+  @IsString({ message: 'La note est invalide' })
+  @MaxLength(1000, { message: 'La note est trop longue' })
+  note?: string | null;
+}
+
 export class CreateHeatDto {
   @ApiProperty({ example: '2026-11-02' })
   @IsDay()

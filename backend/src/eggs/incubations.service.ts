@@ -11,6 +11,7 @@ import type { IncubationStatus } from '../generated/prisma/enums';
 import { BatchesService } from '../herd/batches.service';
 import {
   addDays,
+  assertNotBeforeEntry,
   assertNotFuture,
   formatDay,
   formatDayOrNull,
@@ -38,6 +39,7 @@ const INCUBATION_DAYS = 21;
 const NOT_FOUND = 'Incubation introuvable';
 export const FINISHED = 'Cette incubation est terminée';
 const BEFORE_START = "La date est antérieure au début de l'incubation";
+const BEFORE_CANDLING = 'La date est antérieure au mirage';
 const STATUSES: IncubationStatus[] = ['EN_COURS', 'ECLOSE', 'ECHEC'];
 const SORTABLE = ['startDate', 'code', 'expectedHatchDate', 'status'];
 
@@ -124,6 +126,24 @@ export class IncubationsService {
     };
   }
 
+  /** Per-status totals over the whole scope, whatever the search or page. */
+  async statusCounts(
+    ctx: RequestContext,
+  ): Promise<Record<IncubationStatus, number>> {
+    const groups = await this.prisma.incubation.groupBy({
+      by: ['status'],
+      where: { farmId: { in: ctx.farmIds } },
+      _count: { _all: true },
+    });
+    const counts: Record<IncubationStatus, number> = {
+      EN_COURS: 0,
+      ECLOSE: 0,
+      ECHEC: 0,
+    };
+    for (const g of groups) counts[g.status] = g._count._all;
+    return counts;
+  }
+
   async get(ctx: RequestContext, id: string): Promise<IncubationItem> {
     const row = await this.prisma.incubation.findFirst({
       where: { id, farmId: { in: ctx.farmIds } },
@@ -148,12 +168,19 @@ export class IncubationsService {
     if (row.status !== 'EN_COURS') throw new ConflictException(FINISHED);
   }
 
-  private async assertSource(tx: Tx, farmId: string, id: string) {
+  /** The source lot lays eggs, is in the farm, and entered before the incubation started. */
+  private async assertSource(
+    tx: Tx,
+    farmId: string,
+    id: string,
+    startDate: Date,
+  ) {
     const batch = await tx.animalBatch.findFirst({
       where: { id, farmId, type: { in: ['PONDEUSE', 'REPRODUCTEUR'] } },
-      select: { id: true },
+      select: { id: true, entryDate: true },
     });
     if (!batch) throw new BadRequestException('Lot source invalide');
+    assertNotBeforeEntry(batch.entryDate, startDate);
   }
 
   private nextCode(tx: Tx, farmId: string, start: Date) {
@@ -204,8 +231,9 @@ export class IncubationsService {
       if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
       const startDate = requireDay(dto.startDate);
       assertNotFuture(startDate);
-      if (dto.sourceBatchId)
-        await this.assertSource(tx, farmId, dto.sourceBatchId);
+      if (dto.sourceBatchId) {
+        await this.assertSource(tx, farmId, dto.sourceBatchId, startDate);
+      }
       const code = dto.code ?? (await this.nextCode(tx, farmId, startDate));
       const created = await orConflict(
         () =>
@@ -253,8 +281,9 @@ export class IncubationsService {
           'Les œufs fertiles dépassent les œufs mis en incubation',
         );
       }
-      if (dto.sourceBatchId) {
-        await this.assertSource(tx, row.farmId, dto.sourceBatchId);
+      const sourceBatchId = dto.sourceBatchId ?? row.sourceBatchId;
+      if (sourceBatchId && (dto.sourceBatchId || dto.startDate)) {
+        await this.assertSource(tx, row.farmId, sourceBatchId, startDate);
       }
       const updated = await tx.incubation.update({
         where: { id },
@@ -337,6 +366,9 @@ export class IncubationsService {
       const date = requireDay(dto.date);
       assertNotFuture(date);
       if (date < row.startDate) throw new BadRequestException(BEFORE_START);
+      if (row.candlingDate && date < row.candlingDate) {
+        throw new BadRequestException(BEFORE_CANDLING);
+      }
       const limit = row.fertileEggs ?? row.eggsSet;
       if (dto.chicksHatched > limit) {
         throw new BadRequestException(
@@ -357,7 +389,7 @@ export class IncubationsService {
             entryDate: dto.date,
             initialCount: dto.chicksHatched,
           },
-          { tx },
+          { tx, source: { type: 'HATCH', id } },
         );
         chickBatchId = batch.id;
       }

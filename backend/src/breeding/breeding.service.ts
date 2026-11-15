@@ -9,19 +9,16 @@ import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
 import type { BreedingStatus } from '../generated/prisma/enums';
 import { BatchesService } from '../herd/batches.service';
-import {
-  addDays,
-  assertNotFuture,
-  formatDay,
-  formatDayOrNull,
-  requireDay,
-  signedDaysBetween,
-  today,
-} from '../common/days';
+import { addDays, assertNotFuture, requireDay } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import { EXITED } from '../common/messages';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import type { ExportColumn } from '../listing/export';
+import {
+  breedingInclude,
+  type BreedingItem,
+  toBreedingItem,
+} from './breeding-item';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { ratio } from '../indicators/indicators';
 import { orderBy } from '../listing/list-query.dto';
@@ -61,37 +58,6 @@ const SORTABLE = [
   'createdAt',
 ];
 
-const include = {
-  sow: { select: { tag: true } },
-  boar: { select: { tag: true } },
-} satisfies Prisma.BreedingRecordInclude;
-type Row = Prisma.BreedingRecordGetPayload<{ include: typeof include }>;
-
-export interface BreedingItem {
-  id: string;
-  sowId: string;
-  sowTag: string;
-  /** Boar tag, or `IA {semence}`. */
-  sire: string;
-  method: Row['method'];
-  boarId: string | null;
-  semenLabel: string | null;
-  serviceDate: string;
-  expectedFarrowingDate: string;
-  farrowingDate: string | null;
-  bornTotal: number | null;
-  bornAlive: number | null;
-  stillborn: number | null;
-  litterBatchId: string | null;
-  weaningDate: string | null;
-  weanedCount: number | null;
-  failureDate: string | null;
-  note: string | null;
-  status: BreedingStatus;
-  /** Expected farrowing − today while in gestation (negative when overdue), else null. */
-  daysToFarrowing: number | null;
-}
-
 export const BREEDING_COLUMNS: ExportColumn<BreedingItem>[] = [
   { header: 'Truie', value: (b) => b.sowTag },
   { header: 'Verrat / IA', value: (b) => b.sire },
@@ -102,34 +68,6 @@ export const BREEDING_COLUMNS: ExportColumn<BreedingItem>[] = [
   { header: 'Statut', value: (b) => STATUS_LABEL[b.status] },
   { header: 'Mise bas prévue', value: (b) => b.expectedFarrowingDate },
 ];
-
-export function toItem(r: Row): BreedingItem {
-  return {
-    id: r.id,
-    sowId: r.sowId,
-    sowTag: r.sow.tag,
-    sire: r.boar ? r.boar.tag : `IA ${r.semenLabel ?? ''}`.trim(),
-    method: r.method,
-    boarId: r.boarId,
-    semenLabel: r.semenLabel,
-    serviceDate: formatDay(r.serviceDate),
-    expectedFarrowingDate: formatDay(r.expectedFarrowingDate),
-    farrowingDate: formatDayOrNull(r.farrowingDate),
-    bornTotal: r.bornTotal,
-    bornAlive: r.bornAlive,
-    stillborn: r.stillborn,
-    litterBatchId: r.litterBatchId,
-    weaningDate: formatDayOrNull(r.weaningDate),
-    weanedCount: r.weanedCount,
-    failureDate: formatDayOrNull(r.failureDate),
-    note: r.note,
-    status: r.status,
-    daysToFarrowing:
-      r.status === 'GESTATION'
-        ? signedDaysBetween(today(), r.expectedFarrowingDate)
-        : null,
-  };
-}
 
 const average = (values: number[]): number | null =>
   ratio(
@@ -161,11 +99,11 @@ export class BreedingService {
         (
           await this.prisma.breedingRecord.findMany({
             where,
-            include,
+            include: breedingInclude,
             orderBy: [order, { id: 'asc' }],
             ...range,
           })
-        ).map(toItem),
+        ).map(toBreedingItem),
       count: () => this.prisma.breedingRecord.count({ where }),
     };
   }
@@ -198,10 +136,10 @@ export class BreedingService {
     if (!animal) throw new NotFoundException('Animal introuvable');
     const rows = await this.prisma.breedingRecord.findMany({
       where: { sowId: animalId },
-      include,
+      include: breedingInclude,
       orderBy: [{ serviceDate: 'desc' }, { id: 'asc' }],
     });
-    const records = rows.map(toItem);
+    const records = rows.map(toBreedingItem);
     const litters = records.filter((r) => r.farrowingDate !== null);
     return {
       records,
@@ -272,7 +210,7 @@ export class BreedingService {
     await lockRow(tx, 'BreedingRecord', id);
     const row = await tx.breedingRecord.findFirst({
       where: { id, farmId: { in: ctx.farmIds } },
-      include,
+      include: breedingInclude,
     });
     if (!row) throw new NotFoundException(NOT_FOUND);
     const sow = await tx.animal.findUniqueOrThrow({ where: { id: row.sowId } });
@@ -316,8 +254,11 @@ export class BreedingService {
   }
 
   private async reload(tx: Tx, id: string): Promise<BreedingItem> {
-    return toItem(
-      await tx.breedingRecord.findUniqueOrThrow({ where: { id }, include }),
+    return toBreedingItem(
+      await tx.breedingRecord.findUniqueOrThrow({
+        where: { id },
+        include: breedingInclude,
+      }),
     );
   }
 
@@ -398,11 +339,11 @@ export class BreedingService {
               serviceDate,
               expectedFarrowingDate: addDays(serviceDate, days),
             },
-            include,
+            include: breedingInclude,
           }),
         'Cette truie est déjà gestante ou allaitante',
       );
-      const item = toItem(created);
+      const item = toBreedingItem(created);
       await this.log(tx, ctx, 'CREATE', item, undefined, item);
       return item;
     });
@@ -432,7 +373,7 @@ export class BreedingService {
           expectedFarrowingDate: addDays(serviceDate, days),
         },
       });
-      const before = toItem(row);
+      const before = toBreedingItem(row);
       const after = await this.reload(tx, id);
       await this.log(tx, ctx, 'UPDATE', after, before, after);
       return after;
@@ -445,7 +386,7 @@ export class BreedingService {
       if (row.status !== 'GESTATION') throw new ConflictException(NOT_PREGNANT);
       await tx.breedingRecord.delete({ where: { id } });
       await this.moveSow(tx, row.sowId, 'GESTANTE', { status: 'ACTIF' });
-      const item = toItem(row);
+      const item = toBreedingItem(row);
       await this.log(tx, ctx, 'DELETE', item, item);
     });
   }
@@ -487,7 +428,11 @@ export class BreedingService {
             entryDate: dto.date,
             initialCount: dto.bornAlive,
           },
-          { tx, motherAnimalId: sow.id },
+          {
+            tx,
+            motherAnimalId: sow.id,
+            source: { type: 'FARROWING', id },
+          },
         );
         litterBatchId = batch.id;
       }
@@ -504,7 +449,7 @@ export class BreedingService {
       });
       if (count === 0) throw new ConflictException(STEP_DONE);
       const after = await this.reload(tx, id);
-      await this.log(tx, ctx, 'UPDATE', after, toItem(row), after);
+      await this.log(tx, ctx, 'UPDATE', after, toBreedingItem(row), after);
       return after;
     });
   }
@@ -525,7 +470,10 @@ export class BreedingService {
       }
       if (row.litterBatchId) {
         // Serialises with any other change to the litter before its count is read.
-        await this.ledger.lockBatch(tx, row.litterBatchId, [row.farmId]);
+        // A closed litter takes no weaning, whether or not deaths are implied.
+        this.ledger.assertOpen(
+          await this.ledger.lockBatch(tx, row.litterBatchId, [row.farmId]),
+        );
         const alive =
           (await this.ledger.liveCounts([row.litterBatchId], date, tx)).get(
             row.litterBatchId,
@@ -546,6 +494,7 @@ export class BreedingService {
             sourceType: 'BREEDING',
             sourceId: id,
             userId: ctx.user.id,
+            audit: { ctx },
           });
         }
       } else if (dto.weanedCount > 0) {
@@ -565,7 +514,7 @@ export class BreedingService {
       // A sow that died or left while nursing stays as she is.
       await this.moveSow(tx, row.sowId, 'ALLAITANTE', { status: 'ACTIF' });
       const after = await this.reload(tx, id);
-      await this.log(tx, ctx, 'UPDATE', after, toItem(row), after);
+      await this.log(tx, ctx, 'UPDATE', after, toBreedingItem(row), after);
       return after;
     });
   }
@@ -592,7 +541,7 @@ export class BreedingService {
       if (count === 0) throw new ConflictException(STEP_DONE);
       await this.moveSow(tx, row.sowId, 'GESTANTE', { status: 'ACTIF' });
       const after = await this.reload(tx, id);
-      await this.log(tx, ctx, 'UPDATE', after, toItem(row), after);
+      await this.log(tx, ctx, 'UPDATE', after, toBreedingItem(row), after);
       return after;
     });
   }

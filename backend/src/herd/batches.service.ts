@@ -8,6 +8,7 @@ import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
 import type {
+  BatchSourceType,
   BatchStatus,
   BatchType,
   Species,
@@ -18,6 +19,7 @@ import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { mortalityRate } from '../indicators/indicators';
 import { nextBatchCode } from './batch-code';
+import { BatchHistoryRegistry } from './batch-history';
 import {
   assertNotFuture,
   BEFORE_ENTRY,
@@ -37,7 +39,7 @@ import {
   BATCH_NOT_FOUND,
   HerdLedgerService,
 } from './herd-ledger.service';
-import { TYPES_BY_SPECIES } from './species';
+import { assertBuildingFits, TYPES_BY_SPECIES } from './species';
 
 type Tx = Prisma.TransactionClient;
 
@@ -104,6 +106,8 @@ export const BATCH_COLUMNS: ExportColumn<BatchItem>[] = [
 
 const SORTABLE = ['code', 'entryDate', 'initialCount', 'status', 'createdAt'];
 const HISTORY = 'Ce lot a un historique ; clôturez-le plutôt';
+const LINKED =
+  "Ce lot provient d'une mise bas ou d'une éclosion ; son effectif et sa date d'entrée ne sont pas modifiables";
 
 @Injectable()
 export class BatchesService {
@@ -111,6 +115,7 @@ export class BatchesService {
     private readonly prisma: PrismaService,
     private readonly ledger: HerdLedgerService,
     private readonly audit: AuditService,
+    private readonly history: BatchHistoryRegistry,
   ) {}
 
   private scope(ctx: RequestContext): Prisma.AnimalBatchWhereInput {
@@ -275,17 +280,23 @@ export class BatchesService {
   /**
    * Creates a batch. Pass `opts.tx` to create it inside the caller's transaction
    * (hatching, farrowing): then the audit row and the capacity check share it.
-   * `opts.motherAnimalId` (the sow of a farrowing) is not part of the public body.
+   * `opts.motherAnimalId` (the sow of a farrowing) and `opts.source` (what
+   * created the batch: a hatch or a farrowing, with the incubation or
+   * breeding record id) are not part of the public body.
    */
   create(
     ctx: RequestContext,
     dto: CreateBatchDto,
-    opts: { tx?: Tx; motherAnimalId?: string } = {},
+    opts: {
+      tx?: Tx;
+      motherAnimalId?: string;
+      source?: { type: BatchSourceType; id: string };
+    } = {},
   ): Promise<BatchItem> {
-    const { tx, motherAnimalId } = opts;
-    if (tx) return this.createIn(tx, ctx, dto, motherAnimalId);
+    const { tx, motherAnimalId, source } = opts;
+    if (tx) return this.createIn(tx, ctx, dto, motherAnimalId, source);
     return this.prisma.$transaction((t) =>
-      this.createIn(t, ctx, dto, motherAnimalId),
+      this.createIn(t, ctx, dto, motherAnimalId, source),
     );
   }
 
@@ -294,6 +305,7 @@ export class BatchesService {
     ctx: RequestContext,
     dto: CreateBatchDto,
     motherAnimalId?: string,
+    source?: { type: BatchSourceType; id: string },
   ): Promise<BatchItem> {
     const farmId = ctx.farmId;
     if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
@@ -304,11 +316,12 @@ export class BatchesService {
     assertNotFuture(entryDate);
     const building = await tx.building.findFirst({
       where: { id: dto.buildingId, farmId },
-      select: { id: true },
+      select: { id: true, type: true },
     });
     if (!building) {
       throw new BadRequestException('Bâtiment invalide pour cette ferme');
     }
+    assertBuildingFits(building, dto.species);
     await this.assertRefs(tx, ctx, dto.species, dto);
     const code =
       dto.code ?? (await nextBatchCode(tx, farmId, dto.type, entryDate));
@@ -328,6 +341,8 @@ export class BatchesService {
             purchasePrice: dto.purchasePrice,
             responsibleId: dto.responsibleId,
             motherAnimalId,
+            sourceType: source?.type,
+            sourceId: source?.id,
             notes: dto.notes,
           },
           include,
@@ -369,15 +384,25 @@ export class BatchesService {
         : batch.entryDate;
       if (dto.entryDate) assertNotFuture(entryDate);
       const initialCount = dto.initialCount ?? batch.initialCount;
-      if (
-        entryDate.getTime() !== batch.entryDate.getTime() ||
-        initialCount !== batch.initialCount
-      ) {
+      const dateMoved = entryDate.getTime() !== batch.entryDate.getTime();
+      const countMoved = initialCount !== batch.initialCount;
+      if ((dateMoved || countMoved) && batch.sourceType !== null) {
+        // A batch a hatch or a farrowing created follows its source.
+        throw new BadRequestException(LINKED);
+      }
+      if (dateMoved || countMoved) {
         await this.ledger.assertConsistent(tx, id, initialCount, entryDate);
         const early = await tx.weighing.count({
           where: { batchId: id, date: { lt: entryDate } },
         });
         if (early > 0) throw new BadRequestException(BEFORE_ENTRY);
+      }
+      if (dateMoved) {
+        // Egg records, feed and water dated before the new entry stay behind.
+        const earliest = await this.history.earliestDate(tx, id);
+        if (earliest && earliest < entryDate) {
+          throw new BadRequestException(BEFORE_ENTRY);
+        }
       }
       await this.assertRefs(tx, ctx, batch.species, dto);
       const updated = await tx.animalBatch.update({
@@ -471,6 +496,18 @@ export class BatchesService {
         }
       } else if (batch.status === 'EN_COURS') {
         throw new ConflictException("Ce lot n'est pas clôturé");
+      }
+      if (status === 'CLOTURE') {
+        // Closing takes the lot out of every headcount: its animals must have
+        // left through an event first, or they would vanish without a trace.
+        const alive = (await this.ledger.liveCounts([id], undefined, tx)).get(
+          id,
+        );
+        if (alive) {
+          throw new ConflictException(
+            `Ce lot compte encore ${alive} animaux ; enregistrez leur sortie (vente, réforme, mortalité) avant de le clôturer`,
+          );
+        }
       }
       const before = (await this.toItems([await this.rowOf(tx, id)], tx))[0];
       const updated = await tx.animalBatch.update({

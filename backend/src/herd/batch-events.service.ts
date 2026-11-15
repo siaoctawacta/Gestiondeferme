@@ -1,17 +1,18 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
-import type { BatchEvent, Prisma } from '../generated/prisma/client';
-import type { BatchEventType } from '../generated/prisma/enums';
+import type { Prisma } from '../generated/prisma/client';
 import type { ListQueryDto } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
 import { PrismaService } from '../prisma/prisma.service';
+import { BatchEventItem, toEventItem } from './batch-event-item';
 import { BatchesService, BatchItem } from './batches.service';
-import { formatDay, requireDay } from '../common/days';
+import { requireDay } from '../common/days';
 import type {
   CreateEventDto,
   TransferDto,
@@ -20,31 +21,8 @@ import type {
 import { auditHerd } from './herd-audit';
 import { HerdLedgerService } from './herd-ledger.service';
 
-export interface BatchEventItem {
-  id: string;
-  batchId: string;
-  date: string;
-  type: BatchEventType;
-  quantity: number;
-  cause: string | null;
-  note: string | null;
-  relatedBatchId: string | null;
-  createdById: string;
-  createdAt: string;
-}
-
-const toItem = (e: BatchEvent): BatchEventItem => ({
-  id: e.id,
-  batchId: e.batchId,
-  date: formatDay(e.date),
-  type: e.type,
-  quantity: e.quantity,
-  cause: e.cause,
-  note: e.note,
-  relatedBatchId: e.relatedBatchId,
-  createdById: e.createdById,
-  createdAt: e.createdAt.toISOString(),
-});
+export const FROM_ELSEWHERE =
+  "Cet événement provient d'une autre opération ; corrigez l'opération d'origine";
 
 const MANUAL = ['MORTALITE', 'VENTE', 'REFORME', 'ENTREE', 'NAISSANCE'];
 
@@ -72,7 +50,7 @@ export class BatchEventsService {
             orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
             ...range,
           })
-        ).map(toItem),
+        ).map(toEventItem),
       () => this.prisma.batchEvent.count({ where }),
     );
   }
@@ -93,19 +71,9 @@ export class BatchEventsService {
         cause: dto.cause,
         note: dto.note,
         userId: ctx.user.id,
+        audit: { ctx },
       });
-      await auditHerd(
-        this.audit,
-        tx,
-        ctx,
-        batch.species,
-        'CREATE',
-        event.id,
-        `${batch.code} · ${event.type} ${event.quantity}`,
-        undefined,
-        toItem(event),
-      );
-      return toItem(event);
+      return toEventItem(event);
     });
   }
 
@@ -138,10 +106,10 @@ export class BatchEventsService {
         'UPDATE',
         eventId,
         `${batch.code} · ${after.type} ${after.quantity}`,
-        toItem(before),
-        toItem(after),
+        toEventItem(before),
+        toEventItem(after),
       );
-      return toItem(after);
+      return toEventItem(after);
     });
   }
 
@@ -158,12 +126,15 @@ export class BatchEventsService {
         'DELETE',
         eventId,
         `${batch.code} · ${removed.type} ${removed.quantity}`,
-        toItem(removed),
+        toEventItem(removed),
       );
     });
   }
 
-  /** The event must belong to this batch, and only hand-entered types are editable. */
+  /**
+   * The event must belong to this batch, be a hand-entered type and not come
+   * from another operation (weaning...): those are corrected at their origin.
+   */
   private async manualEvent(
     tx: Prisma.TransactionClient,
     ctx: RequestContext,
@@ -172,9 +143,10 @@ export class BatchEventsService {
   ): Promise<void> {
     const event = await tx.batchEvent.findFirst({
       where: { id: eventId, batchId, farmId: { in: ctx.farmIds } },
-      select: { type: true },
+      select: { type: true, sourceType: true },
     });
     if (!event) throw new NotFoundException('Événement introuvable');
+    if (event.sourceType !== null) throw new ConflictException(FROM_ELSEWHERE);
     if (!MANUAL.includes(event.type)) {
       throw new BadRequestException(
         'Un événement de transfert ne peut pas être modifié',

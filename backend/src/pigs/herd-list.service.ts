@@ -16,7 +16,7 @@ import {
 } from './animals.service';
 import type { HerdListQueryDto } from './dto/animal.dto';
 
-type PigCategory =
+export type PigCategory =
   AnimalCategory | Extract<BatchType, 'PORCELET' | 'ENGRAISSEMENT'>;
 
 const CATEGORY_LABEL: Record<PigCategory, string> = {
@@ -69,7 +69,10 @@ export interface HerdRow {
   kind: 'ANIMAL' | 'LOT';
   id: string;
   identifier: string;
+  /** French label (Truie, Porcelets...). */
   category: string;
+  /** TRUIE, VERRAT, COCHETTE, PORCELET or ENGRAISSEMENT. */
+  categoryCode: PigCategory;
   breedName: string | null;
   buildingName: string;
   birthDate: string | null;
@@ -175,6 +178,7 @@ export class HerdListService {
           id: a.id,
           identifier: a.tag,
           category: CATEGORY_LABEL[a.category],
+          categoryCode: a.category,
           breedName: a.breed?.name ?? null,
           buildingName: a.building.name,
           birthDate: a.birthDate ? formatDay(a.birthDate) : null,
@@ -193,6 +197,7 @@ export class HerdListService {
             id: l.id,
             identifier: l.code,
             category: CATEGORY_LABEL[key],
+            categoryCode: key,
             breedName: l.breed?.name ?? null,
             buildingName: l.building.name,
             birthDate: null,

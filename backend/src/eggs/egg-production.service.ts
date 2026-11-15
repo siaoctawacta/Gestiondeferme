@@ -13,6 +13,10 @@ import {
   requireDay,
 } from '../common/days';
 import { DUPLICATE } from '../common/messages';
+import {
+  BatchHistoryRegistry,
+  type BatchHistorySource,
+} from '../herd/batch-history';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import { breakageRate, layingRate } from '../indicators/indicators';
 import type { ExportColumn } from '../listing/export';
@@ -66,12 +70,25 @@ const OVER =
 const NOT_FOUND = 'Enregistrement introuvable';
 
 @Injectable()
-export class EggProductionService {
+export class EggProductionService implements BatchHistorySource {
   constructor(
     private readonly prisma: PrismaService,
     private readonly ledger: HerdLedgerService,
     private readonly audit: AuditService,
-  ) {}
+    history: BatchHistoryRegistry,
+  ) {
+    history.register(this);
+  }
+
+  /** Earliest egg record of the lot: moving the lot's entry date past it is refused. */
+  async earliestDate(tx: Tx, batchId: string): Promise<Date | null> {
+    const first = await tx.eggProduction.findFirst({
+      where: { batchId },
+      orderBy: { date: 'asc' },
+      select: { date: true },
+    });
+    return first?.date ?? null;
+  }
 
   private async toItems(
     rows: Row[],

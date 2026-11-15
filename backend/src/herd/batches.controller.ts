@@ -15,7 +15,6 @@ import type { Response } from 'express';
 import { AccessService } from '../access/access.service';
 import { AnyAuthenticated, Ctx } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
-import type { Action } from '../access/permissions';
 import { sendList } from '../listing/list-helpers';
 import { ListQueryDto } from '../listing/list-query.dto';
 import { BatchPerformanceRegistry } from './batch-performance';
@@ -43,10 +42,21 @@ export class BatchesController {
     private readonly performance: BatchPerformanceRegistry,
   ) {}
 
-  /** Loads the batch's species (404 when out of scope), then checks the permission for it. */
-  private async guard(ctx: RequestContext, id: string, action: Action) {
+  /**
+   * Loads the batch's species (404 when out of scope), then checks the
+   * permission for it: `read`, `master` (lots as master data) or `daily`
+   * (entries on a lot), see `MASTER_WRITE` / `DAILY_WRITE`.
+   */
+  private async guard(
+    ctx: RequestContext,
+    id: string,
+    kind: 'read' | 'master' | 'daily',
+  ) {
     const species = await this.batches.speciesOf(ctx, id);
-    this.access.assertCan(ctx, speciesModule(species), action);
+    const module = speciesModule(species);
+    if (kind === 'master') this.access.assertMaster(ctx, module);
+    else if (kind === 'daily') this.access.assertDaily(ctx, module);
+    else this.access.assertCan(ctx, module, 'read');
   }
 
   @Get()
@@ -74,7 +84,7 @@ export class BatchesController {
   @Post()
   @AnyAuthenticated()
   create(@Ctx() ctx: RequestContext, @Body() dto: CreateBatchDto) {
-    this.access.assertCan(ctx, speciesModule(dto.species), 'create');
+    this.access.assertMaster(ctx, speciesModule(dto.species));
     return this.batches.create(ctx, dto);
   }
 
@@ -93,14 +103,14 @@ export class BatchesController {
     @Param('id') id: string,
     @Body() dto: UpdateBatchDto,
   ) {
-    await this.guard(ctx, id, 'update');
+    await this.guard(ctx, id, 'master');
     return this.batches.update(ctx, id, dto);
   }
 
   @Delete(':id')
   @AnyAuthenticated()
   async remove(@Ctx() ctx: RequestContext, @Param('id') id: string) {
-    await this.guard(ctx, id, 'delete');
+    await this.guard(ctx, id, 'master');
     await this.batches.remove(ctx, id);
   }
 
@@ -108,7 +118,7 @@ export class BatchesController {
   @HttpCode(200)
   @AnyAuthenticated()
   async close(@Ctx() ctx: RequestContext, @Param('id') id: string) {
-    await this.guard(ctx, id, 'update');
+    await this.guard(ctx, id, 'master');
     return this.batches.close(ctx, id);
   }
 
@@ -116,7 +126,7 @@ export class BatchesController {
   @HttpCode(200)
   @AnyAuthenticated()
   async reopen(@Ctx() ctx: RequestContext, @Param('id') id: string) {
-    await this.guard(ctx, id, 'update');
+    await this.guard(ctx, id, 'master');
     return this.batches.reopen(ctx, id);
   }
 
@@ -128,7 +138,7 @@ export class BatchesController {
     @Param('id') id: string,
     @Body() dto: TransferDto,
   ) {
-    await this.guard(ctx, id, 'update');
+    await this.guard(ctx, id, 'master');
     return this.events.transfer(ctx, id, dto);
   }
 
@@ -150,7 +160,7 @@ export class BatchesController {
     @Param('id') id: string,
     @Body() dto: CreateEventDto,
   ) {
-    await this.guard(ctx, id, 'create');
+    await this.guard(ctx, id, 'daily');
     return this.events.create(ctx, id, dto);
   }
 
@@ -162,7 +172,7 @@ export class BatchesController {
     @Param('eventId') eventId: string,
     @Body() dto: UpdateEventDto,
   ) {
-    await this.guard(ctx, id, 'update');
+    await this.guard(ctx, id, 'daily');
     return this.events.update(ctx, id, eventId, dto);
   }
 
@@ -173,7 +183,7 @@ export class BatchesController {
     @Param('id') id: string,
     @Param('eventId') eventId: string,
   ) {
-    await this.guard(ctx, id, 'delete');
+    await this.guard(ctx, id, 'daily');
     await this.events.remove(ctx, id, eventId);
   }
 }

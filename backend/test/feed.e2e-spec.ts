@@ -174,6 +174,19 @@ describe('Feed and water (e2e)', () => {
     ...over,
   });
 
+  /** A lot is closed once its animals have left: sells the whole lot the day before. */
+  async function sell(
+    headers: Record<string, string>,
+    id: string,
+    quantity: number,
+  ) {
+    await http()
+      .post(`/api/batches/${id}/events`)
+      .set(headers)
+      .send({ type: 'VENTE', date: daysAgo(1), quantity })
+      .expect(201);
+  }
+
   async function distribute(
     headers: Headers,
     body: Record<string, unknown>,
@@ -569,6 +582,7 @@ describe('Feed and water (e2e)', () => {
         400,
       );
       const closed = await lot(headers, { initialCount: 100 });
+      await sell(headers, closed.id, 100);
       await http()
         .post(`/api/batches/${closed.id}/close`)
         .set(headers)
@@ -812,10 +826,11 @@ describe('Feed and water (e2e)', () => {
         .set(agent.headers)
         .send({ batchId: l.id, date: daysAgo(1), liters: 10 })
         .expect(201);
+      // Daily entries are corrected and deleted with `create`: a field agent may.
       await http()
         .delete(`/api/feed-distributions/${d.id}`)
         .set(agent.headers)
-        .expect(403);
+        .expect(200);
     });
 
     it('refuses writes on a lot closed after the entry, and deletes with an audit row', async () => {
@@ -843,6 +858,7 @@ describe('Feed and water (e2e)', () => {
       const d2 = (
         await distribute(headers, { batchId: l.id, feedProductId: p.id })
       ).body as Dist;
+      await sell(headers, l.id, 100);
       await http().post(`/api/batches/${l.id}/close`).set(headers).expect(200);
       await http()
         .patch(`/api/feed-distributions/${d2.id}`)
@@ -932,6 +948,7 @@ describe('Feed and water (e2e)', () => {
         .send({ buildingId: bldB, date: daysAgo(1), liters: 5 })
         .expect(400);
       const closed = await lot(headers, { initialCount: 100 });
+      await sell(headers, closed.id, 100);
       await http()
         .post(`/api/batches/${closed.id}/close`)
         .set(headers)

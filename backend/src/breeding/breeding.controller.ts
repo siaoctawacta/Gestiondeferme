@@ -12,7 +12,12 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { Ctx, RequirePermission } from '../access/decorators';
+import {
+  Ctx,
+  RequireDaily,
+  RequireMaster,
+  RequirePermission,
+} from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import { sendList } from '../listing/list-helpers';
 import { ListQueryDto } from '../listing/list-query.dto';
@@ -24,6 +29,7 @@ import {
   FailBreedingDto,
   FarrowingDto,
   UpdateBreedingDto,
+  UpdateHeatDto,
   WeaningDto,
 } from './dto/breeding.dto';
 import { HeatsService } from './heats.service';
@@ -55,13 +61,13 @@ export class BreedingController {
   }
 
   @Post()
-  @RequirePermission('reproduction', 'create')
+  @RequireMaster('reproduction')
   create(@Ctx() ctx: RequestContext, @Body() dto: CreateBreedingDto) {
     return this.breeding.create(ctx, dto);
   }
 
   @Patch(':id')
-  @RequirePermission('reproduction', 'update')
+  @RequireMaster('reproduction')
   update(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -71,14 +77,14 @@ export class BreedingController {
   }
 
   @Delete(':id')
-  @RequirePermission('reproduction', 'delete')
+  @RequireMaster('reproduction')
   async remove(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     await this.breeding.remove(ctx, id);
   }
 
   @Post(':id/farrowing')
   @HttpCode(200)
-  @RequirePermission('reproduction', 'update')
+  @RequireMaster('reproduction')
   farrowing(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -89,7 +95,7 @@ export class BreedingController {
 
   @Post(':id/weaning')
   @HttpCode(200)
-  @RequirePermission('reproduction', 'update')
+  @RequireMaster('reproduction')
   weaning(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -100,7 +106,7 @@ export class BreedingController {
 
   @Post(':id/fail')
   @HttpCode(200)
-  @RequirePermission('reproduction', 'update')
+  @RequireMaster('reproduction')
   fail(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -130,7 +136,7 @@ export class AnimalReproductionController {
   }
 
   @Post('heats')
-  @RequirePermission('reproduction', 'create')
+  @RequireDaily('reproduction')
   createHeat(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -139,8 +145,19 @@ export class AnimalReproductionController {
     return this.heats.create(ctx, id, dto);
   }
 
+  @Patch('heats/:heatId')
+  @RequireDaily('reproduction')
+  updateHeat(
+    @Ctx() ctx: RequestContext,
+    @Param('id') id: string,
+    @Param('heatId') heatId: string,
+    @Body() dto: UpdateHeatDto,
+  ) {
+    return this.heats.update(ctx, id, heatId, dto);
+  }
+
   @Delete('heats/:heatId')
-  @RequirePermission('reproduction', 'delete')
+  @RequireDaily('reproduction')
   async removeHeat(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,

@@ -1,6 +1,6 @@
 import { execSync } from 'child_process';
 import { join } from 'path';
-import { INestApplication } from '@nestjs/common';
+import { INestApplication, ModuleMetadata } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { AppModule } from '../src/app.module';
 import { configureApp } from '../src/configure-app';
@@ -25,10 +25,12 @@ export function migrateTestDb(): void {
   migrated = true;
 }
 
-export async function createTestApp(): Promise<INestApplication> {
+export async function createTestApp(
+  extraImports: ModuleMetadata['imports'] = [],
+): Promise<INestApplication> {
   migrateTestDb();
   const moduleRef = await Test.createTestingModule({
-    imports: [AppModule],
+    imports: [AppModule, ...(extraImports ?? [])],
     controllers: [ProbeController, AuditProbeController],
     providers: [ProbeItemsService],
   }).compile();

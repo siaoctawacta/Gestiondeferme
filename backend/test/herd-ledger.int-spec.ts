@@ -1,5 +1,6 @@
 import { BadRequestException, ConflictException } from '@nestjs/common';
 import { migrateTestDb, resetDb } from './setup';
+import { AuditService } from '../src/audit/audit.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import {
   assertLedgerValid,
@@ -58,7 +59,11 @@ describe('HerdLedgerService (test database)', () => {
   beforeAll(() => {
     migrateTestDb();
     prisma = new PrismaService();
-    ledger = new HerdLedgerService(prisma, new OccupationRegistry());
+    ledger = new HerdLedgerService(
+      prisma,
+      new OccupationRegistry(),
+      new AuditService(prisma),
+    );
   });
 
   afterAll(async () => {
@@ -306,5 +311,114 @@ describe('HerdLedgerService (test database)', () => {
         await ledger.occupationByBuilding([farmId], [buildingId, target.id])
       ).get(target.id),
     ).toBe(90);
+  });
+
+  it('removes every event of a source together, replay-checked, and nothing when the history breaks', async () => {
+    const a = await batch({ initialCount: 100 });
+    const b = await batch({ initialCount: 100 });
+    const from = (id: string, sourceId: string) =>
+      prisma.$transaction((tx) =>
+        ledger.record(tx, {
+          farmId,
+          batchId: id,
+          date: day('2026-10-05'),
+          type: 'VENTE',
+          quantity: 10,
+          sourceType: 'SALE',
+          sourceId,
+          userId,
+        }),
+      );
+    await from(a.id, 'sale-1');
+    await from(b.id, 'sale-1');
+    await from(b.id, 'sale-2');
+    const removed = await prisma.$transaction((tx) =>
+      ledger.removeBySource(tx, 'SALE', 'sale-1', [farmId]),
+    );
+    expect(removed).toHaveLength(2);
+    expect((await ledger.liveCounts([a.id, b.id])).get(a.id)).toBe(100);
+    expect((await ledger.liveCounts([a.id, b.id])).get(b.id)).toBe(90);
+
+    // A reversal that would leave a later sale without animals is refused whole.
+    const c = await batch({ initialCount: 10 });
+    await prisma.$transaction((tx) =>
+      ledger.record(tx, {
+        farmId,
+        batchId: c.id,
+        date: day('2026-10-02'),
+        type: 'ENTREE',
+        quantity: 5,
+        sourceType: 'PURCHASE',
+        sourceId: 'p1',
+        userId,
+      }),
+    );
+    await record(c.id, '2026-10-03', 'VENTE', 15);
+    await expect(
+      prisma.$transaction((tx) =>
+        ledger.removeBySource(tx, 'PURCHASE', 'p1', [farmId]),
+      ),
+    ).rejects.toThrow(new BadRequestException('Effectif insuffisant'));
+    expect(await prisma.batchEvent.count({ where: { batchId: c.id } })).toBe(2);
+  });
+
+  it('removeBySource does not see another farm events', async () => {
+    const a = await batch();
+    await prisma.$transaction((tx) =>
+      ledger.record(tx, {
+        farmId,
+        batchId: a.id,
+        date: day('2026-10-05'),
+        type: 'VENTE',
+        quantity: 1,
+        sourceType: 'SALE',
+        sourceId: 's',
+        userId,
+      }),
+    );
+    const removed = await prisma.$transaction((tx) =>
+      ledger.removeBySource(tx, 'SALE', 's', [otherFarmId]),
+    );
+    expect(removed).toEqual([]);
+    expect(await prisma.batchEvent.count()).toBe(1);
+  });
+
+  it('lockBatches takes the row locks in ascending id order: [A,B] and [B,A] do not deadlock', async () => {
+    const a = await batch();
+    const b = await batch();
+    const slow = (
+      tx: Parameters<Parameters<typeof prisma.$transaction>[0]>[0],
+    ) =>
+      new Proxy(tx, {
+        get(target, prop, receiver) {
+          if (prop === '$queryRaw') {
+            return async (...args: unknown[]) => {
+              const result = await (
+                target.$queryRaw as (...a: unknown[]) => Promise<unknown>
+              )(...args);
+              await target.$executeRaw`SELECT pg_sleep(0.05)`;
+              return result;
+            };
+          }
+          return Reflect.get(target, prop, receiver) as unknown;
+        },
+      });
+    const lock = (ids: string[]) =>
+      prisma.$transaction((tx) => ledger.lockBatches(slow(tx), ids, [farmId]));
+    const results = await Promise.allSettled([
+      lock([a.id, b.id]),
+      lock([b.id, a.id]),
+      lock([a.id, b.id]),
+      lock([b.id, a.id]),
+    ]);
+    expect(results.map((r) => r.status)).toEqual([
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+      'fulfilled',
+    ]);
+    const rows = await lock([b.id, a.id]);
+    expect(rows.map((r) => r.id)).toEqual([a.id, b.id].sort());
+    await expect(lock([a.id, 'missing'])).rejects.toThrow('Lot introuvable');
   });
 });

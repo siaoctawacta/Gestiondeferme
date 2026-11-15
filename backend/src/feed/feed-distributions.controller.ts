@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Response } from 'express';
-import { Ctx, RequirePermission } from '../access/decorators';
+import { Ctx, RequirePermission, RequireDaily } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import { sendList } from '../listing/list-helpers';
 import {
@@ -48,13 +48,13 @@ export class FeedDistributionsController {
   }
 
   @Post()
-  @RequirePermission('alimentation', 'create')
+  @RequireDaily('alimentation')
   create(@Ctx() ctx: RequestContext, @Body() dto: CreateFeedDistributionDto) {
     return this.distributions.create(ctx, dto);
   }
 
   @Patch(':id')
-  @RequirePermission('alimentation', 'update')
+  @RequireDaily('alimentation')
   update(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -64,7 +64,7 @@ export class FeedDistributionsController {
   }
 
   @Delete(':id')
-  @RequirePermission('alimentation', 'delete')
+  @RequireDaily('alimentation')
   remove(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     return this.distributions.remove(ctx, id);
   }

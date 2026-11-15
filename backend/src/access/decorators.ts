@@ -5,7 +5,12 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import type { TokenStage } from './access-token';
-import type { Action, ModuleKey } from './permissions';
+import {
+  DAILY_WRITE,
+  MASTER_WRITE,
+  type Action,
+  type ModuleKey,
+} from './permissions';
 import type { Role } from './roles';
 
 export interface RequestContext {
@@ -33,6 +38,12 @@ export const AnyAuthenticated = () => SetMetadata(ANY_AUTHENTICATED_KEY, true);
 export const NoFarm = () => SetMetadata(NO_FARM_KEY, true);
 export const RequirePermission = (module: ModuleKey, action: Action) =>
   SetMetadata(PERMISSION_KEY, { module, action });
+/** Writes to master data (see `MASTER_WRITE`): `update` on the module. */
+export const RequireMaster = (module: ModuleKey) =>
+  RequirePermission(module, MASTER_WRITE);
+/** Writes to daily operations (see `DAILY_WRITE`): `create` on the module. */
+export const RequireDaily = (module: ModuleKey) =>
+  RequirePermission(module, DAILY_WRITE);
 /** Accept tokens of these stages (instead of only `full`) on this route. */
 export const AllowStage = (...stages: TokenStage[]) =>
   SetMetadata(ALLOW_STAGE_KEY, stages);

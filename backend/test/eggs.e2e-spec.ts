@@ -273,6 +273,11 @@ describe('Egg production and incubation (e2e)', () => {
 
       const closed = await lot(headers, { initialCount: 100 });
       await http()
+        .post(`/api/batches/${closed.id}/events`)
+        .set(headers)
+        .send({ type: 'VENTE', date: daysAgo(1), quantity: 100 })
+        .expect(201);
+      await http()
         .post(`/api/batches/${closed.id}/close`)
         .set(headers)
         .expect(200);

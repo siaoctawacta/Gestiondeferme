@@ -24,6 +24,12 @@ export interface MortalityLot {
   deaths: number;
   /** Days with deaths among today and yesterday. */
   recentDays: DeathDay[];
+  /**
+   * Set on a lot a farrowing created. Until it is weaned its pre-weaning loss
+   * (about one piglet in ten is normal) is followed through the breeding
+   * figures (nés vivants / sevrés), not through mortality alerts.
+   */
+  litter?: { weaned: boolean };
 }
 
 export interface Gestation {
@@ -65,6 +71,7 @@ const reaches = (part: number, whole: number, pct: number): boolean =>
  * with deaths ≥ `mortalityDailyPct` of the live count is URGENT. A lot raises
  * one alert, the URGENT one when both fire. Thresholds are compared on the
  * raw rate; the rounded one (one decimal) only appears in the text.
+ * A litter lot that is not weaned yet is skipped (see `MortalityLot.litter`).
  */
 export function mortalityAlerts(
   lots: MortalityLot[],
@@ -72,7 +79,8 @@ export function mortalityAlerts(
 ): AlertItem[] {
   const alerts: AlertItem[] = [];
   for (const lot of lots) {
-    const base = {
+    if (lot.litter && !lot.litter.weaned) continue;
+    const base: Pick<AlertItem, 'key' | 'title' | 'module'> = {
       key: `mortality:${lot.id}`,
       title: `Mortalité élevée ${lot.code}`,
       module: speciesModule(lot.species),
@@ -112,7 +120,7 @@ export function farrowingAlerts(
   for (const r of records) {
     const due = new Date(r.expectedFarrowingDate);
     const days = signedDaysBetween(start, due);
-    const base = {
+    const base: Pick<AlertItem, 'key' | 'title' | 'module'> = {
       key: `farrowing:${r.id}`,
       title: `Mise bas ${r.sowTag}`,
       module: 'reproduction',

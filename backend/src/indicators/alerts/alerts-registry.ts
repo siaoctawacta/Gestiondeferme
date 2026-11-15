@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import type { RequestContext } from '../../access/decorators';
+import { can } from '../../access/permissions';
 import {
   ALERT_LEVEL_ORDER,
   type AlertItem,
@@ -16,7 +17,11 @@ export class AlertsRegistry {
     if (!this.rules.includes(rule)) this.rules.push(rule);
   }
 
-  /** URGENT first, then by rule registration order, then by key. */
+  /**
+   * Only the alerts of modules the caller's role can read (an alert names
+   * sow tags, lot mortality, feed anomalies: data a role without the module
+   * may not see), URGENT first, then by rule registration order, then by key.
+   */
   async run(
     ctx: RequestContext,
     settings: AlertSettings,
@@ -25,7 +30,8 @@ export class AlertsRegistry {
       this.rules.map((rule) => rule(ctx, settings)),
     );
     const flat = perRule.flatMap((items, order) =>
-      [...items]
+      items
+        .filter((item) => can(ctx.user.role, item.module, 'read'))
         .sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
         .map((item) => ({ item, order })),
     );

@@ -1,4 +1,5 @@
 import { Module } from '@nestjs/common';
+import { BatchHistoryRegistry } from './batch-history';
 import { BatchPerformanceRegistry } from './batch-performance';
 import { BatchEventsService } from './batch-events.service';
 import { BatchesController } from './batches.controller';
@@ -19,6 +20,7 @@ import { WeighingsService } from './weighings.service';
   controllers: [BatchesController, BreedsController, WeighingsController],
   providers: [
     OccupationRegistry,
+    BatchHistoryRegistry,
     BatchPerformanceRegistry,
     HerdLedgerService,
     BatchesService,
@@ -28,6 +30,7 @@ import { WeighingsService } from './weighings.service';
   ],
   exports: [
     OccupationRegistry,
+    BatchHistoryRegistry,
     BatchPerformanceRegistry,
     HerdLedgerService,
     BatchesService,

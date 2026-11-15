@@ -2,6 +2,7 @@ import {
   breakageRate,
   dailyGain,
   feedConversion,
+  fertilityRate,
   hatchRate,
   layingRate,
   mortalityRate,
@@ -15,6 +16,7 @@ describe('indicators', () => {
     expect(layingRate(2480, 2850)).toBe(87);
     expect(breakageRate(42, 2480)).toBe(1.7);
     expect(hatchRate(260, 300)).toBe(86.7);
+    expect(fertilityRate(285, 300)).toBe(95);
     expect(dailyGain(620, 1450, 15)).toBe(55.3);
     expect(feedConversion(6200, 3500)).toBe(1.77);
     expect(occupationRate(4820, 5000)).toBe(96);

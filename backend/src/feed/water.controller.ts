@@ -9,7 +9,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { Ctx, RequirePermission } from '../access/decorators';
+import { Ctx, RequirePermission, RequireDaily } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import { FeedListQueryDto } from './dto/feed-distribution.dto';
 import { CreateWaterDto, UpdateWaterDto } from './dto/water.dto';
@@ -27,13 +27,13 @@ export class WaterController {
   }
 
   @Post()
-  @RequirePermission('alimentation', 'create')
+  @RequireDaily('alimentation')
   create(@Ctx() ctx: RequestContext, @Body() dto: CreateWaterDto) {
     return this.water.create(ctx, dto);
   }
 
   @Patch(':id')
-  @RequirePermission('alimentation', 'update')
+  @RequireDaily('alimentation')
   update(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -43,7 +43,7 @@ export class WaterController {
   }
 
   @Delete(':id')
-  @RequirePermission('alimentation', 'delete')
+  @RequireDaily('alimentation')
   remove(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     return this.water.remove(ctx, id);
   }

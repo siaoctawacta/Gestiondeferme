@@ -4,7 +4,9 @@ import {
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
+import type { RequestContext } from '../access/decorators';
 import { lockRow } from '../common/lock-row';
+import { AuditService } from '../audit/audit.service';
 import type {
   AnimalBatch,
   BatchEvent,
@@ -12,6 +14,9 @@ import type {
 } from '../generated/prisma/client';
 import type { BatchEventType } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
+import { toEventItem } from './batch-event-item';
+import { auditHerd } from './herd-audit';
+import { assertBuildingFits } from './species';
 import { assertNotFuture, BEFORE_ENTRY } from '../common/days';
 import { OccupationRegistry, OccupationSource } from './occupation';
 
@@ -83,6 +88,12 @@ export interface RecordInput {
   sourceType?: string | null;
   sourceId?: string | null;
   userId: string;
+  /**
+   * When given, the ledger writes the event's audit row itself, in the same
+   * transaction: every caller (the events route, weaning, later sales) then
+   * audits the same way.
+   */
+  audit?: { ctx: RequestContext };
 }
 
 export interface EventPatch {
@@ -111,6 +122,7 @@ export class HerdLedgerService implements OccupationSource {
   constructor(
     private readonly prisma: PrismaService,
     registry: OccupationRegistry,
+    private readonly audit: AuditService,
   ) {
     registry.register(this);
     this.registry = registry;
@@ -133,6 +145,24 @@ export class HerdLedgerService implements OccupationSource {
     });
     if (!batch) throw new NotFoundException(BATCH_NOT_FOUND);
     return batch;
+  }
+
+  /**
+   * Locks several batches, always in ascending id order whatever the order of
+   * `batchIds`, so two transactions touching the same lots (an invoice with
+   * several lots) cannot deadlock. Returns the rows in that order; a batch
+   * outside `farmIds` (or missing) is a 404 and nothing stays locked.
+   */
+  async lockBatches(
+    tx: Tx,
+    batchIds: string[],
+    farmIds?: string[],
+  ): Promise<AnimalBatch[]> {
+    const rows: AnimalBatch[] = [];
+    for (const id of [...new Set(batchIds)].sort()) {
+      rows.push(await this.lockBatch(tx, id, farmIds));
+    }
+    return rows;
   }
 
   /** Same lock on the building row, taken before an occupation check so two batches cannot overfill it together. */
@@ -228,6 +258,19 @@ export class HerdLedgerService implements OccupationSource {
     if (EVENT_SIGN[input.type] > 0) {
       await this.assertCapacity(tx, batch.farmId, batch.buildingId);
     }
+    if (input.audit) {
+      await auditHerd(
+        this.audit,
+        tx,
+        input.audit.ctx,
+        batch.species,
+        'CREATE',
+        event.id,
+        `${batch.code} · ${event.type} ${event.quantity}`,
+        undefined,
+        toEventItem(event),
+      );
+    }
     return event;
   }
 
@@ -292,6 +335,58 @@ export class HerdLedgerService implements OccupationSource {
     return event;
   }
 
+  /**
+   * Removes every event a later module wrote for one operation (a sale, a
+   * treatment...), to reverse it. Each affected batch's history is replayed
+   * without them first (400 when a later event would no longer fit; nothing is
+   * removed then), batches are locked in id order, and a removal that puts
+   * animals back is capacity-checked. Returns the removed events.
+   */
+  async removeBySource(
+    tx: Tx,
+    sourceType: string,
+    sourceId: string,
+    farmIds?: string[],
+  ): Promise<BatchEvent[]> {
+    const events = await tx.batchEvent.findMany({
+      where: {
+        sourceType,
+        sourceId,
+        ...(farmIds ? { farmId: { in: farmIds } } : {}),
+      },
+    });
+    if (events.length === 0) return [];
+    const batches = await this.lockBatches(
+      tx,
+      events.map((e) => e.batchId),
+      farmIds,
+    );
+    const removedIds = events.map((e) => e.id);
+    for (const batch of batches) {
+      this.assertOpen(batch);
+      const left = await tx.batchEvent.findMany({
+        where: { batchId: batch.id, id: { notIn: removedIds } },
+        select: {
+          id: true,
+          date: true,
+          createdAt: true,
+          type: true,
+          quantity: true,
+        },
+      });
+      assertLedgerValid(batch.initialCount, batch.entryDate, left);
+    }
+    await tx.batchEvent.deleteMany({ where: { id: { in: removedIds } } });
+    for (const batch of batches) {
+      if (
+        events.some((e) => e.batchId === batch.id && EVENT_SIGN[e.type] < 0)
+      ) {
+        await this.assertCapacity(tx, batch.farmId, batch.buildingId);
+      }
+    }
+    return events;
+  }
+
   private async findEvent(
     tx: Tx,
     eventId: string,
@@ -320,11 +415,12 @@ export class HerdLedgerService implements OccupationSource {
     }
     const target = await tx.building.findFirst({
       where: { id: input.toBuildingId, farmId: batch.farmId },
-      select: { id: true },
+      select: { id: true, type: true },
     });
     if (!target) {
       throw new BadRequestException('Bâtiment invalide pour cette ferme');
     }
+    assertBuildingFits(target, batch.species);
     if (target.id === batch.buildingId) {
       throw new BadRequestException('Le lot est déjà dans ce bâtiment');
     }

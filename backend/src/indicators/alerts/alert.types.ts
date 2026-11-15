@@ -1,4 +1,5 @@
 import type { RequestContext } from '../../access/decorators';
+import type { ModuleKey } from '../../access/permissions';
 
 export const ALERT_LEVEL_ORDER = ['URGENT', 'A_VOIR'] as const;
 export type AlertLevel = (typeof ALERT_LEVEL_ORDER)[number];
@@ -9,8 +10,8 @@ export interface AlertItem {
   title: string;
   detail: string;
   level: AlertLevel;
-  /** Permission module the alert belongs to. */
-  module: string;
+  /** Permission module the alert belongs to: only roles that can read it see the alert. */
+  module: ModuleKey;
 }
 
 /** Thresholds read once per request from the organisation's settings. */

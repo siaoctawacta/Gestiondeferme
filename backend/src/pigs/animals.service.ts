@@ -15,7 +15,13 @@ import type {
 import { assertNotFuture, formatDay, requireDay } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import { EXITED } from '../common/messages';
+import {
+  breedingInclude,
+  type BreedingRow,
+  toBreedingItem,
+} from '../breeding/breeding-item';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
+import { assertBuildingFits } from '../herd/species';
 import { OccupationRegistry, OccupationSource } from '../herd/occupation';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { ListQueryDto, orderBy } from '../listing/list-query.dto';
@@ -28,6 +34,7 @@ import type {
   CreateAnimalWeighingDto,
   ExitAnimalDto,
   UpdateAnimalDto,
+  UpdateAnimalWeighingDto,
 } from './dto/animal.dto';
 
 type Tx = Prisma.TransactionClient;
@@ -36,6 +43,9 @@ export const NOT_FOUND = 'Animal introuvable';
 export const PREGNANT_OR_NURSING = 'Cette truie est gestante ou allaitante';
 const BEFORE_BIRTH = "La date est antérieure à la naissance de l'animal";
 const HISTORY = 'Cet animal a un historique ; déclarez sa sortie plutôt';
+const NOT_EXITED = "Cet animal n'est pas sorti du cheptel";
+const RECORDED_AFTER_EXIT =
+  'Des données ont été enregistrées après la sortie de cet animal';
 
 /** Statuses of an animal that is still on the farm (and so housed in its building). */
 export const LIVE_STATUSES: AnimalStatus[] = [
@@ -91,6 +101,18 @@ export interface AnimalWeighingItem {
 }
 
 const SORTABLE = ['tag', 'birthDate', 'status', 'createdAt'];
+
+const toWeighingItem = (w: {
+  id: string;
+  animalId: string;
+  date: Date;
+  weightKg: Prisma.Decimal;
+}): AnimalWeighingItem => ({
+  id: w.id,
+  animalId: w.animalId,
+  date: formatDay(w.date),
+  weightKg: w.weightKg.toNumber(),
+});
 
 /** Latest weight (kg) per animal. */
 export async function latestWeights(
@@ -236,14 +258,16 @@ export class AnimalsService implements OccupationSource {
     return this.load(tx, ctx, id);
   }
 
+  /** The building is in the farm and takes pigs (a poultry house does not). */
   private async assertBuilding(tx: Tx, farmId: string, buildingId: string) {
     const building = await tx.building.findFirst({
       where: { id: buildingId, farmId },
-      select: { id: true },
+      select: { id: true, type: true },
     });
     if (!building) {
       throw new BadRequestException('Bâtiment invalide pour cette ferme');
     }
+    assertBuildingFits(building, 'PORCIN');
   }
 
   private async assertRefs(
@@ -348,16 +372,7 @@ export class AnimalsService implements OccupationSource {
       }
       const [before] = await this.toItems([row], tx);
       const birthDate = this.birth(dto.birthDate);
-      if (birthDate) {
-        const early = await tx.animalWeighing.count({
-          where: { animalId: id, date: { lt: birthDate } },
-        });
-        if (early > 0) {
-          throw new BadRequestException(
-            'La date de naissance est postérieure à une pesée',
-          );
-        }
-      }
+      if (birthDate) await this.assertBornBeforeHistory(tx, row, birthDate);
       const moved =
         dto.buildingId !== undefined && dto.buildingId !== row.buildingId;
       if (moved) await this.assertBuilding(tx, row.farmId, dto.buildingId!);
@@ -385,6 +400,54 @@ export class AnimalsService implements OccupationSource {
       await this.log(tx, ctx, 'UPDATE', id, after.tag, before, after);
       return after;
     });
+  }
+
+  /** 400 when the new birth date falls after a weighing, a heat, a breeding step or the exit of the animal. */
+  private async assertBornBeforeHistory(
+    tx: Tx,
+    row: Row,
+    birthDate: Date,
+  ): Promise<void> {
+    // One query at a time: the transaction owns a single connection.
+    const weighing = await tx.animalWeighing.aggregate({
+      where: { animalId: row.id },
+      _min: { date: true },
+    });
+    const heat = await tx.heat.aggregate({
+      where: { animalId: row.id },
+      _min: { date: true },
+    });
+    const steps = await tx.breedingRecord.findMany({
+      where: { OR: [{ sowId: row.id }, { boarId: row.id }] },
+      select: {
+        serviceDate: true,
+        farrowingDate: true,
+        weaningDate: true,
+        failureDate: true,
+      },
+    });
+    const breeding = steps
+      .flatMap((b) => [
+        b.serviceDate,
+        b.farrowingDate,
+        b.weaningDate,
+        b.failureDate,
+      ])
+      .filter((d) => d !== null)
+      .reduce<Date | null>((min, d) => (!min || d < min ? d : min), null);
+    const checks: [string, Date | null][] = [
+      ['à une pesée', weighing._min.date],
+      ['à une chaleur', heat._min.date],
+      ['à un événement de reproduction', breeding],
+      ['à la date de sortie', row.exitDate],
+    ];
+    for (const [label, date] of checks) {
+      if (date && date < birthDate) {
+        throw new BadRequestException(
+          `La date de naissance est postérieure ${label}`,
+        );
+      }
+    }
   }
 
   async remove(ctx: RequestContext, id: string): Promise<void> {
@@ -419,8 +482,9 @@ export class AnimalsService implements OccupationSource {
 
   /**
    * Sale, death or culling. A pregnant or nursing sow cannot be sold or
-   * culled; a sow that dies during gestation fails her breeding record.
-   * Lock order (sow, then her breeding records) matches the breeding service.
+   * culled; a sow that dies during gestation fails her breeding record (each
+   * one audited in `reproduction`). Lock order (sow, then her breeding
+   * records) matches the breeding service.
    */
   exit(
     ctx: RequestContext,
@@ -437,29 +501,7 @@ export class AnimalsService implements OccupationSource {
       if (row.birthDate && date < row.birthDate) {
         throw new BadRequestException(BEFORE_BIRTH);
       }
-      const events = await tx.breedingRecord.findMany({
-        where: { sowId: id },
-        select: {
-          serviceDate: true,
-          farrowingDate: true,
-          weaningDate: true,
-          failureDate: true,
-        },
-      });
-      const last = events
-        .flatMap((e) => [
-          e.serviceDate,
-          e.farrowingDate,
-          e.weaningDate,
-          e.failureDate,
-        ])
-        .filter((d) => d !== null)
-        .reduce((max, d) => Math.max(max, d.getTime()), 0);
-      if (date.getTime() < last) {
-        throw new BadRequestException(
-          'La date de sortie est antérieure au dernier événement de reproduction',
-        );
-      }
+      await this.assertAfterLastRecord(tx, id, date);
       if (
         dto.reason !== 'MORT' &&
         (row.status === 'GESTANTE' || row.status === 'ALLAITANTE')
@@ -474,10 +516,18 @@ export class AnimalsService implements OccupationSource {
           orderBy: { id: 'asc' },
         });
         for (const g of gestations) await lockRow(tx, 'BreedingRecord', g.id);
-        await tx.breedingRecord.updateMany({
-          where: { sowId: id, status: 'GESTATION' },
-          data: { status: 'ECHEC', failureDate: date },
-        });
+        for (const g of gestations) {
+          const was = await tx.breedingRecord.findUniqueOrThrow({
+            where: { id: g.id },
+            include: breedingInclude,
+          });
+          const failed = await tx.breedingRecord.update({
+            where: { id: g.id },
+            data: { status: 'ECHEC', failureDate: date },
+            include: breedingInclude,
+          });
+          await this.logBreeding(tx, ctx, was, failed);
+        }
       }
       const updated = await tx.animal.update({
         where: { id },
@@ -492,6 +542,168 @@ export class AnimalsService implements OccupationSource {
       await this.log(tx, ctx, 'UPDATE', id, after.tag, before, after);
       return after;
     });
+  }
+
+  /** The exit may not predate the animal's last breeding step, weighing or heat. */
+  private async assertAfterLastRecord(
+    tx: Tx,
+    id: string,
+    date: Date,
+  ): Promise<void> {
+    const events = await tx.breedingRecord.findMany({
+      where: { sowId: id },
+      select: {
+        serviceDate: true,
+        farrowingDate: true,
+        weaningDate: true,
+        failureDate: true,
+      },
+    });
+    const last = events
+      .flatMap((e) => [
+        e.serviceDate,
+        e.farrowingDate,
+        e.weaningDate,
+        e.failureDate,
+      ])
+      .filter((d) => d !== null)
+      .reduce((max, d) => Math.max(max, d.getTime()), 0);
+    if (date.getTime() < last) {
+      throw new BadRequestException(
+        'La date de sortie est antérieure au dernier événement de reproduction',
+      );
+    }
+    const weighing = await tx.animalWeighing.aggregate({
+      where: { animalId: id },
+      _max: { date: true },
+    });
+    if (weighing._max.date && date < weighing._max.date) {
+      throw new BadRequestException(
+        'La date de sortie est antérieure à la dernière pesée',
+      );
+    }
+    const heat = await tx.heat.aggregate({
+      where: { animalId: id },
+      _max: { date: true },
+    });
+    if (heat._max.date && date < heat._max.date) {
+      throw new BadRequestException(
+        'La date de sortie est antérieure à la dernière chaleur',
+      );
+    }
+  }
+
+  /**
+   * Undoes a mistaken exit. Refused (409) when the animal is still on the farm
+   * or when anything was recorded for it after the exit date. The status goes
+   * back to ACTIF; a sow whose gestation that same exit failed (a death on the
+   * exit date) gets that record back and is GESTANTE again, and a sow with a
+   * litter still to wean is ALLAITANTE. The building capacity is checked again.
+   */
+  reinstate(ctx: RequestContext, id: string): Promise<AnimalItem> {
+    return this.prisma.$transaction(async (tx) => {
+      const row = await this.lock(tx, ctx, id);
+      if (LIVE_STATUSES.includes(row.status))
+        throw new ConflictException(NOT_EXITED);
+      const exitDate = row.exitDate;
+      if (exitDate && (await this.hasRecordAfter(tx, id, exitDate))) {
+        throw new ConflictException(RECORDED_AFTER_EXIT);
+      }
+      const [before] = await this.toItems([row], tx);
+      let status: AnimalStatus = 'ACTIF';
+      if (row.sex === 'F') {
+        const failed = exitDate
+          ? await tx.breedingRecord.findFirst({
+              where: {
+                sowId: id,
+                status: 'ECHEC',
+                failureDate: exitDate,
+                farrowingDate: null,
+              },
+              orderBy: [{ serviceDate: 'desc' }, { id: 'asc' }],
+            })
+          : null;
+        if (failed) {
+          await lockRow(tx, 'BreedingRecord', failed.id);
+          const was = await tx.breedingRecord.findUniqueOrThrow({
+            where: { id: failed.id },
+            include: breedingInclude,
+          });
+          const restored = await tx.breedingRecord.update({
+            where: { id: failed.id },
+            data: { status: 'GESTATION', failureDate: null },
+            include: breedingInclude,
+          });
+          await this.logBreeding(tx, ctx, was, restored);
+          status = 'GESTANTE';
+        } else if (
+          await tx.breedingRecord.count({
+            where: { sowId: id, status: 'MISE_BAS' },
+          })
+        ) {
+          status = 'ALLAITANTE';
+        }
+      }
+      const updated = await tx.animal.update({
+        where: { id },
+        data: { status, exitDate: null, exitReason: null },
+        include,
+      });
+      await this.ledger.assertCapacity(tx, updated.farmId, updated.buildingId);
+      const [after] = await this.toItems([updated], tx);
+      await this.log(tx, ctx, 'UPDATE', id, after.tag, before, after);
+      return after;
+    });
+  }
+
+  /** Anything recorded for the animal strictly after `date`: weighing, heat, breeding step. */
+  private async hasRecordAfter(
+    tx: Tx,
+    id: string,
+    date: Date,
+  ): Promise<boolean> {
+    const later = { gt: date };
+    const counts = [
+      await tx.animalWeighing.count({ where: { animalId: id, date: later } }),
+      await tx.heat.count({ where: { animalId: id, date: later } }),
+      await tx.breedingRecord.count({
+        where: {
+          OR: [{ sowId: id }, { boarId: id }],
+          AND: [
+            {
+              OR: [
+                { serviceDate: later },
+                { farrowingDate: later },
+                { weaningDate: later },
+                { failureDate: later },
+              ],
+            },
+          ],
+        },
+      }),
+    ];
+    return counts.some((n) => n > 0);
+  }
+
+  /** Audits a breeding record changed as a side effect of an animal operation. */
+  private logBreeding(
+    tx: Tx,
+    ctx: RequestContext,
+    before: BreedingRow,
+    after: BreedingRow,
+  ) {
+    return this.audit.log(
+      {
+        ctx,
+        module: 'reproduction',
+        action: 'UPDATE',
+        recordId: after.id,
+        label: after.sow.tag,
+        before: toBreedingItem(before),
+        after: toBreedingItem(after),
+      },
+      tx,
+    );
   }
 
   async listWeighings(ctx: RequestContext, id: string, q: ListQueryDto) {
@@ -509,12 +721,7 @@ export class AnimalsService implements OccupationSource {
             orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
             ...range,
           })
-        ).map((w): AnimalWeighingItem => ({
-          id: w.id,
-          animalId: w.animalId,
-          date: formatDay(w.date),
-          weightKg: w.weightKg.toNumber(),
-        })),
+        ).map(toWeighingItem),
       () => this.prisma.animalWeighing.count({ where }),
     );
   }
@@ -542,12 +749,7 @@ export class AnimalsService implements OccupationSource {
           weightKg: dto.weightKg,
         },
       });
-      const item: AnimalWeighingItem = {
-        id: created.id,
-        animalId: id,
-        date: formatDay(created.date),
-        weightKg: created.weightKg.toNumber(),
-      };
+      const item = toWeighingItem(created);
       await this.log(
         tx,
         ctx,
@@ -558,6 +760,87 @@ export class AnimalsService implements OccupationSource {
         item,
       );
       return item;
+    });
+  }
+
+  /** Weighing of an animal still on the farm, 404 when it is not this animal's. */
+  private async liveWeighing(
+    tx: Tx,
+    ctx: RequestContext,
+    id: string,
+    weighingId: string,
+  ) {
+    const row = await this.lock(tx, ctx, id);
+    if (!LIVE_STATUSES.includes(row.status)) {
+      throw new ConflictException(EXITED);
+    }
+    const weighing = await tx.animalWeighing.findFirst({
+      where: { id: weighingId, animalId: id, farmId: { in: ctx.farmIds } },
+    });
+    if (!weighing) throw new NotFoundException('Pesée introuvable');
+    return { row, weighing };
+  }
+
+  updateWeighing(
+    ctx: RequestContext,
+    id: string,
+    weighingId: string,
+    dto: UpdateAnimalWeighingDto,
+  ): Promise<AnimalWeighingItem> {
+    return this.prisma.$transaction(async (tx) => {
+      const { row, weighing } = await this.liveWeighing(
+        tx,
+        ctx,
+        id,
+        weighingId,
+      );
+      let date: Date | undefined;
+      if (dto.date) {
+        date = requireDay(dto.date);
+        assertNotFuture(date);
+        if (row.birthDate && date < row.birthDate) {
+          throw new BadRequestException(BEFORE_BIRTH);
+        }
+      }
+      const updated = await tx.animalWeighing.update({
+        where: { id: weighingId },
+        data: { date, weightKg: dto.weightKg },
+      });
+      const item = toWeighingItem(updated);
+      await this.log(
+        tx,
+        ctx,
+        'UPDATE',
+        weighingId,
+        `${row.tag} · pesée`,
+        toWeighingItem(weighing),
+        item,
+      );
+      return item;
+    });
+  }
+
+  removeWeighing(
+    ctx: RequestContext,
+    id: string,
+    weighingId: string,
+  ): Promise<void> {
+    return this.prisma.$transaction(async (tx) => {
+      const { row, weighing } = await this.liveWeighing(
+        tx,
+        ctx,
+        id,
+        weighingId,
+      );
+      await tx.animalWeighing.delete({ where: { id: weighingId } });
+      await this.log(
+        tx,
+        ctx,
+        'DELETE',
+        weighingId,
+        `${row.tag} · pesée`,
+        toWeighingItem(weighing),
+      );
     });
   }
 

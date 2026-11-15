@@ -67,6 +67,7 @@ describe('Pig herd (e2e)', () => {
   let bldA: string; // capacity 500
   let bldSmall: string; // capacity 3
   let bldB: string;
+  let bldPoultry: string; // a poultry house: pigs may not live there
 
   const http = () => request(app.getHttpServer() as App);
 
@@ -100,13 +101,15 @@ describe('Pig herd (e2e)', () => {
       siteId: string,
       name: string,
       capacity: number,
+      type: 'PORCIN' | 'AVICOLE' = 'PORCIN',
     ) =>
       prisma.building
-        .create({ data: { farmId, siteId, name, type: 'PORCIN', capacity } })
+        .create({ data: { farmId, siteId, name, type, capacity } })
         .then((b) => b.id);
     bldA = await mk(farmA, siteA.id, 'Porcherie 1', 500);
     bldSmall = await mk(farmA, siteA.id, 'Quarantaine', 3);
     bldB = await mk(farmB, siteB.id, 'Porcherie B', 500);
+    bldPoultry = await mk(farmA, siteA.id, 'Poulailler', 500, 'AVICOLE');
   });
 
   afterAll(async () => {
@@ -697,6 +700,12 @@ describe('Pig herd (e2e)', () => {
       await animal(headers, { category: 'COCHETTE' });
       const fat = await lot(headers);
       await lot(headers, { type: 'PORCELET', initialCount: 30 });
+      // A lot is closed once its animals have left.
+      await http()
+        .post(`/api/batches/${fat.id}/events`)
+        .set(headers)
+        .send({ type: 'VENTE', date: daysAgo(1), quantity: 240 })
+        .expect(201);
       await http()
         .post(`/api/batches/${fat.id}/close`)
         .set(headers)
@@ -762,7 +771,7 @@ describe('Pig herd (e2e)', () => {
         .send({
           species: 'AVICOLE',
           type: 'CHAIR',
-          buildingId: bldA,
+          buildingId: bldPoultry,
           entryDate: daysAgo(5),
           initialCount: 10,
         })
@@ -871,12 +880,13 @@ describe('Pig herd (e2e)', () => {
         .send({ notes: 'x' })
         .expect(403);
       await http().delete(`/api/animals/${a.id}`).set(vet.headers).expect(403);
+      // Master data needs `update`: a field agent (read, create) cannot create an animal.
       const agent = await actor('AGENT_ELEVAGE');
       await http()
         .post('/api/animals')
         .set(agent.headers)
         .send({ category: 'TRUIE', buildingId: bldA })
-        .expect(201);
+        .expect(403);
       await http()
         .patch(`/api/animals/${a.id}`)
         .set(agent.headers)
@@ -911,7 +921,7 @@ describe('Pig herd (e2e)', () => {
         .send({
           species: 'AVICOLE',
           type: 'CHAIR',
-          buildingId: bldA,
+          buildingId: bldPoultry,
           entryDate: daysAgo(1),
           initialCount: 10,
         })

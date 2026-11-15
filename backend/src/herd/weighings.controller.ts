@@ -12,7 +12,6 @@ import { ApiTags } from '@nestjs/swagger';
 import { AccessService } from '../access/access.service';
 import { AnyAuthenticated, Ctx } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
-import type { Action } from '../access/permissions';
 import { ListQueryDto } from '../listing/list-query.dto';
 import { BatchesService } from './batches.service';
 import { CreateWeighingDto, UpdateWeighingDto } from './dto/weighing.dto';
@@ -28,9 +27,12 @@ export class WeighingsController {
     private readonly access: AccessService,
   ) {}
 
-  private async guard(ctx: RequestContext, id: string, action: Action) {
+  /** Reads need `read`; every write is a daily operation (see `DAILY_WRITE`). */
+  private async guard(ctx: RequestContext, id: string, kind: 'read' | 'daily') {
     const species = await this.batches.speciesOf(ctx, id);
-    this.access.assertCan(ctx, speciesModule(species), action);
+    const module = speciesModule(species);
+    if (kind === 'daily') this.access.assertDaily(ctx, module);
+    else this.access.assertCan(ctx, module, 'read');
   }
 
   @Get()
@@ -51,7 +53,7 @@ export class WeighingsController {
     @Param('id') id: string,
     @Body() dto: CreateWeighingDto,
   ) {
-    await this.guard(ctx, id, 'create');
+    await this.guard(ctx, id, 'daily');
     return this.weighings.create(ctx, id, dto);
   }
 
@@ -63,7 +65,7 @@ export class WeighingsController {
     @Param('weighingId') weighingId: string,
     @Body() dto: UpdateWeighingDto,
   ) {
-    await this.guard(ctx, id, 'update');
+    await this.guard(ctx, id, 'daily');
     return this.weighings.update(ctx, id, weighingId, dto);
   }
 
@@ -74,7 +76,7 @@ export class WeighingsController {
     @Param('id') id: string,
     @Param('weighingId') weighingId: string,
   ) {
-    await this.guard(ctx, id, 'delete');
+    await this.guard(ctx, id, 'daily');
     await this.weighings.remove(ctx, id, weighingId);
   }
 }

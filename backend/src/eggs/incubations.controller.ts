@@ -10,7 +10,7 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { Ctx, RequirePermission } from '../access/decorators';
+import { Ctx, RequirePermission, RequireMaster } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import { paginate } from '../listing/paginate';
 import {
@@ -30,13 +30,14 @@ export class IncubationsController {
 
   @Get()
   @RequirePermission('ponte', 'read')
-  list(@Ctx() ctx: RequestContext, @Query() q: IncubationListQueryDto) {
+  async list(@Ctx() ctx: RequestContext, @Query() q: IncubationListQueryDto) {
     const { find, count } = this.incubations.listArgs(ctx, q);
-    return paginate(q, find, count);
+    const page = await paginate(q, find, count);
+    return { ...page, statusCounts: await this.incubations.statusCounts(ctx) };
   }
 
   @Post()
-  @RequirePermission('ponte', 'create')
+  @RequireMaster('ponte')
   create(@Ctx() ctx: RequestContext, @Body() dto: CreateIncubationDto) {
     return this.incubations.create(ctx, dto);
   }
@@ -48,7 +49,7 @@ export class IncubationsController {
   }
 
   @Patch(':id')
-  @RequirePermission('ponte', 'update')
+  @RequireMaster('ponte')
   update(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -58,14 +59,14 @@ export class IncubationsController {
   }
 
   @Delete(':id')
-  @RequirePermission('ponte', 'delete')
+  @RequireMaster('ponte')
   async remove(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     await this.incubations.remove(ctx, id);
   }
 
   @Post(':id/candling')
   @HttpCode(200)
-  @RequirePermission('ponte', 'update')
+  @RequireMaster('ponte')
   candling(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -76,7 +77,7 @@ export class IncubationsController {
 
   @Post(':id/hatch')
   @HttpCode(200)
-  @RequirePermission('ponte', 'update')
+  @RequireMaster('ponte')
   hatch(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -87,7 +88,7 @@ export class IncubationsController {
 
   @Post(':id/fail')
   @HttpCode(200)
-  @RequirePermission('ponte', 'update')
+  @RequireMaster('ponte')
   fail(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,

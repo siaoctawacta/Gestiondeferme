@@ -121,12 +121,16 @@ export class UpdateFeedDistributionDto {
   @Max(MAX_KG, { message: 'La quantité est trop élevée' })
   quantityKg?: number;
 
-  @ApiPropertyOptional()
+  @ApiPropertyOptional({
+    nullable: true,
+    description:
+      'Eau du jour, sur la ligne qui la porte (waterEditable) ; null efface la consommation du jour',
+  })
   @IsOptional()
   @IsNumber({ maxDecimalPlaces: 2 }, { message: WATER })
   @IsPositive({ message: WATER })
   @Max(MAX_LITERS, { message: "Le volume d'eau est trop élevé" })
-  waterLiters?: number;
+  waterLiters?: number | null;
 
   @ApiPropertyOptional({ nullable: true })
   @IsOptional()

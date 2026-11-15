@@ -2,6 +2,26 @@ import { Role } from './roles';
 
 export type Action = 'read' | 'create' | 'update' | 'delete' | 'validate';
 
+/**
+ * Production modules (lots, ponte, porcs, reproduction, alimentation) have two
+ * kinds of writes, whatever the HTTP verb:
+ *
+ * - MASTER data defines what exists: lots, animals, incubations, breeding
+ *   records, feed products and formulas, breeds. Creating, changing, deleting,
+ *   closing, moving or exiting one needs `update` on the module, so a field
+ *   agent (read, create) cannot create or change it.
+ * - DAILY operations record what happened: batch events, weighings, heats, egg
+ *   records, feed distributions, water. Entering one, and correcting or
+ *   deleting it, needs `create` ("entries can be edited or deleted by the roles
+ *   that may create them").
+ *
+ * Routes state it with `@RequireMaster(module)` / `@RequireDaily(module)`;
+ * handlers whose module depends on the request (species) call
+ * `AccessService.assertMaster` / `assertDaily`.
+ */
+export const MASTER_WRITE: Action = 'update';
+export const DAILY_WRITE: Action = 'create';
+
 export const ALL_MODULES = [
   'dashboard',
   'alertes',

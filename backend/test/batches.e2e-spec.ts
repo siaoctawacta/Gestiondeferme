@@ -121,6 +121,19 @@ describe('Herd ledger and batches (e2e)', () => {
     return res.body as BatchItem;
   }
 
+  /** Closing needs an empty lot: sells whatever is still alive the day before. */
+  async function sellAll(headers: Record<string, string>, id: string) {
+    const { alive } = (
+      await http().get(`/api/batches/${id}`).set(headers).expect(200)
+    ).body as BatchItem;
+    if (alive === 0) return;
+    await http()
+      .post(`/api/batches/${id}/events`)
+      .set(headers)
+      .send({ type: 'VENTE', date: daysAgo(1), quantity: alive })
+      .expect(201);
+  }
+
   describe('creation and codes', () => {
     it('generates LC-YYYY-NN per farm and year, with a prefix per type', async () => {
       const { headers } = await actor('DIRECTEUR_FERME');
@@ -354,6 +367,7 @@ describe('Herd ledger and batches (e2e)', () => {
       const { headers } = await actor('DIRECTEUR_FERME');
       const a = await createLot(headers, { initialCount: 100 });
       await createLot(headers, { type: 'PONDEUSE', initialCount: 100 });
+      await sellAll(headers, a.id);
       await http().post(`/api/batches/${a.id}/close`).set(headers).expect(200);
 
       const get = (qs: string) =>
@@ -605,9 +619,10 @@ describe('Herd ledger and batches (e2e)', () => {
       expect(await prisma.batchEvent.count()).toBe(0);
     });
 
-    it('closed lots stop counting and reopening re-checks the capacity', async () => {
+    it('a closed lot is empty, houses nobody, and reopens without exceeding the capacity', async () => {
       const { headers } = await actor('DIRECTEUR_FERME');
       const first = await createLot(headers, { initialCount: 4000 });
+      await sellAll(headers, first.id);
       await http()
         .post(`/api/batches/${first.id}/close`)
         .set(headers)
@@ -615,13 +630,14 @@ describe('Herd ledger and batches (e2e)', () => {
       const building = await http().get(`/api/buildings/${bldA}`).set(headers);
       expect(building.body).toMatchObject({ occupation: 0 });
       await createLot(headers, { initialCount: 3000 });
-      const reopen = await http()
+      // Closing needs an empty lot, so reopening never adds animals back.
+      await http()
         .post(`/api/batches/${first.id}/reopen`)
         .set(headers)
-        .expect(400);
-      expect((reopen.body as Msg).message).toBe(
-        'Capacité du bâtiment dépassée (7000 / 5000)',
-      );
+        .expect(200);
+      expect(
+        (await http().get(`/api/buildings/${bldA}`).set(headers)).body,
+      ).toMatchObject({ occupation: 3000 });
     });
 
     it('refuses deleting a building that houses a lot or has lot history, with 409', async () => {
@@ -634,6 +650,7 @@ describe('Herd ledger and batches (e2e)', () => {
       expect((res.body as Msg).message).toBe(
         'Ce bâtiment est occupé ou a un historique',
       );
+      await sellAll(headers, id);
       await http().post(`/api/batches/${id}/close`).set(headers).expect(200);
       await http().delete(`/api/buildings/${bldA}`).set(headers).expect(409);
       await http().delete(`/api/buildings/${bldA2}`).set(headers).expect(200);
@@ -744,6 +761,7 @@ describe('Herd ledger and batches (e2e)', () => {
           .send({ date: daysAgo(2), sampleSize: 10, averageWeightG: 900 })
           .expect(201)
       ).body as { id: string };
+      await sellAll(headers, id);
       const closed = await http()
         .post(`/api/batches/${id}/close`)
         .set(headers)
@@ -803,25 +821,34 @@ describe('Herd ledger and batches (e2e)', () => {
         closedAt: null,
       });
       await http().post(`/api/batches/${id}/reopen`).set(headers).expect(409);
+      // The lot was emptied before closing: a new delivery works again.
       await http()
         .post(`/api/batches/${id}/events`)
         .set(headers)
-        .send({ type: 'MORTALITE', date: daysAgo(1), quantity: 1 })
+        .send({ type: 'ENTREE', date: daysAgo(0), quantity: 1 })
         .expect(201);
     });
 
-    it('closes a lot whatever its live count, and stops its age at the closing day', async () => {
+    it('closes a lot only once it is empty, and stops its age at the closing day', async () => {
       const { headers } = await actor('DIRECTEUR_FERME');
       const { id } = await createLot(headers, {
         initialCount: 100,
         entryDate: daysAgo(40),
       });
+      const refused = await http()
+        .post(`/api/batches/${id}/close`)
+        .set(headers)
+        .expect(409);
+      expect((refused.body as Msg).message).toBe(
+        'Ce lot compte encore 100 animaux ; enregistrez leur sortie (vente, réforme, mortalité) avant de le clôturer',
+      );
+      await sellAll(headers, id);
       const res = await http()
         .post(`/api/batches/${id}/close`)
         .set(headers)
         .expect(200);
       expect(res.body).toMatchObject({
-        alive: 100,
+        alive: 0,
         ageDays: 40,
         status: 'CLOTURE',
       });
@@ -1277,8 +1304,19 @@ describe('Herd ledger and batches (e2e)', () => {
         .set(headers)
         .send({ toBuildingId: bldA2, date: daysAgo(1), quantity: 100 })
         .expect(200);
+      const sale = (
+        await http()
+          .post(`/api/batches/${id}/events`)
+          .set(headers)
+          .send({ type: 'VENTE', date: daysAgo(1), quantity: 100 })
+          .expect(201)
+      ).body as { id: string };
       await http().post(`/api/batches/${id}/close`).set(headers).expect(200);
       await http().post(`/api/batches/${id}/reopen`).set(headers).expect(200);
+      await http()
+        .delete(`/api/batches/${id}/events/${sale.id}`)
+        .set(headers)
+        .expect(200);
       await http().delete(`/api/batches/${id}`).set(headers).expect(200);
 
       const logs = await prisma.auditLog.findMany({
@@ -1297,13 +1335,15 @@ describe('Herd ledger and batches (e2e)', () => {
         'DELETE sub',
         'UPDATE lot',
         'UPDATE lot',
+        'CREATE sub',
         'UPDATE lot',
         'UPDATE lot',
+        'DELETE sub',
         'DELETE lot',
       ]);
       expect(logs.every((l) => l.farmId === farmA)).toBe(true);
       expect(logs[0].label).toMatch(/^LC-\d{4}-01$/);
-      expect(logs[11].before).toMatchObject({ initialCount: 100 });
+      expect(logs[13].before).toMatchObject({ initialCount: 100 });
     });
 
     it('rolls the audit row back together with a refused write', async () => {

@@ -37,6 +37,11 @@ export class BreedsService {
     return breeds.map(toItem);
   }
 
+  /** The breed's species, for the controller's permission check (404 outside the organisation). */
+  async speciesOf(ctx: RequestContext, id: string): Promise<Species> {
+    return (await this.load(ctx, id)).species;
+  }
+
   async create(ctx: RequestContext, dto: CreateBreedDto): Promise<BreedItem> {
     return orConflict(
       () =>

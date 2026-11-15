@@ -10,7 +10,12 @@ import {
   Query,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
-import { Ctx, RequirePermission } from '../access/decorators';
+import {
+  Ctx,
+  RequireDaily,
+  RequireMaster,
+  RequirePermission,
+} from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
 import { ListQueryDto } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
@@ -21,6 +26,7 @@ import {
   CreateAnimalWeighingDto,
   ExitAnimalDto,
   UpdateAnimalDto,
+  UpdateAnimalWeighingDto,
 } from './dto/animal.dto';
 
 @ApiTags('animals')
@@ -36,7 +42,7 @@ export class AnimalsController {
   }
 
   @Post()
-  @RequirePermission('porcs', 'create')
+  @RequireMaster('porcs')
   create(@Ctx() ctx: RequestContext, @Body() dto: CreateAnimalDto) {
     return this.animals.create(ctx, dto);
   }
@@ -48,7 +54,7 @@ export class AnimalsController {
   }
 
   @Patch(':id')
-  @RequirePermission('porcs', 'update')
+  @RequireMaster('porcs')
   update(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -58,14 +64,14 @@ export class AnimalsController {
   }
 
   @Delete(':id')
-  @RequirePermission('porcs', 'delete')
+  @RequireMaster('porcs')
   async remove(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     await this.animals.remove(ctx, id);
   }
 
   @Post(':id/exit')
   @HttpCode(200)
-  @RequirePermission('porcs', 'update')
+  @RequireMaster('porcs')
   exit(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
@@ -85,12 +91,40 @@ export class AnimalsController {
   }
 
   @Post(':id/weighings')
-  @RequirePermission('porcs', 'create')
+  @RequireDaily('porcs')
   createWeighing(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
     @Body() dto: CreateAnimalWeighingDto,
   ) {
     return this.animals.createWeighing(ctx, id, dto);
+  }
+
+  @Patch(':id/weighings/:weighingId')
+  @RequireDaily('porcs')
+  updateWeighing(
+    @Ctx() ctx: RequestContext,
+    @Param('id') id: string,
+    @Param('weighingId') weighingId: string,
+    @Body() dto: UpdateAnimalWeighingDto,
+  ) {
+    return this.animals.updateWeighing(ctx, id, weighingId, dto);
+  }
+
+  @Delete(':id/weighings/:weighingId')
+  @RequireDaily('porcs')
+  async removeWeighing(
+    @Ctx() ctx: RequestContext,
+    @Param('id') id: string,
+    @Param('weighingId') weighingId: string,
+  ) {
+    await this.animals.removeWeighing(ctx, id, weighingId);
+  }
+
+  @Post(':id/reinstate')
+  @HttpCode(200)
+  @RequireMaster('porcs')
+  reinstate(@Ctx() ctx: RequestContext, @Param('id') id: string) {
+    return this.animals.reinstate(ctx, id);
   }
 }

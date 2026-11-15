@@ -166,6 +166,20 @@ export class CreateAnimalWeighingDto {
   weightKg!: number;
 }
 
+export class UpdateAnimalWeighingDto {
+  @ApiPropertyOptional({ example: '2026-11-02' })
+  @IsOptional()
+  @IsDay()
+  date?: string;
+
+  @ApiPropertyOptional({ minimum: 0.1, description: 'kg, une décimale' })
+  @IsOptional()
+  @IsNumber({ maxDecimalPlaces: 1 }, { message: WEIGHT })
+  @Min(0.1, { message: WEIGHT })
+  @Max(9999.9, { message: 'Le poids est trop élevé' })
+  weightKg?: number;
+}
+
 export class HerdListQueryDto extends ListQueryDto {
   @ApiPropertyOptional({
     description: 'Truie, Verrat, Cochette, Porcelets, Engraissement',
