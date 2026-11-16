@@ -85,7 +85,12 @@ const DETAILS: Record<string, unknown> = {
       amount: 32000, creditedQuantity: 0, creditableQuantity: 100, creditableAmount: 32000, activity: 'GENERAL', category: 'VENTE_ARTICLES',
     })],
   }),
+  i6: detailOf(INVOICES[5], { lines: [line({ creditedQuantity: 0, creditableQuantity: 100 })] }),
   i7: detailOf(INVOICES[6], { lines: [line({})] }),
+  // Services only: no goods leave, so no delivery note.
+  i13: detailOf(inv('i13', 'FA-0330', 'EMISE', { total: 25000, paid: 0, due: 25000 }), {
+    lines: [line({ kind: 'SERVICE', batchId: null, sourceLabel: null, designation: 'Transport', quantity: 10, unitPrice: 2500, amount: 25000 })],
+  }),
   i10: detailOf(INVOICES[8], {
     lines: [line({
       kind: 'ARTICLE', batchId: null, stockItemId: 's2', sourceLabel: 'Aliment ponte', designation: 'Aliment ponte', unit: 'kg', quantity: 2.5, unitPrice: 333.33,
@@ -168,7 +173,7 @@ function mount(ui: React.ReactNode, { perms = COMMERCIAL, farm, route = '/' }: {
     const customer = /^\/api\/customers\/(\w+)(\?|$)/.exec(url);
     if (customer) return customer[1] === 'c2' ? json(200, CUSTOMER_DETAIL) : json(404, { message: 'Introuvable' });
     if (url.startsWith('/api/customers')) return page(CUSTOMERS);
-    if (url === '/api/settings') return json(200, SETTINGS);
+    if (url === '/api/settings/documents') return json(200, SETTINGS);
     throw new Error(`unexpected ${call.method} ${url}`);
   });
   render(
@@ -261,7 +266,7 @@ describe('invoice form', () => {
     expect(within(dialog).getByLabelText('Émettre la facture')).toBeChecked();
     expect(within(dialog).getByLabelText('Date')).toHaveValue(todayIso());
     expect(flat(within(dialog).getByText(/^Total :/).textContent)).toBe('Total : 25 000 FCFA');
-    await user.type(within(dialog).getByLabelText('Payé comptant'), '10000');
+    await user.type(within(dialog).getByLabelText('Paiement comptant'), '10000');
     await user.selectOptions(within(dialog).getByLabelText('Mode de paiement'), 'Mobile money');
     expect(within(dialog).getAllByRole('option', { name: /Espèces|Virement|Mobile money|Chèque/ }).map((o) => o.textContent)).toEqual(['Espèces', 'Virement', 'Mobile money', 'Chèque']);
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
@@ -280,9 +285,9 @@ describe('invoice form', () => {
 
   it('saves a draft on /sales, without payment fields, when Émettre la facture is unchecked', async () => {
     const { user, dialog } = await openForm();
-    await user.type(within(dialog).getByLabelText('Payé comptant'), '10000');
+    await user.type(within(dialog).getByLabelText('Paiement comptant'), '10000');
     await user.click(within(dialog).getByLabelText('Émettre la facture'));
-    expect(within(dialog).queryByLabelText('Payé comptant')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Paiement comptant')).not.toBeInTheDocument();
     expect(within(dialog).queryByLabelText('Mode de paiement')).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
@@ -296,7 +301,7 @@ describe('invoice form', () => {
   it('offers no issue box to a role without update on ventes: it only saves drafts', async () => {
     const { user, dialog } = await openForm({ perms: { clients: ['read'], ventes: ['read', 'create'] } });
     expect(within(dialog).queryByLabelText('Émettre la facture')).not.toBeInTheDocument();
-    expect(within(dialog).queryByLabelText('Payé comptant')).not.toBeInTheDocument();
+    expect(within(dialog).queryByLabelText('Paiement comptant')).not.toBeInTheDocument();
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/sales' });
@@ -304,7 +309,7 @@ describe('invoice form', () => {
 
   it('refuses a cash payment above the total before posting', async () => {
     const { user, dialog } = await openForm();
-    await user.type(within(dialog).getByLabelText('Payé comptant'), '25001');
+    await user.type(within(dialog).getByLabelText('Paiement comptant'), '25001');
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     expect(await within(dialog).findByText('Le montant dépasse le reste dû')).toBeInTheDocument();
     expect(writes()).toHaveLength(0);
@@ -331,12 +336,12 @@ describe('invoice form', () => {
     expect(writes()[0].body).toMatchObject({ date: '2026-11-15', dueDate: '2026-12-05' });
   });
 
-  it('shows no due-date hint, and asks for no settings, to a role that cannot read them', async () => {
+  it('shows the due-date hint to a role that cannot read the settings: it reads the document settings, nothing else', async () => {
     const { user, dialog } = await openForm({ perms: { clients: ['read'], ventes: ['read', 'create', 'update'] } });
     await user.clear(within(dialog).getByLabelText('Date'));
     await user.type(within(dialog).getByLabelText('Date'), '2026-11-15');
-    expect(within(dialog).queryByText(/Par défaut/)).not.toBeInTheDocument();
-    expect(within(dialog).getByLabelText('Échéance')).not.toHaveAccessibleDescription();
+    expect(await within(dialog).findByText('Par défaut : 2026-11-30')).toBeInTheDocument();
+    expect(calls.some((c) => c.url === '/api/settings/documents')).toBe(true);
     expect(calls.some((c) => c.url === '/api/settings')).toBe(false);
   });
 
@@ -656,6 +661,17 @@ describe('avoirs tab', () => {
     await waitFor(() => expect(print).toHaveBeenCalledOnce());
   });
 
+  it('prints the legal block for a role that cannot read the settings (it reads the document settings)', async () => {
+    mountList(ventes, { perms: { ventes: ['read'] } });
+    await screen.findByText('FA-0301');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Avoirs' }));
+    await user.click((await screen.findByText('AV-0001')).closest('tr')!.querySelector('button[aria-label="Imprimer"]')!);
+    const sheet = await screen.findByRole('region', { name: 'Avoir' });
+    expect(await within(sheet).findByText('Ferme du Golfe SARL')).toBeInTheDocument();
+    expect(calls.some((c) => c.url === '/api/settings')).toBe(false);
+  });
+
   it('is available to a read-only role (printing is a read)', async () => {
     mountList(ventes, { perms: { ventes: ['read'] } });
     await screen.findByText('FA-0301');
@@ -700,6 +716,31 @@ describe('invoice detail', () => {
     await screen.findByRole('heading', { name: 'FA-0309' });
     for (const name of ['Encaisser', 'Avoir']) expect(screen.queryByRole('button', { name })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Imprimer la facture' })).toBeInTheDocument();
+  });
+
+  it('shows the due date as a tile, and an Échue pill beside the status only when overdue', async () => {
+    mount(<InvoiceDetail id="i6" />);
+    await screen.findByRole('heading', { name: 'FA-0311' });
+    expect(flat(screen.getByText('Échéance', { selector: 'p' }).nextElementSibling!.textContent)).toBe('2026-11-01');
+    expect(screen.getByText('Échue', { selector: 'span' }).getAttribute('data-tone')).toBe('danger');
+    cleanup();
+    mount(<InvoiceDetail id="i2" />);
+    await screen.findByRole('heading', { name: 'FA-0309' });
+    expect(flat(screen.getByText('Échéance', { selector: 'p' }).nextElementSibling!.textContent)).toBe('2026-11-05');
+    expect(screen.queryByText('Échue')).not.toBeInTheDocument();
+  });
+
+  it('shows a dash as the due date of a draft', async () => {
+    mount(<InvoiceDetail id="i5" />);
+    await screen.findByRole('heading', { name: 'Brouillon' });
+    expect(flat(screen.getByText('Échéance', { selector: 'p' }).nextElementSibling!.textContent)).toBe('—');
+  });
+
+  it('offers no delivery note for an invoice of services only', async () => {
+    mount(<InvoiceDetail id="i13" />);
+    await screen.findByRole('heading', { name: 'FA-0330' });
+    expect(screen.getByRole('button', { name: 'Imprimer la facture' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Bon de livraison' })).not.toBeInTheDocument();
   });
 
   it('shows the cancellation reason of a cancelled invoice and no print button', async () => {
@@ -872,8 +913,11 @@ describe('cancelling and the total-0 invoice', () => {
 });
 
 describe('read-only roles', () => {
-  it.each([['DIRECTEUR_FERME'], ['AUDITEUR']])('gives %s (read only) no action on any status, in the list or on the detail', async () => {
-    const perms = { clients: ['read'], ventes: ['read'] };
+  // The read grants of the two roles: the director reads the sales modules, the auditor reads every module (settings included).
+  it.each([
+    ['DIRECTEUR_FERME', { clients: ['read'], ventes: ['read'], finance: ['read'] }],
+    ['AUDITEUR', { clients: ['read'], ventes: ['read'], finance: ['read'], parametres: ['read'] }],
+  ])('gives %s (read only) no action on any status, in the list or on the detail', async (_role, perms) => {
     mountList(ventes, { perms });
     await screen.findByText('FA-0301');
     expect(screen.queryByRole('button', { name: /Ajouter|Émettre|Encaisser|Avoir|Rembourser|Annuler|Modifier|Supprimer/ })).not.toBeInTheDocument();

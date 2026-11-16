@@ -39,6 +39,12 @@ describe('money', () => {
     expect(lineAmount(3, Infinity)).toBe(0);
     expect(linesTotal([{ quantity: 'abc', unitPrice: '5' }])).toBe(0);
   });
+
+  it('counts a finite input too large to scale (1e308) as 0, never throwing a RangeError', () => {
+    expect(lineAmount(1e308, 2)).toBe(0);
+    expect(linesTotal([{ quantity: '1e308', unitPrice: '5' }])).toBe(0);
+    expect(sumAmounts([1e308, 2])).toBe(2);
+  });
 });
 
 describe('sumAmounts', () => {

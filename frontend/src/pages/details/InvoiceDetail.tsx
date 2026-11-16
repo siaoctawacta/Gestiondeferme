@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { Link } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { FileText, Printer, Trash2, Truck } from 'lucide-react';
@@ -24,7 +24,7 @@ import { DetailGate } from './DetailGate';
 import { HistoryTab } from './HistoryTab';
 import { CreditNotePrintDialog } from '../print/CreditNotePrintDialog';
 import { DeliveryNoteSheet, InvoiceSheet, ReceiptSheet } from '../print/SaleSheets';
-import { SheetHeads, useLegal } from '../print/SheetFrame';
+import { SheetHeads, useLegal, usePrintWhenReady } from '../print/SheetFrame';
 import { DetailLayout } from './DetailLayout';
 
 /** The sheet being printed: the invoice, its delivery note or the receipt of one payment. */
@@ -131,19 +131,15 @@ function Loaded({ data }: { data: InvoiceData }) {
   const [deleting, setDeleting] = useState<InvoicePayment | null>(null);
   const [printingNote, setPrintingNote] = useState<InvoiceCreditNote | null>(null);
   const [printing, setPrinting] = useState<Printing | null>(null);
-  const printed = useRef(0);
 
   const writable = farmId !== 'all';
   const issued = ISSUED.includes(data.status);
+  // A delivery note lists goods: an invoice of services only has none.
+  const hasGoods = data.lines.some((l) => l.kind !== 'SERVICE');
   const { legal, ready } = useLegal(issued);
   const farmName = farms.find((f) => f.id === farmId)?.name;
   // A sheet prints once it is on the page with its legal block.
-  useEffect(() => {
-    if (printing && ready && printed.current !== printing.n) {
-      printed.current = printing.n;
-      window.print();
-    }
-  }, [printing, ready]);
+  usePrintWhenReady(ready, printing);
   const print = (sheet: 'invoice' | 'delivery') => setPrinting((p) => ({ n: (p?.n ?? 0) + 1, sheet }));
   const printReceipt = (payment: InvoicePayment) => setPrinting((p) => ({ n: (p?.n ?? 0) + 1, sheet: 'receipt', payment }));
 
@@ -162,6 +158,7 @@ function Loaded({ data }: { data: InvoiceData }) {
           status={
             <>
               <Pill tone={def?.tone ?? 'neutral'}>{def?.label ?? data.status}</Pill>
+              {data.overdue && <Pill tone="danger">Échue</Pill>}
               {data.refundDue > 0 && <Pill tone="danger">À rembourser {formatMoney(data.refundDue)}</Pill>}
             </>
           }
@@ -179,10 +176,12 @@ function Loaded({ data }: { data: InvoiceData }) {
                     <Printer aria-hidden className="size-4" />
                     Imprimer la facture
                   </Button>
-                  <Button variant="outline" onClick={() => print('delivery')}>
-                    <Truck aria-hidden className="size-4" />
-                    Bon de livraison
-                  </Button>
+                  {hasGoods && (
+                    <Button variant="outline" onClick={() => print('delivery')}>
+                      <Truck aria-hidden className="size-4" />
+                      Bon de livraison
+                    </Button>
+                  )}
                 </>
               )}
             </>
@@ -203,6 +202,7 @@ function Loaded({ data }: { data: InvoiceData }) {
             { label: 'Payé', value: formatMoney(data.paid) },
             { label: 'Avoirs', value: formatMoney(data.credited) },
             { label: 'Reste dû', value: formatMoney(data.due) },
+            { label: 'Échéance', value: data.dueDate ? formatDate(data.dueDate) : '—' },
           ]}
           tabs={[
             { key: 'lines', label: 'Lignes', content: <LinesTab data={data} /> },

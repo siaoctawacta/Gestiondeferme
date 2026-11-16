@@ -30,7 +30,8 @@ export type OptionItem = { value: string; label: string; disabled?: boolean; dat
 /**
  * Static `{value,label}` options, or options loaded from an endpoint. A select whose current value is not among them
  * (an incident on a lot since closed, an article since deactivated) keeps it as the disabled option `Valeur actuelle`
- * (`Valeur conservée` when the options cannot be read) and resends it unchanged, instead of falling back to `Sélectionner…`.
+ * (`Valeur conservée` when the options cannot be read, e.g. without the permission of `OptionsPermission`) and resends it
+ * unchanged, instead of falling back to `Sélectionner…`.
  */
 export type OptionsDef = OptionItem[] | EndpointOptions;
 
@@ -51,7 +52,8 @@ interface FieldBase {
   /**
    * Helper text shown under the control and linked to it (`aria-describedby`), in full as the caller words it
    * (`Par défaut : 2026-11-30`). A function sees the form's current values and may answer `undefined` for no hint.
-   * Not for the cells of a `lines` grid.
+   * Shown for the single-control fields (text, date, time, number, password, select, textarea); NOT rendered for
+   * `checkbox`, `multiselect`, `segmented` and `lines` fields, nor for the cells of a `lines` grid.
    */
   hint?: string | ((values: Record<string, unknown>) => string | undefined);
   /**
@@ -260,6 +262,9 @@ type RowActionBase<T> = {
  * - `dialog`: a dialog the page opens for the row. It calls `onDone` after a successful write (the dialog is
  *   closed and the list refetched) or `onClose` to cancel. Lets a config-only module (no page component of its
  *   own) open dialogs.
+ *
+ * A workflow action shared with a detail page is defined once as a `SharedActionDef` (`rowActions.ts`) and turned into a
+ * `RowAction` by `toRowActions` (`Dialog` becomes `dialog`).
  */
 export type RowAction<T> = RowActionBase<T> &
   (

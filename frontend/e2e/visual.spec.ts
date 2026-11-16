@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { LONG_SUITE } from './suites.ts';
 import { fileURLToPath } from 'node:url';
 import type { Browser, Locator, Page } from 'playwright';
 import { api, enrollAdmin, launch, newPage, uiLoginWithBackupCode, WEB_URL, type EnrolledAdmin } from './helpers.ts';
@@ -172,7 +173,6 @@ const DISABLED_ICONS: Record<string, [string, string, string][]> = {
     ['TR-021', 'Modifier', 'Enregistrement verrouillé'],
     ['TR-021', 'Supprimer', 'Enregistrement verrouillé'],
   ],
-  // Only a request (Demande) can still be edited or deleted.
   // Only a draft invoice can still be edited or deleted; a derived finance row points at its document.
   m_ventes: [
     ['FA-0310', 'Modifier', 'Enregistrement verrouillé'],
@@ -182,6 +182,7 @@ const DISABLED_ICONS: Record<string, [string, string, string][]> = {
     ['FA-0310', 'Modifier', "Écriture générée par une facture — corrigez le document d'origine"],
     ['FA-0310', 'Supprimer', "Écriture générée par une facture — corrigez le document d'origine"],
   ],
+  // Only a request (Demande) can still be edited or deleted.
   m_achats: [
     ['BC-0142', 'Modifier', 'Enregistrement verrouillé'],
     ['BC-0142', 'Supprimer', 'Enregistrement verrouillé'],
@@ -279,7 +280,7 @@ async function settle(page: Page): Promise<void> {
 // Precondition: the server's date is after 2026-10-22, because the reference rows are dated October 2026 (no future
 // dates are accepted). The overdue-farrowing alert counts days from today, so it is matched with a regex and
 // home.png differs by that one number from day to day.
-describe('rendu : captures et comparaison avec la référence', () => {
+describe('rendu : captures et comparaison avec la référence', LONG_SUITE, () => {
   let browser: Browser;
   let page: Page;
   let admin: EnrolledAdmin;
@@ -346,16 +347,19 @@ describe('rendu : captures et comparaison avec la référence', () => {
       assert.ok(typeof expected === 'string' ? text.includes(expected) : expected.test(text), `home shows « ${expected} »`);
     }
 
-    // « Rentabilité du mois » is the calendar month to date (ruling Q26): the reference documents are dated October, so
-    // the card shows this month's figures (the API's own summary), not the reference 3 970 000 / 2 835 000 / 1 135 000
-    // (the October period is checked on the Synthèse below). A documented difference of home.png.
-    const money = (n: number) => `${new Intl.NumberFormat('fr-FR').format(n)} FCFA`;
-    const month = await api<{ revenue: number; expenses: number; margin: number }>('/finance/summary', { token: admin.token, farmId: admin.farmId });
-    const homeText = flat(await page.locator('main').innerText()).replace(/[\u202f\u00a0]/g, ' ');
-    assert.ok(homeText.includes('Rentabilité du mois'), 'home shows the profitability card');
-    for (const n of [month.revenue, month.expenses, month.margin]) {
-      assert.ok(homeText.includes(money(n).replace(/[\u202f\u00a0]/g, ' ')), `home shows ${money(n)} (this month's figure)`);
+    // « Rentabilité du mois » is the calendar month to date (ruling Q26): the reference documents are dated October 2026.
+    // Run in October 2026 (after the 22nd) the card shows the reference October figures (the double vaccine entry of the
+    // reference data included: BC-0141 + the manual « Vaccins & médicaments », 120 000 each, hence 2 955 000, not 2 835 000);
+    // run later, the month holds none of them and the card reads 0. Literal figures, not the API's own summary. A documented
+    // difference of home.png.
+    assert.ok(flat(await page.locator('main').innerText()).includes('Rentabilité du mois'), 'home shows the profitability card');
+    const [revenue, expenses, margin] = new Date().toISOString().startsWith('2026-10') ? ['3 970 000 FCFA', '2 955 000 FCFA', '1 015 000 FCFA'] : ['0 FCFA', '0 FCFA', '0 FCFA'];
+    const card = page.getByRole('heading', { name: 'Rentabilité du mois' }).locator('xpath=..');
+    for (const [label, expected] of [["Chiffre d'affaires", revenue], ['Dépenses', expenses], ['Marge', margin]]) {
+      const figure = card.locator('dt', { hasText: new RegExp(`^${label}$`) }).locator('xpath=following-sibling::dd');
+      assert.equal(flat(await figure.innerText()), expected, `home card: ${label}`);
     }
+    const homeText = flat(await page.locator('main').innerText());
     assert.ok(homeText.includes('Recettes vs dépenses'), 'home shows the revenue chart');
 
     // The home shows the five most urgent alerts; the full list (the Alertes page) also has the overdue disinfection

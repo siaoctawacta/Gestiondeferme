@@ -62,11 +62,17 @@ export const kindLabel = (k: string) => LINE_KINDS.find((x) => x.value === k)?.l
 
 const EGG_UNITS: { value: EggUnit; label: string }[] = [{ value: 'PLATEAU', label: 'Plateau' }, { value: 'OEUF', label: 'Œuf' }];
 
+/** The label of a source: an egg source also names the whole plateaux it holds; one that cannot be sold gives its reason. */
+const sellableLabel = (s: Sellable): string => {
+  const base = s.availableTrays === undefined ? s.label : `${s.label} (${formatNumber(s.availableTrays)} plateau${s.availableTrays > 1 ? 'x' : ''})`;
+  return s.sellable ? base : `${base} (${s.reason ?? 'Indisponible'})`;
+};
+
 /** The sources of one kind as options: one that cannot be sold stays visible, disabled, with the reason. */
-const sellableOptions = (data: unknown): OptionItem[] =>
+export const sellableOptions = (data: unknown): OptionItem[] =>
   (data as { items: Sellable[] }).items.map((s) => ({
     value: s.id,
-    label: s.sellable ? s.label : `${s.label} (${s.reason ?? 'Indisponible'})`,
+    label: sellableLabel(s),
     disabled: !s.sellable,
     data: s,
   }));

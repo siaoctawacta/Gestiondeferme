@@ -280,8 +280,10 @@ référence (« Aliment ponte », « Agro Provende SA », « Restaurant Le Palmi
 `npm run e2e -- --serve` laisse seulement les serveurs e2e démarrés ; `npm run e2e -- production` n'exécute que les
 specs dont le nom contient le mot donné (erreur s'il n'y en a aucune).
 
-Précondition : la date du serveur est postérieure au 2026-10-22 et n'est pas le premier jour du mois (le parcours commercial date une facture échue du 1er), car les lignes de référence des captures sont
-datées d'octobre 2026 (aucune date future n'est acceptée). Les captures de `docs/reference/built/` peuvent différer
+Précondition : la date du serveur est postérieure au 2026-10-22, car les lignes de référence des captures sont
+datées d'octobre 2026 (aucune date future n'est acceptée). Le parcours commercial date sa facture échue de la veille : il
+tourne tous les jours, et le premier jour d'un mois il en tient compte (la veille est dans le mois précédent, donc hors des
+chiffres du mois en cours). Les captures de `docs/reference/built/` peuvent différer
 d'un jour à l'autre par un seul nombre (« Dépassée depuis N j » de l'alerte de mise bas) ; la date de l'acte de santé
 planifié et les mouvements de consommation de stock (jours de stock) sont calculés par rapport au jour d'exécution.
 
@@ -449,8 +451,9 @@ Le paiement des fournisseurs par le Comptable reste une question ouverte (voir l
   factures et de l'achat reçu s'ajoutent aux cinq saisies) et la liste s'ouvre sur le mois en cours (la capture règle la
   période sur octobre) ; les chiffres du tableau de bord suivent le mois civil en cours, pas ceux de la maquette ; FA-0309
   vend 12 000 œufs, donc des jours de ponte supplémentaires sont créés pour LP-2026-03 (la tuile de « Ponte & œufs » diffère) ;
-  l'activité « Général » de la période d'octobre vaut −1 255 000 FCFA (l'achat reçu BC-0141 s'ajoute à la saisie
-  « Vaccins & médicaments ») ; le « reste dû » d'une facture échue reste jaune comme dans la maquette.
+  les données de référence contiennent elles-mêmes la double saisie des vaccins (l'achat reçu BC-0141 et la saisie manuelle
+  « Vaccins & médicaments », 120 000 FCFA chacun) : les dépenses d'octobre valent donc 2 955 000 FCFA (et non 2 835 000) et
+  l'activité « Général » −1 255 000 FCFA ; le « reste dû » d'une facture échue reste jaune comme dans la maquette.
 
 À savoir après une mise à jour : la tranche 4 ajoute des migrations de base de données (clients, devis, factures, paiements,
 avoirs, finance). Après avoir récupéré le code, lancez `npx prisma migrate deploy` dans `backend/` (ou `./scripts/dev.sh`).
@@ -465,7 +468,7 @@ Qui peut faire quoi sur les ventes et la finance :
 | Émettre un avoir, annuler une facture émise (sans paiement ni avoir) | Comptable, Propriétaire, Super administrateur |
 | Saisir, corriger ou supprimer une dépense ou une recette manuelle ; l'attribuer à un lot | Comptable, Super administrateur |
 | Lire la finance, la synthèse et la rentabilité par lot | Comptable, Propriétaire, Directeur de ferme, Auditeur, Super administrateur |
-| Lire les clients, les factures, les devis et les avoirs | Commercial, Comptable, Propriétaire, Directeur de ferme, Auditeur |
+| Lire les clients, les factures, les devis et les avoirs | Commercial, Comptable, Propriétaire, Directeur de ferme, Auditeur, Super administrateur |
 
 Les règles à connaître :
 
@@ -474,9 +477,18 @@ Les règles à connaître :
 - Un lot, un animal ou des œufs en délai d'attente (après un traitement) ne peuvent pas être vendus, le dernier jour du délai
   compris ; il n'y a pas de dérogation.
 - Un inventaire validé ferme le passé de l'article : une vente de cet article antérieure à l'inventaire est refusée.
+- On ne peut pas vendre plus que l'effectif vivant du lot : « Effectif insuffisant ». Un lot de stock périmé est refusé à la
+  vente, comme à la sortie de stock.
 - Un avoir se fait par quantité de ligne, avec ou sans retour des marchandises ; il est définitif. Un animal suivi
   individuellement ne peut pas être retourné au lot ; un retour dans un lot clôturé est refusé ; des marchandises périmées ne
   reviennent pas en stock (faites un avoir sans retour).
+- L'échéance d'une facture est sa date plus 15 jours (réglage « Échéance des factures (jours) »), sauf si elle est saisie ; le formulaire
+  affiche la date par défaut, et une facture échue avec un reste dû déclenche l'alerte « Créance FA-… ».
+- Le « Prix d'achat » d'un lot est le total payé pour le lot (pas un prix unitaire) : il est enregistré comme une dépense
+  « Animaux » à la date d'entrée du lot, et c'est le « Coût des animaux » de sa rentabilité.
+- Une vente saisie à la main dans les mouvements d'effectif (événement « Vente ») reste possible mais ne crée pas de
+  recette : seules les factures en créent.
+- Le « coût / kg » d'un lot reste vide tant que chaque vente du lot n'a pas son poids saisi sur la facture.
 - Le « reste dû » d'un client est la somme de ce qu'il doit ; ce que la ferme lui doit après un avoir sur une facture déjà payée
   s'affiche à part : « À rembourser ».
 - Les écritures manuelles côtoient les écritures dérivées : saisir à la main un achat déjà reçu le compte deux fois, c'est à

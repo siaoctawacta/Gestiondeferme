@@ -141,7 +141,7 @@ function mount(ui: React.ReactNode, { perms = ALL, farm, settings = true }: { pe
     // `active=true` lists the active suppliers only (VetoPlus is inactive).
     if (url.startsWith('/api/suppliers')) return page(url.includes('active=true') ? SUPPLIERS.filter((x) => x.id !== 'sup2') : SUPPLIERS);
     if (url.startsWith('/api/stock-items')) return page(STOCK_ITEMS);
-    if (url === '/api/settings') return json(200, SETTINGS);
+    if (url === '/api/settings/documents') return json(200, SETTINGS);
     throw new Error(`unexpected ${call.method} ${url}`);
   });
   render(
@@ -733,7 +733,7 @@ describe('purchase detail', () => {
     await screen.findByRole('heading', { name: 'BC-0142' });
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Imprimer' }));
-    expect(print).toHaveBeenCalledOnce();
+    await waitFor(() => expect(print).toHaveBeenCalledOnce());
     const sheet = await screen.findByRole('region', { name: 'Bon de commande' });
     expect(within(sheet).getByText('Ferme du Golfe SARL')).toBeInTheDocument();
     expect(within(sheet).getByText(/NIF : 1001234567/)).toBeInTheDocument();
@@ -756,10 +756,11 @@ describe('purchase detail', () => {
     expect(screen.getByRole('button', { name: 'Valider' })).toBeInTheDocument();
   });
 
-  it('prints without the legal block when settings are not readable', async () => {
+  it('prints the legal block for a role that cannot read the settings: the document settings are open to every role', async () => {
     mountDetail('p1', { settings: false });
     await screen.findByRole('heading', { name: 'BC-0142' });
+    const sheet = await screen.findByRole('region', { name: 'Bon de commande' });
+    expect(await within(sheet).findByText('Ferme du Golfe SARL')).toBeInTheDocument();
     expect(calls.some((c) => c.url === '/api/settings')).toBe(false);
-    expect(await screen.findByRole('region', { name: 'Bon de commande' })).toBeInTheDocument();
   });
 });

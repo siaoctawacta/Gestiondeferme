@@ -1,4 +1,3 @@
-import { useEffect, useRef } from 'react';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
 import { Button } from '../../components/ui/Button';
@@ -8,22 +7,16 @@ import { useAuth } from '../../lib/auth';
 import { useFarmQuery } from '../../lib/query';
 import type { CreditNoteData } from '../../modules/salesShared';
 import { CreditNoteSheet } from './SaleSheets';
-import { PrintOverlay, useLegal } from './SheetFrame';
+import { PrintOverlay, useLegal, usePrintWhenReady } from './SheetFrame';
 
 /** Printing a credit note (from the `Avoirs` tab or from an invoice): a dialog that loads it, prints it and offers to print again. */
 export function CreditNotePrintDialog({ row, onClose }: { row: { id: string; number: string }; onClose: () => void }) {
   const { farmId, farms } = useAuth();
   const note = useFarmQuery<CreditNoteData>(['/credit-notes', 'detail', row.id], () => api.get<CreditNoteData>(`/credit-notes/${row.id}`));
   const { legal, ready } = useLegal();
-  const printed = useRef(false);
   const ok = note.data !== undefined && ready;
   // Print once, as soon as the sheet (with its legal block) is on the page.
-  useEffect(() => {
-    if (ok && !printed.current) {
-      printed.current = true;
-      window.print();
-    }
-  }, [ok]);
+  usePrintWhenReady(ok, ok && row.id);
   return (
     <>
       <Dialog open onClose={onClose} title={`Imprimer ${row.number}`}>

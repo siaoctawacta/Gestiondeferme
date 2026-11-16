@@ -1,15 +1,13 @@
-import { api, ApiError } from '../../lib/api';
+import { api } from '../../lib/api';
 import { formatMoney } from '../../lib/format';
 import { useAuth } from '../../lib/auth';
 import { useFarmQuery } from '../../lib/query';
-import { ErrorRetry } from '../../components/module/ErrorRetry';
-import { errorMessage } from '../../components/module/errorMessage';
 import { ModuleList } from '../../components/module/ModulePage';
 import { Card } from '../../components/ui/Card';
 import { Pill } from '../../components/ui/Pill';
 import { MODULES } from '../../modules/registry';
 import { customerTypeLabel, type CustomerData } from '../../modules/salesShared';
-import NotFound from '../NotFound';
+import { DetailGate } from './DetailGate';
 import { DetailLayout } from './DetailLayout';
 
 function Sheet({ data }: { data: CustomerData }) {
@@ -40,13 +38,10 @@ function Invoices({ customerId }: { customerId: string }) {
 /** `/m/clients/:id`: one customer with what was invoiced, paid, credited and is still due, and their invoices. */
 export function CustomerDetail({ id }: { id: string }) {
   const query = useFarmQuery<CustomerData>(['/customers', 'detail', id], () => api.get<CustomerData>(`/customers/${id}`));
+  return <DetailGate query={query}>{(c) => <Loaded c={c} />}</DetailGate>;
+}
 
-  if (query.isPending) return <div aria-busy className="h-40 animate-pulse rounded-3xl bg-muted" />;
-  if (query.isError) {
-    if (query.error instanceof ApiError && (query.error.status === 404 || query.error.status === 400)) return <NotFound />;
-    return <ErrorRetry message={errorMessage(query.error)} onRetry={() => query.refetch()} />;
-  }
-  const c = query.data;
+function Loaded({ c }: { c: CustomerData }) {
   return (
     <DetailLayout
       back={{ to: '/m/clients', label: 'Clients' }}

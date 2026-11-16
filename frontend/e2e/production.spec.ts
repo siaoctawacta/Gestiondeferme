@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
+import { LONG_SUITE } from './suites.ts';
 import type { Browser, Page } from 'playwright';
 import { api, enrollAdmin, enrollUser, launch, newPage, PASSWORD, uiLoginWithBackupCode, WEB_URL, type EnrolledAdmin, type EnrolledUser } from './helpers.ts';
 
@@ -16,7 +17,7 @@ const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISO
 // The tests below run in order and SHARE STATE (one farm, one lot, one laying house, one sow...): each builds on what
 // the previous ones created, so none can be run alone, and a failure early on makes the later ones fail too.
 // A farm of its own (the seeded one is shared with the other specs), so the dashboard figures are exactly this flow's.
-describe('production : lots, ponte, porcs, reproduction et alimentation de bout en bout', () => {
+describe('production : lots, ponte, porcs, reproduction et alimentation de bout en bout', LONG_SUITE, () => {
   let browser: Browser;
   let page: Page;
   let admin: EnrolledAdmin;

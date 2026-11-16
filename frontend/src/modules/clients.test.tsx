@@ -12,7 +12,7 @@ import { QuoteDetail } from '../pages/details/QuoteDetail';
 import { clients } from './clients';
 import { ModuleRoute } from '../pages/ModuleRoute';
 import './index';
-import { devis } from './salesShared';
+import { devis } from './devis';
 import { saleLinesField } from './saleLines';
 
 function json(status: number, body?: unknown): Response {
@@ -120,7 +120,7 @@ function mount(ui: React.ReactNode, { perms = COMMERCIAL, farm, route = '/' }: {
       return found[quote[1]] ? json(200, found[quote[1]]) : json(404, { message: 'Introuvable' });
     }
     if (url.startsWith('/api/quotes')) return page(QUOTES, { statusCounts: QUOTE_COUNTS });
-    if (url === '/api/settings') return json(200, SETTINGS);
+    if (url === '/api/settings/documents') return json(200, SETTINGS);
     throw new Error(`unexpected ${call.method} ${url}`);
   });
   render(
@@ -432,6 +432,17 @@ describe('quote detail', () => {
     expect(within(sheet).getByText('Valable jusqu\'au 2026-11-30')).toBeInTheDocument();
     expect(flat(within(sheet).getByText(/^Total :/).textContent)).toBe('Total : 1 075 000 FCFA');
     expect(within(sheet).getByText('Transport')).toBeInTheDocument();
+  });
+
+  it('prints the quote only once its legal block is on the page', async () => {
+    const legalAtPrint: boolean[] = [];
+    const print = vi.fn(() => { legalAtPrint.push(document.body.textContent?.includes('Ferme du Golfe SARL') ?? false); });
+    vi.stubGlobal('print', print);
+    mount(<QuoteDetail id="q1" />);
+    await screen.findByRole('heading', { name: 'DV-0001' });
+    await userEvent.setup().click(screen.getByRole('button', { name: 'Imprimer' }));
+    await waitFor(() => expect(print).toHaveBeenCalledOnce());
+    expect(legalAtPrint).toEqual([true]);
   });
 
   it('shows the not-found card for an unknown quote', async () => {

@@ -3,11 +3,10 @@ import { Ban, Banknote, Check, ClipboardCheck, PackageCheck, type LucideIcon } f
 import { ActionDialog, withoutEmpty } from '../components/module/ActionDialog';
 import { ConfirmDialog } from '../components/module/ConfirmDialog';
 import { LoadedRecord } from '../components/module/LoadedRecord';
-import type { Field } from '../components/module/types';
 import { api } from '../lib/api';
 import type { Action } from '../lib/modules';
 import { todayIso } from '../lib/format';
-import { PAYMENT_METHODS, type PurchaseData, type PurchaseRef } from './purchasingShared';
+import { PAY_FIELDS, type PurchaseData, type PurchaseRef } from './purchasingShared';
 
 export interface PurchaseDialogProps {
   row: PurchaseRef;
@@ -122,13 +121,6 @@ function ReceiveDialog({ row, onClose, onDone }: PurchaseDialogProps) {
     </LoadedRecord>
   );
 }
-
-export const PAY_FIELDS = (remaining: number): Field[] => [
-  { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
-  { name: 'amount', label: 'Montant (FCFA)', type: 'number', required: true, min: 0.01, step: 0.01, defaultValue: remaining },
-  { name: 'method', label: 'Mode de paiement', type: 'select', required: true, options: PAYMENT_METHODS, defaultValue: 'ESPECES' },
-  { name: 'reference', label: 'Référence', type: 'text' },
-];
 
 /** Payment of a received purchase, prefilled with what remains; the API refuses an amount above it. */
 export function PayDialog({ row, onClose, onDone }: PurchaseDialogProps) {

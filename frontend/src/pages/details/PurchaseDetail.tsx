@@ -4,6 +4,7 @@ import { Printer, Trash2 } from 'lucide-react';
 import { api } from '../../lib/api';
 import { useAuth } from '../../lib/auth';
 import { formatDate, formatMoney, formatNumber } from '../../lib/format';
+import { sumAmounts } from '../../lib/money';
 import { farmKey, useFarmQuery } from '../../lib/query';
 import { ConfirmDialog } from '../../components/module/ConfirmDialog';
 import { ActionButton } from '../../components/module/DataTable';
@@ -19,7 +20,7 @@ import {
 } from '../../modules/purchasingShared';
 import { DetailGate } from './DetailGate';
 import { HistoryTab } from './HistoryTab';
-import { SheetFrame, SheetHeads, SheetTable, SheetTotal, useLegal, type Legal } from '../print/SheetFrame';
+import { SheetFrame, SheetHeads, SheetTable, SheetTotal, useLegal, usePrintWhenReady, type Legal } from '../print/SheetFrame';
 import { DetailLayout } from './DetailLayout';
 
 function LinesTab({ data }: { data: PurchaseData }) {
@@ -83,8 +84,8 @@ function PaymentsTab({ data, canDelete, onDelete }: { data: PurchaseData; canDel
  * settings and is left out when the user cannot read them.
  */
 function PurchaseOrderSheet({ data, farmName, legal }: { data: PurchaseData; farmName: string | undefined; legal: Legal | undefined }) {
-  // What was ordered, as the API computed each line; the sum of 2-decimal amounts, re-rounded only against float noise.
-  const total = Math.round(data.lines.reduce((sum, l) => sum + l.orderedAmount, 0) * 100) / 100;
+  // What was ordered, as the API computed each line, summed in cents.
+  const total = sumAmounts(data.lines.map((l) => l.orderedAmount));
   return (
     <SheetFrame
       label="Bon de commande"
@@ -123,7 +124,9 @@ function Loaded({ data }: { data: PurchaseData }) {
 
   const writable = farmId !== 'all';
   const printable = ORDERED.includes(data.status);
-  const { legal } = useLegal(printable);
+  const { legal, ready } = useLegal(printable);
+  const [printRequest, setPrintRequest] = useState(0);
+  usePrintWhenReady(ready, printRequest);
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
   const done = () => { setActing(null); refresh(); };
   const def = statusDef(data.status);
@@ -151,7 +154,7 @@ function Loaded({ data }: { data: PurchaseData }) {
                 </Button>
               ))}
               {printable && (
-                <Button variant="outline" onClick={() => window.print()}>
+                <Button variant="outline" onClick={() => setPrintRequest((n) => n + 1)}>
                   <Printer aria-hidden className="size-4" />
                   Imprimer
                 </Button>

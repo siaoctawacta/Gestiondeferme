@@ -5,11 +5,15 @@
  *
  * Exact like the API's Decimal (half away from zero) for quantities and prices of at most 2 decimals: both are scaled
  * to integers, multiplied as BigInt, and rounded at the cent. Guaranteed while a line amount stays under 2^53 / 100
- * (about 9 × 10^13 FCFA); a non-finite input counts as 0.
+ * (about 9 × 10^13 FCFA); a non-finite input, or one too large to scale (above ~10^306), counts as 0. An input with more
+ * than 2 decimals is rounded to hundredths first (the forms' steps keep prices and quantities at 2 decimals).
  */
 
-/** A number of at most 2 decimals as integer hundredths; 0 for NaN / Infinity. */
-const hundredths = (value: number): bigint => (Number.isFinite(value) ? BigInt(Math.round(value * 100)) : 0n);
+/** A number of at most 2 decimals as integer hundredths; 0 for NaN / Infinity / a value whose hundredths overflow. */
+const hundredths = (value: number): bigint => {
+  const scaled = Math.round(value * 100);
+  return Number.isFinite(scaled) ? BigInt(scaled) : 0n;
+};
 
 /** Amount of one line in cents: quantity × unit price, half away from zero. */
 function lineCents(quantity: number, unitPrice: number): number {
@@ -26,4 +30,5 @@ export const linesTotal = (rows: { quantity?: string; unitPrice?: string }[]): n
   rows.reduce((sum, r) => sum + lineCents(Number(r.quantity || 0), Number(r.unitPrice || 0)), 0) / 100;
 
 /** Σ of amounts already rounded to cents, summed in integer cents (no float drift: `0.1 + 0.2` is `0.3`). */
-export const sumAmounts = (amounts: number[]): number => amounts.reduce((sum, a) => sum + (Number.isFinite(a) ? Math.round(a * 100) : 0), 0) / 100;
+export const sumAmounts = (amounts: number[]): number =>
+  amounts.reduce((sum, a) => { const cents = Math.round(a * 100); return sum + (Number.isFinite(cents) ? cents : 0); }, 0) / 100;

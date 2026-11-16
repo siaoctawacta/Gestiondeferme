@@ -2,7 +2,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { ActionDialog } from '../components/module/ActionDialog';
 import { LoadedRecord } from '../components/module/LoadedRecord';
 import { useEndpointOptions } from '../components/module/useEndpointOptions';
-import type { Field, ModuleConfig, RowAction } from '../components/module/types';
+import { toRowActions } from '../components/module/rowActions';
+import type { Field, ModuleConfig } from '../components/module/types';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatMoney, formatNumber, todayIso } from '../lib/format';
@@ -85,9 +86,7 @@ function PurchaseForm({ row, onSaved, onClose }: { row?: PurchaseRow; onSaved: (
   );
 }
 
-const actions: RowAction<PurchaseRow>[] = PURCHASE_ACTIONS.map((a) => ({
-  key: a.key, label: a.label, icon: a.icon, permission: a.permission, visible: a.visible, dialog: a.Dialog,
-}));
+const actions = toRowActions<PurchaseRow>(PURCHASE_ACTIONS);
 
 export const achats: ModuleConfig<PurchaseRow> = {
   slug: 'achats',

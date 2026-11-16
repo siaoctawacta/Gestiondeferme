@@ -1,5 +1,5 @@
 import { api, ApiError } from '../../lib/api';
-import { formatDecimal, formatMoney, formatNumber, orDash } from '../../lib/format';
+import { formatDecimal, formatMoney, formatNumber, orDash, signedMoney } from '../../lib/format';
 import { useFarmQuery } from '../../lib/query';
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
@@ -32,7 +32,7 @@ export const lotProfitability: ModuleConfig<LotProfitRow> = {
     { key: 'status', header: 'STATUT' },
     { key: 'sold', header: 'VENDUS', render: (l) => formatNumber(l.sold) },
     { key: 'totalCost', header: 'COÛT TOTAL', render: (l) => formatMoney(l.totalCost) },
-    { key: 'revenue', header: 'RECETTES', render: (l) => formatMoney(l.revenue) },
+    { key: 'revenue', header: 'RECETTES', render: (l) => signedMoney(l.revenue) },
     { key: 'margin', header: 'MARGE', render: (l) => <MarginPill value={l.margin} /> },
     { key: 'costPerAnimal', header: 'COÛT / ANIMAL', render: (l) => unitCost(l.costPerAnimal) },
     { key: 'costPerKg', header: 'COÛT / KG', render: (l) => unitCost(l.costPerKg) },
@@ -106,10 +106,10 @@ export function LotProfitabilityCard({ batchId }: { batchId: string }) {
               <Line label="Santé" value={formatMoney(query.data.costs.sante)} />
               <Line label="Autres charges" value={formatMoney(query.data.costs.autres)} />
               <Line strong label="Coût total" value={formatMoney(query.data.totalCost)} />
-              <Line label="Recettes" value={formatMoney(query.data.revenue)} />
+              <Line label="Recettes" value={signedMoney(query.data.revenue)} />
               <Line strong label="Marge du lot" value={<MarginPill value={query.data.margin} />} />
-              <Line label="Coût par animal" value={unitCost(query.data.costPerAnimal)} />
-              <Line label="Coût/kg" value={unitCost(query.data.costPerKg)} />
+              <Line label="Coût / animal" value={unitCost(query.data.costPerAnimal)} />
+              <Line label="Coût / kg" value={unitCost(query.data.costPerKg)} />
             </dl>
             <p className="mt-3 text-xs text-muted-foreground">{LOT_MARGIN_HINT}</p>
           </>

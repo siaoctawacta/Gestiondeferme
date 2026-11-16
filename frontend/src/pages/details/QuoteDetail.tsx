@@ -13,11 +13,12 @@ import { Card } from '../../components/ui/Card';
 import { Pill } from '../../components/ui/Pill';
 import { Table, TD, TR } from '../../components/ui/Table';
 import { kindLabel, lineQuantityLabel } from '../../modules/saleLines';
-import { QUOTE_ACTIONS, quoteStatusDef, type QuoteActionDef, type QuoteData } from '../../modules/salesShared';
+import { QUOTE_ACTIONS, type QuoteActionDef } from '../../modules/quoteActions';
+import { quoteStatusDef, type QuoteData } from '../../modules/salesShared';
 import { DetailGate } from './DetailGate';
 import { HistoryTab } from './HistoryTab';
 import { QuoteSheet } from '../print/SaleSheets';
-import { SheetHeads, useLegal } from '../print/SheetFrame';
+import { SheetHeads, useLegal, usePrintWhenReady } from '../print/SheetFrame';
 import { DetailLayout } from './DetailLayout';
 
 function LinesTab({ data }: { data: QuoteData }) {
@@ -48,7 +49,9 @@ function Loaded({ data }: { data: QuoteData }) {
   const [acting, setActing] = useState<QuoteActionDef | null>(null);
 
   const writable = farmId !== 'all';
-  const { legal } = useLegal();
+  const { legal, ready } = useLegal();
+  const [printRequest, setPrintRequest] = useState(0);
+  usePrintWhenReady(ready, printRequest);
   const done = () => { setActing(null); void queryClient.invalidateQueries({ queryKey: farmKey(farmId) }); };
   const def = quoteStatusDef(data.status);
   const offered = QUOTE_ACTIONS.filter((a) => canRunAction(a.permission, 'ventes', can, writable) && a.visible(data));
@@ -69,7 +72,7 @@ function Loaded({ data }: { data: QuoteData }) {
                   {a.label}
                 </Button>
               ))}
-              <Button variant="outline" onClick={() => window.print()}>
+              <Button variant="outline" onClick={() => setPrintRequest((n) => n + 1)}>
                 <Printer aria-hidden className="size-4" />
                 Imprimer
               </Button>

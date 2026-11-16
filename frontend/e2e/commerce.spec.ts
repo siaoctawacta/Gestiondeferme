@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
+import { LONG_SUITE } from './suites.ts';
 import type { Browser, Locator, Page } from 'playwright';
 import {
   api, enrollAdmin, enrollUser, launch, newPage, PASSWORD, uiLoginWithBackupCode, uiLoginWithPassword, WEB_URL,
@@ -9,11 +10,13 @@ import {
 /** Text with every kind of space (thin, no-break) turned into a plain one, so `1 050 000` matches however it is grouped. */
 const flat = (text: string) => text.replace(/\s+/g, ' ').trim();
 const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
-const monthStart = () => `${day(0).slice(0, 8)}01`;
+/** An amount as the UI prints it, spaces flattened (`1 420 000 FCFA`). */
+const money = (n: number) => flat(`${new Intl.NumberFormat('fr-FR').format(n)} FCFA`);
 
 // The flow of the slice, one role per step, through the real UI; set-up that is not the point of a step goes through
 // the API. The tests below run in order and SHARE STATE (one farm, one customer, one invoice...), as in logistics.spec.ts.
-// Precondition: today is not the first day of the month (the overdue invoice is dated the 1st and due the 1st).
+// The overdue invoice (FA-4) is dated and due YESTERDAY, so it is overdue on any day; on the first day of a month
+// yesterday is in the previous month, and the month-to-date figures below then leave its 400 000 out (`overdueInMonth`).
 //
 // The figures are worked out here:
 // - FA-1: 300 chickens at 3 500 = 1 050 000; paid 600 000 at issue -> due 450 000 (Partielle); lot 5 000 -> 4 700.
@@ -21,11 +24,12 @@ const monthStart = () => `${day(0).slice(0, 8)}01`;
 // - FA-3: 100 kg of feed at 500 = 50 000; the article had 1 000 kg -> 900.
 // - FA-1 is then settled (450 000), a credit note of 30 chickens with return = 105 000 -> refund due 105 000, lot 4 730,
 //   then refunded.
-// - FA-4 (Mme Afi, a prestation of 400 000 dated the 1st, due the 1st) is overdue.
-// Month to date: revenue 1 050 000 + 25 000 + 50 000 + 400 000 - 105 000 = 1 420 000; expenses 950 000 (salaires)
-// + 40 000 (transport, attributed to the chickens' lot) = 990 000; margin 430 000; receivables 25 000 + 50 000 + 400 000.
+// - FA-4 (Mme Afi, a prestation of 400 000 dated yesterday, due yesterday) is overdue.
+// Month to date: revenue 1 050 000 + 25 000 + 50 000 + 400 000 - 105 000 = 1 420 000 (1 020 000 without FA-4 when
+// yesterday is in the previous month); expenses 950 000 (salaires) + 40 000 (transport, attributed to the chickens' lot)
+// = 990 000; margin 430 000 (30 000); receivables 25 000 + 50 000 + 400 000 (all time, whatever the month).
 // The lot's margin: revenue 1 050 000 - 105 000 = 945 000, cost 40 000 -> 905 000, 270 sold.
-describe('commerce : devis, facture, paiements, avoir, remboursement, finance et alertes', () => {
+describe('commerce : devis, facture, paiements, avoir, remboursement, finance et alertes', LONG_SUITE, () => {
   let browser: Browser;
   let admin: EnrolledAdmin;
   let farmId = '';
@@ -39,6 +43,8 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
   let invoiceId = '';
   let invoiceNumber = '';
   let overdueNumber = '';
+  // Whether the overdue invoice (dated yesterday) falls in the month to date: not on the first day of a month.
+  let overdueInMonth = true;
   const users: Record<string, EnrolledUser | { email: string }> = {};
   const emails = {
     commercial: 'commercial@e2e.test',
@@ -63,13 +69,15 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
 
   /** Picks the option of a select whose text contains `text` (the sources are labelled `code — name (n vivants)`). */
   async function pick(select: Locator, text: string): Promise<void> {
-    // The options of a source arrive with the sellables request: wait for the one asked for.
-    let options: { value: string; text: string }[] = [];
-    for (let i = 0; i < 40; i += 1) {
-      options = await select.locator('option').evaluateAll((els) => els.map((e) => ({ value: (e as HTMLOptionElement).value, text: e.textContent ?? '' })));
-      if (options.some((o) => flat(o.text).includes(text))) break;
-      await new Promise((r) => setTimeout(r, 250));
-    }
+    // The options of a source arrive with the sellables request: wait (up to 10 s) for the one asked for.
+    const handle = await select.elementHandle();
+    assert.ok(handle, 'the select exists');
+    await select.page().waitForFunction(
+      ([el, wanted]) => Array.from((el as HTMLSelectElement).options).some((o) => (o.textContent ?? '').replace(/\s+/g, ' ').includes(wanted as string)),
+      [handle, text],
+      { timeout: 10_000 },
+    ).catch(() => undefined); // the assertion below names the options that did arrive
+    const options = await select.locator('option').evaluateAll((els) => els.map((e) => ({ value: (e as HTMLOptionElement).value, text: e.textContent ?? '' })));
     const found = options.find((o) => flat(o.text).includes(text));
     assert.ok(found, `an option contains « ${text} » (got ${JSON.stringify(options.map((o) => flat(o.text)))})`);
     await select.selectOption(found.value);
@@ -240,7 +248,8 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     await page.getByRole('button', { name: 'Ajouter' }).click();
     const dialog = page.getByRole('dialog');
     await dialog.getByLabel('Client').selectOption({ label: 'Restaurant Le Palmier' });
-    await line(dialog, 1, { kind: 'Œufs', source: 'œufs disponibles', quantity: '10', price: '2500' });
+    // The source label carries the balance (6 000 eggs = 200 plateaux of 30).
+    await line(dialog, 1, { kind: 'Œufs', source: '6 000 œufs disponibles (200 plateaux)', quantity: '10', price: '2500' });
     assert.equal(await dialog.getByLabel('Unité ligne 1').inputValue(), 'PLATEAU');
     assert.match(flat(await dialog.innerText()), /Total : 25 000 FCFA/);
     await dialog.getByRole('button', { name: 'Enregistrer' }).click();
@@ -248,7 +257,13 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     await page.getByRole('row', { name: /FA-0002/ }).waitFor();
     assert.match(flat(await page.getByRole('row', { name: /FA-0002/ }).innerText()), /Œufs \(plateau\) 10 25 000 FCFA 25 000 FCFA/);
     assert.equal(await eggBalance(), 5700);
-    // The Ponte availability drops: the sellable label reads the new balance.
+    // The sellable label of the invoice form reads the new balance (5 700 eggs = 190 plateaux).
+    await page.getByRole('button', { name: 'Ajouter' }).click();
+    const again = page.getByRole('dialog');
+    await again.getByLabel('Type ligne 1').selectOption({ label: 'Œufs' });
+    await pick(again.getByLabel('Source ligne 1'), '5 700 œufs disponibles (190 plateaux)');
+    await again.getByRole('button', { name: 'Annuler' }).click();
+    await again.waitFor({ state: 'detached' });
     await page.context().close();
   });
 
@@ -274,8 +289,9 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     const dialog = page.getByRole('dialog');
     await dialog.getByRole('button', { name: 'Émettre', exact: true }).click();
     await dialog.getByText(`Le lot ${withdrawalCode} est en délai d'attente jusqu'au ${day(3)} : vente impossible`).waitFor();
-    assert.equal(await dialog.isVisible(), true);
     assert.equal(await alive(withdrawalId), 200, 'nothing left the lot');
+    const drafts = await call<{ items: { status: string }[] }>('/sales?status=BROUILLON');
+    assert.equal(drafts.items.length, 1, 'the refused draft is still a draft');
     await dialog.getByRole('button', { name: 'Annuler' }).click();
     // The draft is useless: deleted.
     await page.getByRole('row', { name: /Brouillon/ }).first().getByRole('button', { name: 'Supprimer' }).click();
@@ -316,7 +332,7 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     await page.context().close();
   });
 
-  it('Commercial : annule une facture sans paiement (pas de bouton Avoir ni de Finance pour lui) ; les poulets reviennent dans le lot', async () => {
+  it('Commercial : sans Avoir, Annuler ni Finance ; Propriétaire : annule une facture sans paiement et les poulets reviennent dans le lot', async () => {
     const page = await asRole(emails.commercial);
     // Commercial holds neither `ventes:validate` nor finance: no Avoir, no Annuler, no Finance menu.
     const customerId = (await call<{ items: { id: string; name: string }[] }>('/customers')).items.find((c) => c.name === 'Restaurant Le Palmier')!.id;
@@ -380,13 +396,18 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     assert.equal(await dialog.getByLabel('Montant (FCFA)').inputValue(), '105000');
     await dialog.getByRole('button', { name: 'Enregistrer' }).click();
     await dialog.waitFor({ state: 'detached' });
-    await mainShows(page, /Avoirs 105 000 FCFA/);
+    // The refund is done when the button is gone (it shows while something is owed back): the credit note alone does not say so.
+    await page.getByRole('button', { name: 'Rembourser' }).waitFor({ state: 'detached' });
     detail = await invoice(invoiceId);
     assert.deepEqual([detail.refunded, detail.refundDue, detail.status], [105000, 0, 'SOLDEE']);
-    assert.equal(await page.getByRole('button', { name: 'Rembourser' }).count(), 0);
-    // The customer: nothing owed either way.
-    await page.goto(`${WEB_URL}/m/clients`);
-    await page.getByRole('row', { name: /Restaurant Le Palmier/ }).waitFor();
+    assert.doesNotMatch(await mainText(page), /À rembourser/);
+    // The customer owes the two unpaid invoices (25 000 + 50 000) and is owed nothing back.
+    const customerId = (await call<{ items: { id: string; name: string }[] }>('/customers')).items.find((c) => c.name === 'Restaurant Le Palmier')!.id;
+    const customer = await call<{ balance: number; refundDue: number }>(`/customers/${customerId}`);
+    assert.deepEqual([customer.balance, customer.refundDue], [75000, 0]);
+    await page.goto(`${WEB_URL}/m/clients/${customerId}`);
+    await mainShows(page, /Reste dû 75 000 FCFA/);
+    assert.doesNotMatch(await mainText(page), /À rembourser/);
     await page.context().close();
   });
 
@@ -424,11 +445,12 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
   });
 
   it('Comptable : crée une facture à échéance dépassée pour Mme Afi', async () => {
-    // Dated the first of the month and due that day (a past due date cannot be typed on the day itself otherwise).
-    assert.ok(day(0) > monthStart(), 'this flow cannot run on the first day of the month');
+    // Dated and due yesterday: overdue whatever the day of the month. On the first day of a month yesterday is in the
+    // previous month, which the month-to-date figures of the next step take into account.
+    overdueInMonth = day(-1).slice(0, 7) === day(0).slice(0, 7);
     const customerId = (await call<{ items: { id: string; name: string }[] }>('/customers')).items.find((c) => c.name.startsWith('Marché Hédzranawoé'))!.id;
     const sold = await call<{ id: string; number: string }>('/sales/issued', 'POST', {
-      customerId, date: monthStart(), dueDate: monthStart(), lines: [{ kind: 'SERVICE', designation: 'Prestation de transport', quantity: 1, unitPrice: 400000 }],
+      customerId, date: day(-1), dueDate: day(-1), lines: [{ kind: 'SERVICE', designation: 'Prestation de transport', quantity: 1, unitPrice: 400000 }],
     });
     overdueNumber = sold.number;
     assert.equal(overdueNumber, 'FA-0005');
@@ -438,11 +460,14 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     const page = await asRole(emails.accountant);
     await page.goto(`${WEB_URL}/m/finance`);
     await page.getByRole('tab', { name: 'Synthèse' }).click();
-    await mainShows(page, /Chiffre d'affaires 1 420 000 FCFA/);
+    // 1 420 000 with the overdue invoice in the month, 1 020 000 without it (first day of a month).
+    const revenue = overdueInMonth ? 1_420_000 : 1_020_000;
+    const margin = revenue - 990_000;
+    await mainShows(page, new RegExp(`Chiffre d'affaires ${money(revenue)}`));
     const text = await mainText(page);
-    for (const expected of [/Dépenses 990 000 FCFA/, /Marge 430 000 FCFA/, /Créances clients 475 000 FCFA/, /Activité Général/, /Salaires/, /Transport/]) assert.match(text, expected);
+    for (const expected of [new RegExp(`Dépenses ${money(990_000)}`), new RegExp(`Marge ${money(margin)}`), /Créances clients 475 000 FCFA/, /Activité Général/, /Salaires/, /Transport/]) assert.match(text, expected);
     const summary = await call<{ revenue: number; expenses: number; margin: number; receivables: number }>('/finance/summary');
-    assert.deepEqual([summary.revenue, summary.expenses, summary.margin, summary.receivables], [1420000, 990000, 430000, 475000]);
+    assert.deepEqual([summary.revenue, summary.expenses, summary.margin, summary.receivables], [revenue, 990000, margin, 475000]);
 
     await page.getByRole('tab', { name: 'Rentabilité par lot' }).click();
     const row = page.getByRole('row', { name: new RegExp(lotCode) });
@@ -456,7 +481,7 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     await page.goto(`${WEB_URL}/`);
     await page.getByText('Rentabilité du mois').waitFor();
     const home = await mainText(page);
-    for (const expected of ['1 420 000 FCFA', '990 000 FCFA', '430 000 FCFA']) assert.ok(home.includes(expected), `the dashboard shows ${expected}`);
+    for (const expected of [money(revenue), money(990_000), money(margin)]) assert.ok(home.includes(expected), `the dashboard shows ${expected}`);
     await page.context().close();
   });
 

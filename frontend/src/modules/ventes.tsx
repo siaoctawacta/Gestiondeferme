@@ -3,20 +3,23 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Printer } from 'lucide-react';
 import { ActionDialog } from '../components/module/ActionDialog';
 import { LoadedRecord } from '../components/module/LoadedRecord';
+import { toRowActions } from '../components/module/rowActions';
 import type { Field, LineRow, ModuleConfig, RowAction } from '../components/module/types';
-import { useEndpointOptions } from '../components/module/useEndpointOptions';
 import { api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { formatDate, formatMoney, formatNumber, todayIso } from '../lib/format';
 import { linesTotal } from '../lib/money';
-import { farmKey, useFarmQuery } from '../lib/query';
+import { farmKey } from '../lib/query';
+import { useDocumentSettings } from '../lib/documentSettings';
 import { InvoiceDetail } from '../pages/details/InvoiceDetail';
 import { PAYMENT_METHODS } from './purchasingShared';
+import { useCustomerField } from './customerField';
 import { CreditNotePrintDialog } from '../pages/print/CreditNotePrintDialog';
+import { devis } from './devis';
 import { INVOICE_ACTIONS } from './saleActions';
 import { saleLineLabels, saleLinesField, saleLinesToForm, saleLinesToPayload } from './saleLines';
 import {
-  DuePill, addDays, devis, draftGate, type CreditNoteRow, type InvoiceData, type InvoiceRow,
+  DuePill, addDays, draftGate, type CreditNoteRow, type InvoiceData, type InvoiceRow,
 } from './salesShared';
 
 /* ----------------------------------------------------------------------------------------------
@@ -34,18 +37,13 @@ const toForm = (i: InvoiceData) => ({
 /** The dialog: active customers are offered, plus the current one of a draft being edited, whatever its state. */
 function InvoiceDialog({ title, record, onClose, onDone }: { title: string; record?: InvoiceData; onClose: () => void; onDone: () => void }) {
   const { can } = useAuth();
-  const active = useEndpointOptions({ endpoint: '/customers', params: { active: 'true' } }, undefined, can('clients', 'read'));
-  const current = record && !active.some((o) => o.value === record.customerId) ? [{ value: record.customerId, label: record.customerName }] : [];
+  const customer = useCustomerField(record);
   // The due date the API will give when the field is left empty: the invoice date plus the `invoiceDueDays` setting.
-  const settings = useFarmQuery<Record<string, unknown>>(['settings'], () => api.get<Record<string, unknown>>('/settings'), { enabled: can('parametres', 'read') });
-  const dueDays = typeof settings.data?.invoiceDueDays === 'number' ? settings.data.invoiceDueDays : undefined;
+  const dueDays = useDocumentSettings().data?.invoiceDueDays;
   const canIssue = can('ventes', 'update');
 
   const fields = (values: Record<string, unknown>): Field[] => [
-    {
-      name: 'customerId', label: 'Client', type: 'select', required: true, options: [...current, ...active],
-      optionsPermission: { module: 'clients', action: 'read' },
-    },
+    customer,
     { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
     {
       name: 'dueDate', label: 'Échéance', type: 'date',
@@ -62,7 +60,7 @@ function InvoiceDialog({ title, record, onClose, onDone }: { title: string; reco
           { name: 'issue', label: 'Émettre la facture', type: 'checkbox', only: 'create', defaultValue: true },
           ...(values.issue === true
             ? ([
-                { name: 'cash', label: 'Payé comptant', type: 'number', only: 'create', min: 0, step: 0.01 },
+                { name: 'cash', label: 'Paiement comptant', type: 'number', only: 'create', min: 0, step: 0.01 },
                 { name: 'method', label: 'Mode de paiement', type: 'select', only: 'create', options: PAYMENT_METHODS, defaultValue: 'ESPECES' },
               ] as Field[])
             : []),
@@ -126,9 +124,7 @@ function InvoiceForm({ row, onSaved, onClose }: { row?: InvoiceRow; onSaved: () 
   );
 }
 
-const actions: RowAction<InvoiceRow>[] = INVOICE_ACTIONS.map((a) => ({
-  key: a.key, label: a.label, icon: a.icon, permission: a.permission, visible: a.visible, dialog: a.Dialog,
-}));
+const actions = toRowActions<InvoiceRow>(INVOICE_ACTIONS);
 
 /* ----------------------------------------------------------------------------------------------
  * The `Avoirs` tab: credit notes are made from an invoice (no `Ajouter`) and are final (no edit, no delete).

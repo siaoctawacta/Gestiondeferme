@@ -85,7 +85,7 @@ export const KINDS: { value: FinanceKind; label: string }[] = [
   { value: 'DEPENSE', label: 'Dépense' },
   { value: 'RECETTE', label: 'Recette' },
 ];
-export const kindLabel = (k: string) => KINDS.find((x) => x.value === k)?.label ?? k;
+export const entryKindLabel = (k: string) => KINDS.find((x) => x.value === k)?.label ?? k;
 
 export { ACTIVITIES, activityLabel };
 
@@ -168,7 +168,7 @@ export function ActivityCards({ rows }: { rows: ActivitySummary[] }) {
           <p className="text-sm text-muted-foreground">Activité {activityLabel(a.activity)}</p>
           <p className="mt-2 font-display text-[28px] font-bold leading-9">{signedMoney(a.margin)}</p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Recettes {formatMoney(a.revenue)} · Dépenses {formatMoney(a.expenses)}
+            Recettes {signedMoney(a.revenue)} · Dépenses {formatMoney(a.expenses)}
           </p>
         </Card>
       ))}

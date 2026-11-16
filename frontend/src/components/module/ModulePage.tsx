@@ -119,8 +119,8 @@ function ModuleView<T extends { id: string }>({
     () => api.get<ListResponse<T>>(config.endpoint, { ...listParams, ...scope }),
     {
       enabled: onMain && !sharedError,
-      // Keep the last page while the next loads, but never across a farm switch.
-      placeholderData: (prev, prevQuery) => (prevQuery?.queryKey[1] === farmId ? prev : undefined),
+      // Keep the last page while the next loads, but never across a farm switch, nor under an invalid shared period.
+      placeholderData: (prev, prevQuery) => (!sharedError && prevQuery?.queryKey[1] === farmId ? prev : undefined),
     },
   );
 
@@ -250,7 +250,7 @@ function ModuleView<T extends { id: string }>({
             <DataTable
               columns={config.columns}
               rows={list.data?.items ?? []}
-              loading={list.isPending}
+              loading={list.isPending && !sharedError}
               statuses={config.statuses}
               statusKey={config.statusKey}
               sort={sort}

@@ -8,7 +8,7 @@ import { useSharedFilters } from '../../components/module/sharedFilters';
 import { StatTiles } from '../../components/module/StatTiles';
 import { Card } from '../../components/ui/Card';
 import { Table, TD, TH, THead, TR } from '../../components/ui/Table';
-import { ActivityCards, SUMS_HINT, kindLabel, type FinanceSummaryDto } from '../../modules/financeShared';
+import { ActivityCards, SUMS_HINT, entryKindLabel, type FinanceSummaryDto } from '../../modules/financeShared';
 import { Skeleton } from '../PageParts';
 
 /** The same hint as the plan words it: consumption is counted in the lots' cost, not as an expense. */
@@ -44,7 +44,7 @@ export function FinanceSummary() {
           <div className="[&>div]:mb-0">
             <StatTiles
               tiles={[
-                { label: "Chiffre d'affaires", value: formatMoney(d.revenue) },
+                { label: "Chiffre d'affaires", value: signedMoney(d.revenue) },
                 { label: 'Dépenses', value: formatMoney(d.expenses) },
                 { label: 'Marge', value: signedMoney(d.margin) },
                 { label: 'Créances clients', value: formatMoney(d.receivables) },
@@ -68,8 +68,8 @@ export function FinanceSummary() {
                 {d.byCategory.map((c) => (
                   <TR key={`${c.kind}-${c.category}`}>
                     <TD className="font-semibold">{c.label}</TD>
-                    <TD>{kindLabel(c.kind)}</TD>
-                    <TD className="text-right">{formatMoney(c.amount)}</TD>
+                    <TD>{entryKindLabel(c.kind)}</TD>
+                    <TD className="text-right">{signedMoney(c.amount)}</TD>
                   </TR>
                 ))}
               </tbody>
@@ -90,7 +90,7 @@ export function FinanceSummary() {
                   {d.byFarm.map((f) => (
                     <TR key={f.farmId}>
                       <TD className="font-semibold">{f.farmName}</TD>
-                      <TD className="text-right">{formatMoney(f.revenue)}</TD>
+                      <TD className="text-right">{signedMoney(f.revenue)}</TD>
                       <TD className="text-right">{formatMoney(f.expenses)}</TD>
                       <TD className="text-right">{signedMoney(f.margin)}</TD>
                     </TR>

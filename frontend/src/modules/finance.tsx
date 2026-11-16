@@ -6,7 +6,7 @@ import { monthToDate, periodError } from '../pages/finance/period';
 import { FinanceSummary } from '../pages/finance/FinanceSummary';
 import { LotProfitabilityTab } from '../pages/finance/LotProfitability';
 import {
-  ACTIVITIES, AmountPill, EntryLabel, EXPENSE_CATEGORIES, KINDS, REVENUE_CATEGORIES, activityLabel, categoriesOf, categoryLabel, kindLabel, lockedReason,
+  ACTIVITIES, AmountPill, EntryLabel, EXPENSE_CATEGORIES, KINDS, REVENUE_CATEGORIES, activityLabel, categoriesOf, categoryLabel, entryKindLabel, lockedReason,
   type FinanceEntryRow,
 } from './financeShared';
 
@@ -85,7 +85,7 @@ export const finance: ModuleConfig<FinanceEntryRow> = {
   columns: [
     { key: 'date', header: 'DATE', render: (r) => formatDate(r.date), sortable: true },
     { key: 'label', header: 'LIBELLÉ', render: (r) => <EntryLabel row={r} /> },
-    { key: 'kind', header: 'TYPE', render: (r) => kindLabel(r.kind) },
+    { key: 'kind', header: 'TYPE', render: (r) => entryKindLabel(r.kind) },
     { key: 'activity', header: 'ACTIVITÉ', render: (r) => activityLabel(r.activity) },
     { key: 'category', header: 'CATÉGORIE', render: (r) => categoryLabel(r.category) },
     { key: 'amount', header: 'MONTANT', render: (r) => <AmountPill row={r} />, sortable: true },

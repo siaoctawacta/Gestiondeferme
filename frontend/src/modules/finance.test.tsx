@@ -378,6 +378,21 @@ describe('Synthèse', () => {
     expect(screen.getAllByText('−1 135 000 FCFA').length).toBeGreaterThan(0);
   });
 
+  it('shows a negative revenue (credit notes beyond the sales of the period) with a true minus everywhere', async () => {
+    await openSummary({
+      summary: {
+        ...SUMMARY, revenue: -50000, margin: -2885000,
+        byActivity: [{ activity: 'AVICOLE', revenue: -50000, expenses: 1140000, margin: -1190000 }],
+        byCategory: [{ kind: 'RECETTE', category: 'VENTE_ANIMAUX', label: "Ventes d'animaux", amount: -50000 }],
+        byFarm: [{ farmId: 'f1', farmName: 'Ferme Kpalimé', revenue: -50000, expenses: 2835000, margin: -2885000 }],
+      },
+    });
+    await waitFor(() => expect(flat(tile("Chiffre d'affaires").textContent)).toContain('−50 000 FCFA'));
+    expect(screen.getByText('Recettes −50 000 FCFA · Dépenses 1 140 000 FCFA')).toBeInTheDocument();
+    expect(cells(screen.getByText("Ventes d'animaux").closest('tr'))).toBe("Ventes d'animaux Recette −50 000 FCFA");
+    expect(cells(screen.getByText('Ferme Kpalimé').closest('tr'))).toBe('Ferme Kpalimé −50 000 FCFA 2 835 000 FCFA −2 885 000 FCFA');
+  });
+
   it('lists the categories with their type and amount, and no per-farm table for one farm', async () => {
     await openSummary();
     for (const h of ['CATÉGORIE', 'TYPE', 'MONTANT']) expect(await screen.findByRole('columnheader', { name: h })).toBeInTheDocument();
@@ -428,6 +443,8 @@ describe('Synthèse', () => {
     const user = userEvent.setup();
     fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2999-01-01' } });
     expect(await screen.findByText('La date de début est après la date de fin')).toBeInTheDocument();
+    // The list of the period that was valid is not left under the banner.
+    expect(screen.queryByText('Salaires septembre')).not.toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Synthèse' }));
     expect(await screen.findByText('La date de début est après la date de fin')).toBeInTheDocument();
     expect(calls.some((c) => c.url.startsWith('/api/finance/summary'))).toBe(false);
@@ -513,7 +530,7 @@ describe('profitability card of the lot detail', () => {
     const text = Array.from(card.querySelectorAll('dl > div')).map((l) => `${l.querySelector('dt')!.textContent} ${l.querySelector('dd')!.textContent}`).map(flat);
     for (const part of [
       "Coût des animaux 1 500 000 FCFA", 'Aliment 198 400 FCFA', 'Santé 24 000 FCFA', 'Autres charges 50 000 FCFA', 'Coût total 1 772 400 FCFA',
-      'Recettes 945 000 FCFA', 'Marge du lot −827 400 FCFA', 'Coût par animal 367.72 FCFA', 'Coût/kg —',
+      'Recettes 945 000 FCFA', 'Marge du lot −827 400 FCFA', 'Coût / animal 367.72 FCFA', 'Coût / kg —',
     ]) expect(text).toContain(part);
     expect(tone(within(card), '−827 400 FCFA')).toBe('danger');
   });

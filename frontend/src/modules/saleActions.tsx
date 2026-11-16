@@ -8,8 +8,7 @@ import { formatMoney, formatNumber, todayIso } from '../lib/format';
 import type { Action } from '../lib/modules';
 import { lineAmount, sumAmounts } from '../lib/money';
 import { isWhole } from './saleLines';
-import { PAY_FIELDS } from './purchaseActions';
-import { PAYMENT_METHODS } from './purchasingShared';
+import { PAYMENT_METHODS, PAY_FIELDS } from './purchasingShared';
 import type { InvoiceData, InvoiceRef } from './salesShared';
 
 /* ----------------------------------------------------------------------------------------------

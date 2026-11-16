@@ -1,23 +1,33 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { api } from '../../lib/api';
-import { useAuth } from '../../lib/auth';
+import { useDocumentSettings, type Legal } from '../../lib/documentSettings';
 import { formatMoney } from '../../lib/format';
-import { useFarmQuery } from '../../lib/query';
 import { Table, TH, THead, TR } from '../../components/ui/Table';
 
-/** The `legal` setting: the block printed at the top of every sheet. */
-export type Legal = Record<'name' | 'address' | 'nif' | 'rccm', string>;
+export type { Legal };
 
 /**
- * The legal block of the sheets. It comes from the settings and is left out when the user cannot read them; `ready` is
- * true once it is known (loaded, failed, or not readable), so a sheet is never printed before its header arrives.
+ * The legal block of the sheets, from the document settings every role may read. `ready` is true once it is known
+ * (loaded, or failed), so a sheet is never printed before its header arrives; `enabled` false makes no request.
  */
 export function useLegal(enabled = true): { legal: Legal | undefined; ready: boolean } {
-  const { can } = useAuth();
-  const allowed = enabled && can('parametres', 'read');
-  const query = useFarmQuery<Record<string, unknown>>(['settings'], () => api.get<Record<string, unknown>>('/settings'), { enabled: allowed });
-  return { legal: query.data?.legal as Legal | undefined, ready: !allowed || !query.isPending };
+  const query = useDocumentSettings(enabled);
+  return { legal: query.data?.legal, ready: !enabled || !query.isPending };
+}
+
+/**
+ * THE print trigger of a detail page or dialog: calls `window.print()` once per `request` (any truthy value that
+ * changes with each ask: a counter, the object of the sheet), as soon as the sheet is `ready` (legal block loaded).
+ * A falsy `request` prints nothing; readiness flipping again never prints a request twice.
+ */
+export function usePrintWhenReady(ready: boolean, request: unknown): void {
+  const printed = useRef<unknown>(null);
+  useEffect(() => {
+    if (request && ready && printed.current !== request) {
+      printed.current = request;
+      window.print();
+    }
+  }, [request, ready]);
 }
 
 /** `plain`: no tinted background (the printed sheet rules a border instead). */

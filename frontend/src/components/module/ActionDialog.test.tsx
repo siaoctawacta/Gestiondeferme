@@ -489,4 +489,10 @@ describe('ActionDialog: field hints', () => {
     await user.type(within(dialog).getByLabelText('Échéance'), '2026-12-01');
     expect(within(dialog).queryByText(/Par défaut/)).not.toBeInTheDocument();
   });
+
+  it('links the hint of a textarea to it too', async () => {
+    mount({ fields: [{ name: 'comment', label: 'Commentaire', type: 'textarea', hint: 'Visible sur la fiche' }] });
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByLabelText('Commentaire')).toHaveAccessibleDescription('Visible sur la fiche');
+  });
 });

@@ -1,4 +1,5 @@
-import type { StatusDef } from '../components/module/types';
+import type { Field, StatusDef } from '../components/module/types';
+import { todayIso } from '../lib/format';
 
 /* ---------------------------------------------------------------------------------------------
  * API shapes (backend contract of `/purchases`, Task 4). Reconcile with the backend here only.
@@ -113,6 +114,14 @@ export const ACTIVITIES: { value: Activity; label: string }[] = [
 export const activityLabel = (a: string) => ACTIVITIES.find((x) => x.value === a)?.label ?? a;
 
 export const methodLabel = (m: string) => PAYMENT_METHODS.find((x) => x.value === m)?.label ?? m;
+
+/** The fields of a payment (purchase or sale), the amount prefilled with what remains; THE one definition both modules use. */
+export const PAY_FIELDS = (remaining: number): Field[] => [
+  { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
+  { name: 'amount', label: 'Montant (FCFA)', type: 'number', required: true, min: 0.01, step: 0.01, defaultValue: remaining },
+  { name: 'method', label: 'Mode de paiement', type: 'select', required: true, options: PAYMENT_METHODS, defaultValue: 'ESPECES' },
+  { name: 'reference', label: 'Référence', type: 'text' },
+];
 
 /** Statuses from which a `Bon de commande` exists. */
 export const ORDERED: PurchaseStatus[] = ['COMMANDEE', 'RECUE', 'PAYEE'];
