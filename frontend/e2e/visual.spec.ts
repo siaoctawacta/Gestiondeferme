@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdirSync } from 'node:fs';
+import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { Browser, Locator, Page } from 'playwright';
 import { api, enrollAdmin, launch, newPage, uiLoginWithBackupCode, WEB_URL, type EnrolledAdmin } from './helpers.ts';
-import { PLANNED_VACCINATION_DATE, seedLogisticsReferenceData, seedReferenceData } from './referenceData.ts';
+import { PLANNED_VACCINATION_DATE, seedCommerceReferenceData, seedLogisticsReferenceData, seedReferenceData } from './referenceData.ts';
 
 const BUILT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'reference', 'built');
 
@@ -111,6 +111,54 @@ const REF_SCREENS = {
       ['2026-10-15', 'Porcherie 2', 'Désinfection', 'Virkon S', '1%', 'Équipe', 'En retard'],
     ],
   },
+  m_clients: {
+    path: '/m/clients', wait: 'Restaurant Le Palmier',
+    tiles: ['Total enregistrements'],
+    headers: ['NOM', 'TYPE', 'TÉLÉPHONE', 'VILLE'],
+    pills: [],
+    headerHeight: 40, rowHeight: 56,
+    row: ['Restaurant Le Palmier', 'Restaurant', '+228 93 12 34 56', 'Lomé'],
+    more: [
+      ['Marché Hédzranawoé — Mme Afi', 'Revendeur', '+228 98 65 43 21', 'Lomé'],
+      ['SuperMarché Ramco', 'Grossiste', '+228 22 21 00 00', 'Lomé'],
+    ],
+  },
+  // What is still due is yellow, overdue or not (FA-0309 is past its due date and still yellow in the reference).
+  m_ventes: {
+    path: '/m/ventes', wait: 'FA-0310',
+    tiles: ['Total enregistrements'],
+    headers: ['DATE', 'N° FACTURE', 'CLIENT', 'PRODUIT', 'QUANTITÉ', 'TOTAL', 'RESTE DÛ'],
+    pills: [['0 FCFA', 'success'], ['400 000 FCFA', 'warning']],
+    headerHeight: 40, rowHeight: 56,
+    row: ['2026-10-21', 'FA-0310', 'Restaurant Le Palmier', 'Poulets de chair', '300', '1 050 000 FCFA', '0 FCFA'],
+    more: [
+      ['2026-10-20', 'FA-0309', 'Marché Hédzranawoé — Mme Afi', 'Œufs (plateau)', '400', '1 000 000 FCFA', '400 000 FCFA'],
+      ['2026-10-12', 'FA-0305', 'SuperMarché Ramco', 'Porcs', '12', '1 620 000 FCFA', '0 FCFA'],
+      ['2026-10-05', 'FA-0301', 'Restaurant Le Palmier', 'Porcelets', '10', '300 000 FCFA', '0 FCFA'],
+    ],
+  },
+  // The list opens on the current month: the period is set to October to show the reference rows. Besides the five
+  // manual entries it lists what is derived (four invoices, the received purchase BC-0141): `extra` rows.
+  m_finance: {
+    path: '/m/finance', wait: 'Salaires septembre',
+    prepare: async (page: Page) => {
+      await page.getByLabel('Du', { exact: true }).fill('2026-10-01');
+      await page.getByLabel('Au', { exact: true }).fill('2026-10-31');
+    },
+    tiles: ['Total enregistrements'],
+    headers: ['DATE', 'LIBELLÉ', 'TYPE', 'ACTIVITÉ', 'CATÉGORIE', 'MONTANT'],
+    pills: [['950 000 FCFA', 'danger'], ['1 050 000 FCFA', 'success']],
+    headerHeight: 40, rowHeight: 56,
+    row: ['2026-10-01', 'Salaires septembre', 'Dépense', 'Général', 'Salaires', '950 000 FCFA'],
+    more: [
+      ['2026-10-03', 'Aliment chair 6 t', 'Dépense', 'Avicole', 'Aliment', '1 020 000 FCFA'],
+      ['2026-10-08', 'Électricité CEET', 'Dépense', 'Général', 'Énergie', '185 000 FCFA'],
+      ['2026-10-10', 'Vaccins & médicaments', 'Dépense', 'Avicole', 'Santé', '120 000 FCFA'],
+      ['2026-10-14', 'Aliment porc 2 t', 'Dépense', 'Porcin', 'Aliment', '560 000 FCFA'],
+    ],
+    extra: 5,
+    headerOffset: 229,
+  },
 } as const;
 // Row edit / delete icons stay on every row, as in the reference. A row that cannot be changed shows them
 // disabled (aria-disabled) with the reason as tooltip: [row text, icon, reason].
@@ -125,6 +173,15 @@ const DISABLED_ICONS: Record<string, [string, string, string][]> = {
     ['TR-021', 'Supprimer', 'Enregistrement verrouillé'],
   ],
   // Only a request (Demande) can still be edited or deleted.
+  // Only a draft invoice can still be edited or deleted; a derived finance row points at its document.
+  m_ventes: [
+    ['FA-0310', 'Modifier', 'Enregistrement verrouillé'],
+    ['FA-0310', 'Supprimer', 'Enregistrement verrouillé'],
+  ],
+  m_finance: [
+    ['FA-0310', 'Modifier', "Écriture générée par une facture — corrigez le document d'origine"],
+    ['FA-0310', 'Supprimer', "Écriture générée par une facture — corrigez le document d'origine"],
+  ],
   m_achats: [
     ['BC-0142', 'Modifier', 'Enregistrement verrouillé'],
     ['BC-0142', 'Supprimer', 'Enregistrement verrouillé'],
@@ -163,7 +220,8 @@ async function compareWithReference(page: Page, name: string, ref: (typeof REF_S
   near(tile.width, REF.tile.width, `${name}: tile width`);
   near(tile.height, REF.tile.height, `${name}: tile height`);
   const header = await box(page.locator('thead tr').first());
-  near(header.y - tile.y, 181, `${name}: table header offset from the tiles`);
+  // `m_finance` carries a row of filters (period, type, activity, category) the reference does not draw: +48px.
+  near(header.y - tile.y, 'headerOffset' in ref ? ref.headerOffset : 181, `${name}: table header offset from the tiles`);
   near(header.height - 1, ref.headerHeight, `${name}: table header height`);
   const firstRow = await box(page.locator('tbody tr').first());
   near(firstRow.y - (header.y + header.height), 0, `${name}: the first row follows the header`);
@@ -180,7 +238,7 @@ async function compareWithReference(page: Page, name: string, ref: (typeof REF_S
       document.body.append(probe);
       const expected = getComputedStyle(probe).backgroundColor;
       probe.remove();
-      const pill = [...document.querySelectorAll('tbody span.inline-flex.rounded-full')].find((e) => e.textContent?.trim() === text);
+      const pill = [...document.querySelectorAll('tbody span.inline-flex.rounded-full')].find((e) => (e.textContent ?? '').replace(/\s+/g, ' ').trim() === text);
       return { expected, actual: pill ? getComputedStyle(pill).backgroundColor : null };
     }, [label, tone]);
     assert.equal(colors.actual, colors.expected, `${name}: pill « ${label} » is ${tone}`);
@@ -203,8 +261,15 @@ async function compareWithReference(page: Page, name: string, ref: (typeof REF_S
   for (const expected of [ref.row, ...('more' in ref ? ref.more : [])]) {
     assert.ok(cells.some((c) => JSON.stringify(c) === JSON.stringify(expected)), `${name}: a row reads ${expected.join(' | ')} (got ${JSON.stringify(cells)})`);
   }
-  if ('more' in ref) assert.equal(bodyRows, ref.more.length + 1, `${name}: exactly the reference rows`);
+  if ('more' in ref) assert.equal(bodyRows, ref.more.length + 1 + ('extra' in ref ? ref.extra : 0), `${name}: exactly the reference rows${'extra' in ref ? ' and the derived ones' : ''}`);
 }
+
+/** Waits until the page's main text (spaces flattened, no-break spaces included) matches. */
+const mainShowsText = (page: Page, re: RegExp) =>
+  page.waitForFunction(
+    ([source, flags]) => new RegExp(source, flags).test(document.querySelector('main')?.innerText.replace(/[\s\u202f\u00a0]+/g, ' ') ?? ''),
+    [re.source, re.flags] as const,
+  );
 
 async function settle(page: Page): Promise<void> {
   await page.waitForLoadState('networkidle');
@@ -266,6 +331,7 @@ describe('rendu : captures et comparaison avec la référence', () => {
     }
     const production = await seedReferenceData(admin, buildings);
     await seedLogisticsReferenceData(admin, production, buildings);
+    await seedCommerceReferenceData(admin, production);
 
     await page.goto(`${WEB_URL}/`);
     await page.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
@@ -280,13 +346,39 @@ describe('rendu : captures et comparaison avec la référence', () => {
       assert.ok(typeof expected === 'string' ? text.includes(expected) : expected.test(text), `home shows « ${expected} »`);
     }
 
-    // The home shows the five most urgent alerts; the full list (the Alertes page) also has the overdue disinfection.
+    // « Rentabilité du mois » is the calendar month to date (ruling Q26): the reference documents are dated October, so
+    // the card shows this month's figures (the API's own summary), not the reference 3 970 000 / 2 835 000 / 1 135 000
+    // (the October period is checked on the Synthèse below). A documented difference of home.png.
+    const money = (n: number) => `${new Intl.NumberFormat('fr-FR').format(n)} FCFA`;
+    const month = await api<{ revenue: number; expenses: number; margin: number }>('/finance/summary', { token: admin.token, farmId: admin.farmId });
+    const homeText = flat(await page.locator('main').innerText()).replace(/[\u202f\u00a0]/g, ' ');
+    assert.ok(homeText.includes('Rentabilité du mois'), 'home shows the profitability card');
+    for (const n of [month.revenue, month.expenses, month.margin]) {
+      assert.ok(homeText.includes(money(n).replace(/[\u202f\u00a0]/g, ' ')), `home shows ${money(n)} (this month's figure)`);
+    }
+    assert.ok(homeText.includes('Recettes vs dépenses'), 'home shows the revenue chart');
+
+    // The home shows the five most urgent alerts; the full list (the Alertes page) also has the overdue disinfection
+    // and the overdue receivable (FA-0309 fell due on 2026-11-04).
     await page.goto(`${WEB_URL}/alertes`);
     await page.getByText('Désinfection en retard').first().waitFor();
+    await page.getByText('Créance FA-0309').waitFor();
+    await settle(page);
     const alertsText = flat(await page.locator('main').innerText());
-    for (const expected of ['Désinfection en retard Porcherie 2 — Virkon S', 'Stock critique : Aliment engraissement porc 600 kg (seuil 1500)']) {
+    for (const expected of ['Désinfection en retard Porcherie 2 — Virkon S', 'Stock critique : Aliment engraissement porc 600 kg (seuil 1500)', 'Créance FA-0309 Marché Hédzranawoé — Mme Afi — 400 000 FCFA']) {
       assert.ok(alertsText.includes(expected), `the alerts page shows « ${expected} »`);
     }
+    await page.screenshot({ path: join(BUILT, 'alertes.png'), fullPage: true });
+
+    // Rapports: the receivables of the whole period; the money rows follow the month, like the home card.
+    await page.goto(`${WEB_URL}/rapports`);
+    await page.getByText('Créances clients').waitFor();
+    await settle(page);
+    const reportText = flat(await page.locator('main').innerText()).replace(/[\u202f\u00a0]/g, ' ');
+    for (const expected of ['Créances clients 400 000 FCFA', 'Activité Avicole', 'Activité Porcin', 'Activité Général']) {
+      assert.ok(reportText.includes(expected), `the reports page shows « ${expected} »`);
+    }
+    await page.screenshot({ path: join(BUILT, 'rapports.png'), fullPage: true });
 
     await page.goto(`${WEB_URL}/m/batiments`);
     await page.getByRole('row', { name: /Poulailler A/ }).waitFor();
@@ -295,17 +387,41 @@ describe('rendu : captures et comparaison avec la référence', () => {
 
     for (const [name, ref] of Object.entries(REF_SCREENS)) {
       await page.goto(`${WEB_URL}${ref.path}`);
+      if ('prepare' in ref) await ref.prepare(page);
       await page.getByRole('row', { name: new RegExp(ref.wait) }).first().waitFor();
       await settle(page);
       await page.screenshot({ path: join(BUILT, `${name}.png`) });
       await compareWithReference(page, name, ref);
     }
-    assert.equal(await page.title(), 'Santé & biosécurité — AgriPilot');
+    assert.equal(await page.title(), 'Dépenses & recettes — AgriPilot');
+
+    // The reference period (October, as captured): the Synthèse reproduces the reference figures. Differences: the received
+    // purchase BC-0141 (120 000, activity Général) is an expense next to the manual `Vaccins & médicaments` row of the same
+    // amount (the reference has the manual row only), so the Général activity reads -1 255 000, not -1 135 000.
+    await page.goto(`${WEB_URL}/m/finance`);
+    await page.getByRole('tab', { name: 'Synthèse' }).click();
+    await page.getByLabel('Du', { exact: true }).fill('2026-10-01');
+    await page.getByLabel('Au', { exact: true }).fill('2026-10-31');
+    await page.getByText("Chiffre d'affaires", { exact: true }).waitFor();
+    const october = await api<{ revenue: number; expenses: number; margin: number; receivables: number; byActivity: { activity: string; revenue: number; expenses: number; margin: number }[] }>(
+      '/finance/summary?from=2026-10-01&to=2026-10-31', { token: admin.token, farmId: admin.farmId });
+    assert.equal(october.revenue, 3_970_000, 'October revenue = the reference chiffre d’affaires');
+    assert.equal(october.expenses, 2_955_000, 'October expenses = the reference 2 835 000 + the received purchase 120 000');
+    assert.equal(october.receivables, 400_000);
+    const byActivity = Object.fromEntries(october.byActivity.map((a) => [a.activity, a]));
+    assert.deepEqual([byActivity.AVICOLE.revenue, byActivity.AVICOLE.expenses, byActivity.AVICOLE.margin], [2_050_000, 1_140_000, 910_000]);
+    assert.deepEqual([byActivity.PORCIN.revenue, byActivity.PORCIN.expenses, byActivity.PORCIN.margin], [1_920_000, 560_000, 1_360_000]);
+    assert.deepEqual([byActivity.GENERAL.revenue, byActivity.GENERAL.expenses, byActivity.GENERAL.margin], [0, 1_255_000, -1_255_000]);
+    await mainShowsText(page, /Activité Avicole\s*910 000 FCFA/);
+    await settle(page);
+    await page.screenshot({ path: join(BUILT, 'finance_synthese.png') });
     assert.deepEqual(foreignRequests, [], 'every asset (fonts included) is served locally');
   });
 
   it('mobile 375x812 : feuille d’inventaire, réception, tuiles d’un achat, cinq onglets de Santé, formulaire d’acte, bon de commande à l’impression', async () => {
     const { context, page: phone } = await newPage(browser, { width: 375, height: 812 });
+    // The organisation holds other specs' farms: this one looks at the seeded farm, whichever sorts first.
+    await context.addInitScript((farm) => localStorage.setItem('ap_farm', farm), admin.farmId);
     await uiLoginWithBackupCode(phone, admin.email, admin.backupCodes[2]);
     await phone.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
     const report = (what: string, values: unknown) => console.log(`[375px] ${what}: ${JSON.stringify(values)}`);
@@ -683,6 +799,145 @@ describe('rendu : captures et comparaison avec la référence', () => {
     assert.ok(short.y >= 0 && short.y + short.height <= 520, 'the dialog panel fits a 390x520 viewport');
     await dialog.getByLabel('Code (généré si vide)').scrollIntoViewIfNeeded();
     assert.ok(await inViewport(), 'the Enregistrer button stays in view while the body scrolls');
+    await context.close();
+  });
+  it('mobile 375x812 : formulaire de facture à 7 colonnes, détail de facture, avoir, finance (écritures, synthèse) et vues imprimables', async () => {
+    const { context, page: phone } = await newPage(browser, { width: 375, height: 812 }, 2);
+    await context.addInitScript((farm) => localStorage.setItem('ap_farm', farm), admin.farmId);
+    // Headless Chromium prints nothing: the sheets are inspected under `print` media instead.
+    await context.addInitScript(() => { window.print = () => undefined; });
+    await uiLoginWithBackupCode(phone, admin.email, admin.backupCodes[5]);
+    await phone.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
+    const report = (what: string, values: unknown) => {
+      // Also written to a file: the runner's reporter does not forward a test's console output.
+      const line = `[375px] ${what}: ${JSON.stringify(values)}`;
+      console.log(line);
+      if (process.env.E2E_MEASURES) appendFileSync(process.env.E2E_MEASURES, `${line}\n`);
+    };
+    const pageWidth = () => phone.evaluate(() => document.documentElement.scrollWidth);
+    const noPageScroll = async (what: string) => {
+      const w = await pageWidth();
+      assert.ok(w <= 375, `${what}: document scrollWidth ${w} > 375`);
+      return w;
+    };
+    const call = <T = { id: string }>(path: string, method = 'GET', body?: unknown) => api<T>(path, { method, token: admin.token, farmId: admin.farmId, body });
+    const customers = await call<{ items: { id: string; name: string }[] }>('/customers?pageSize=200');
+    const afi = customers.items.find((c) => c.name.startsWith('Marché Hédzranawoé'))!.id;
+    const invoices = await call<{ items: { id: string; number: string }[] }>('/sales?pageSize=50');
+    const fa309 = invoices.items.find((i) => i.number === 'FA-0309')!.id;
+
+    // 1. The invoice form: seven columns, wide dialog, the grid scrolls inside it, the page does not.
+    await phone.goto(`${WEB_URL}/m/ventes`);
+    await phone.getByRole('button', { name: 'Ajouter' }).click();
+    let dialog = phone.getByRole('dialog');
+    await dialog.getByLabel('Type ligne 1').waitFor();
+    await settle(phone);
+    const grid = dialog.locator('fieldset .overflow-x-auto');
+    const gridBox = await grid.evaluate((el) => ({ clientWidth: el.clientWidth, scrollWidth: el.scrollWidth }));
+    assert.ok(gridBox.scrollWidth > gridBox.clientWidth, 'the 7-column line grid is wider than its container and scrolls inside it');
+    let panel = await box(dialog);
+    assert.ok(panel.x >= 0 && panel.x + panel.width <= 375 && panel.y >= 0 && panel.y + panel.height <= 812, 'the invoice dialog fits the phone');
+    await grid.evaluate((el) => { el.scrollLeft = el.scrollWidth; });
+    report('invoice form', { panel, grid: gridBox, page: await noPageScroll('invoice form') });
+    const save = dialog.getByRole('button', { name: 'Enregistrer' });
+    await save.scrollIntoViewIfNeeded();
+    assert.ok((await box(save)).x + (await box(save)).width <= 375, 'Enregistrer is inside the phone');
+    await phone.screenshot({ path: join(BUILT, 'facture_formulaire_375.png') });
+    await dialog.getByRole('button', { name: 'Annuler' }).click();
+
+    // 2. The detail of FA-0309 (Partielle): header with every action and print button, tiles, tabs.
+    await phone.goto(`${WEB_URL}/m/ventes/${fa309}`);
+    await phone.getByRole('heading', { name: 'FA-0309' }).waitFor();
+    await settle(phone);
+    const buttons = await phone.locator('main button:not([role=tab])').evaluateAll((els) => els.map((el) => ({ text: el.textContent?.trim(), right: Math.round(el.getBoundingClientRect().right), left: Math.round(el.getBoundingClientRect().left) })));
+    report('invoice detail header', { buttons: buttons.filter((b) => b.text), page: await noPageScroll('invoice detail') });
+    for (const b of buttons.filter((x) => x.text)) assert.ok(b.right <= 375 && b.left >= 0, `the « ${b.text} » button stays inside the phone`);
+    const tiles = await phone.locator('main .grid > div').evaluateAll((els) => els.map((tile) => {
+      const value = tile.querySelector('p:last-child') as HTMLElement;
+      return { text: value.textContent?.replace(/\s+/g, ' '), overflow: value.scrollWidth - value.clientWidth, right: Math.round(tile.getBoundingClientRect().right) };
+    }));
+    report('invoice tiles', tiles);
+    for (const t of tiles) assert.ok(t.overflow <= 0 && t.right <= 375, `tile « ${t.text} » fits`);
+    await phone.screenshot({ path: join(BUILT, 'vente_detail_375.png') });
+
+    // 3. The credit-note dialog (loaded with the invoice's lines).
+    await phone.getByRole('button', { name: 'Avoir' }).click();
+    dialog = phone.getByRole('dialog');
+    await dialog.getByLabel(/^Quantité à créditer/).waitFor();
+    panel = await box(dialog);
+    assert.ok(panel.x >= 0 && panel.x + panel.width <= 375 && panel.y >= 0 && panel.y + panel.height <= 812, 'the credit-note dialog fits the phone');
+    const creditGrid = await dialog.locator('fieldset .overflow-x-auto').evaluate((el) => ({ clientWidth: el.clientWidth, scrollWidth: el.scrollWidth }));
+    report('credit-note dialog', { panel, grid: creditGrid, page: await noPageScroll('credit-note dialog') });
+    await phone.screenshot({ path: join(BUILT, 'avoir_dialogue_375.png') });
+    // The credit note itself (1 plateau, no return) is made through the API: a document for the print view below.
+    await dialog.getByRole('button', { name: 'Annuler' }).click();
+    const invoice = await call<{ lines: { id: string }[] }>(`/sales/${fa309}`);
+    await call(`/sales/${fa309}/credit-notes`, 'POST', { date: new Date().toISOString().slice(0, 10), reason: 'Plateau cassé', withReturn: false, lines: [{ lineId: invoice.lines[0].id, quantity: 1 }] });
+    const quote = await call<{ id: string }>('/quotes', 'POST', { customerId: afi, date: new Date().toISOString().slice(0, 10), lines: [{ kind: 'SERVICE', designation: 'Livraison', quantity: 1, unitPrice: 15000 }] });
+
+    // 4. Finance: the entries table scrolls inside its card, the Synthèse cards stack.
+    await phone.goto(`${WEB_URL}/m/finance`);
+    await phone.getByLabel('Du', { exact: true }).fill('2026-10-01');
+    await phone.getByLabel('Au', { exact: true }).fill('2026-10-31');
+    await phone.getByRole('row', { name: /Salaires septembre/ }).waitFor();
+    await settle(phone);
+    const table = await phone.locator('main table').first().evaluate((el) => {
+      const wrap = el.closest('.overflow-x-auto') as HTMLElement | null;
+      return { table: el.scrollWidth, wrap: wrap ? wrap.clientWidth : null, scrolls: wrap ? wrap.scrollWidth > wrap.clientWidth : false };
+    });
+    report('finance entries table', { table, page: await noPageScroll('finance entries') });
+    await phone.screenshot({ path: join(BUILT, 'finance_ecritures_375.png') });
+    await phone.getByRole('tab', { name: 'Synthèse' }).click();
+    await phone.getByText("Chiffre d'affaires", { exact: true }).waitFor();
+    await settle(phone);
+    const cards = await phone.locator('main .grid > div').evaluateAll((els) => els.map((c) => {
+      const r = c.getBoundingClientRect();
+      return { text: c.textContent?.replace(/\s+/g, ' ').slice(0, 40), right: Math.round(r.right), overflow: c.scrollWidth - c.clientWidth };
+    }));
+    report('synthèse cards', { cards, page: await noPageScroll('synthèse') });
+    for (const c of cards) assert.ok(c.right <= 375 && c.overflow <= 0, `card « ${c.text} » fits the phone`);
+    await phone.screenshot({ path: join(BUILT, 'finance_synthese_375.png') });
+    await phone.goto(`${WEB_URL}/m/finance`);
+    await phone.getByRole('tab', { name: 'Rentabilité par lot' }).click();
+    await phone.getByRole('row').nth(1).waitFor();
+    await noPageScroll('rentabilité par lot');
+
+    // 5. Print views: the app chrome is hidden, the sheet shows (invoice, delivery note, receipt, quote, credit note).
+    const printState = (label: string) => phone.evaluate((name) => {
+      const shown = (el: Element | null) => Boolean(el) && (el as Element).getClientRects().length > 0;
+      const sheet = document.querySelector(`section[aria-label="${name}"]`);
+      return {
+        aside: shown(document.querySelector('aside')), topbar: shown(document.querySelector('header')), sheet: shown(sheet),
+        text: sheet?.textContent?.replace(/\s+/g, ' ').slice(0, 200) ?? null, width: sheet ? Math.round(sheet.getBoundingClientRect().width) : null,
+      };
+    }, label);
+    const expectPrinted = async (what: string, label: string, pattern: RegExp) => {
+      await phone.emulateMedia({ media: 'print' });
+      const state = await printState(label);
+      report(`print ${what}`, state);
+      assert.equal(state.aside, false, `${what}: the sidebar is hidden when printing`);
+      assert.equal(state.topbar, false, `${what}: the top bar is hidden when printing`);
+      assert.equal(state.sheet, true, `${what}: the sheet is shown when printing`);
+      assert.match(state.text ?? '', pattern, `${what}: the sheet's content`);
+      await phone.screenshot({ path: join(BUILT, `${what.replace(/ /g, '_')}_375.png`), fullPage: true });
+      await phone.emulateMedia({ media: 'screen' });
+    };
+    await phone.goto(`${WEB_URL}/m/ventes/${fa309}`);
+    await phone.getByRole('heading', { name: 'FA-0309' }).waitFor();
+    await phone.getByRole('button', { name: 'Imprimer la facture' }).click();
+    await expectPrinted('facture_impression', 'Facture', /FA-0309/);
+    await phone.getByRole('button', { name: 'Bon de livraison' }).click();
+    await expectPrinted('bon_de_livraison_impression', 'Bon de livraison', /Œufs/);
+    await phone.getByRole('tab', { name: 'Paiements' }).click();
+    await phone.getByRole('button', { name: 'Reçu' }).first().click();
+    await expectPrinted('recu_impression', 'Reçu', /RC-/);
+    await phone.getByRole('tab', { name: 'Avoirs' }).click();
+    await phone.getByRole('tabpanel').getByRole('button', { name: 'Imprimer' }).first().click();
+    await phone.getByRole('dialog').getByText(/est prêt à imprimer/).waitFor();
+    await expectPrinted('avoir_impression', 'Avoir', /AV-/);
+    await phone.goto(`${WEB_URL}/m/ventes/devis/${quote.id}`);
+    await phone.getByRole('button', { name: 'Imprimer' }).click();
+    await expectPrinted('devis_impression', 'Devis', /DV-/);
     await context.close();
   });
 });

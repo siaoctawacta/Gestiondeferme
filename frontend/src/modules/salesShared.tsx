@@ -251,13 +251,13 @@ export const INVOICE_STEP_LABELS: Record<InvoiceStep['step'], string> = {
   ANNULEE: 'Annulation',
 };
 
-/** The `RESTE DÛ` pill of a list row: what the status says, else what is owed back, else what is still due. */
-export function DuePill({ row }: { row: Pick<InvoiceRow, 'status' | 'due' | 'refundDue' | 'overdue'> }) {
+/** The `RESTE DÛ` pill of a list row: what the status says, else what is owed back, else what is still due (yellow, overdue or not, as in the reference). */
+export function DuePill({ row }: { row: Pick<InvoiceRow, 'status' | 'due' | 'refundDue'> }) {
   if (row.status === 'BROUILLON') return <Pill tone="neutral">Brouillon</Pill>;
   if (row.status === 'ANNULEE') return <Pill tone="neutral">Annulée</Pill>;
   if (row.refundDue > 0) return <Pill tone="danger">À rembourser {formatMoney(row.refundDue)}</Pill>;
   if (row.due <= 0) return <Pill tone="success">{formatMoney(0)}</Pill>;
-  return <Pill tone={row.overdue ? 'danger' : 'warning'}>{formatMoney(row.due)}</Pill>;
+  return <Pill tone="warning">{formatMoney(row.due)}</Pill>;
 }
 
 /** `date` (`YYYY-MM-DD`) plus `days`, as `YYYY-MM-DD`; empty when `date` is not a date. */

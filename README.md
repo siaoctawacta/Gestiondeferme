@@ -273,13 +273,14 @@ Les scénarios sont écrits avec `node:test` et `playwright` (pas `@playwright/t
 Scénarios : connexion et 2FA obligatoire (`auth.spec.ts`), site et bâtiments, droits de l'auditeur et
 journal d'audit (`batiments.spec.ts`), comparaison de rendu avec la référence et responsive mobile
 (`visual.spec.ts`), parcours de production de bout en bout (`production.spec.ts`), parcours logistique : achats,
-stocks, inventaire, santé et alertes, un rôle par étape (`logistics.spec.ts`, `npm run e2e -- logistics`). Le spec
-logistique tourne avant le spec de rendu : ils partagent la même organisation, donc les articles et fournisseurs de
-référence (« Aliment ponte », « Agro Provende SA »…) sont créés une seule fois, par celui qui passe le premier.
+stocks, inventaire, santé et alertes, un rôle par étape (`logistics.spec.ts`, `npm run e2e -- logistics`), parcours commercial :
+devis, facture, paiements, avoir, remboursement, finance, rentabilité et alertes de créance (`commerce.spec.ts`,
+`npm run e2e -- commerce`). Les specs commerce et logistique tournent avant le spec de rendu : ils partagent la même organisation, donc les articles, fournisseurs et clients de
+référence (« Aliment ponte », « Agro Provende SA », « Restaurant Le Palmier »…) sont créés une seule fois, par celui qui passe le premier.
 `npm run e2e -- --serve` laisse seulement les serveurs e2e démarrés ; `npm run e2e -- production` n'exécute que les
 specs dont le nom contient le mot donné (erreur s'il n'y en a aucune).
 
-Précondition : la date du serveur est postérieure au 2026-10-22, car les lignes de référence des captures sont
+Précondition : la date du serveur est postérieure au 2026-10-22 et n'est pas le premier jour du mois (le parcours commercial date une facture échue du 1er), car les lignes de référence des captures sont
 datées d'octobre 2026 (aucune date future n'est acceptée). Les captures de `docs/reference/built/` peuvent différer
 d'un jour à l'autre par un seul nombre (« Dépassée depuis N j » de l'alerte de mise bas) ; la date de l'acte de santé
 planifié et les mouvements de consommation de stock (jours de stock) sont calculés par rapport au jour d'exécution.
@@ -429,13 +430,65 @@ Qui peut faire quoi sur les achats et les stocks :
 | Créer ou modifier un article, ses seuils, un fournisseur | Responsable stock, Directeur de ferme, Super administrateur |
 | Lire les achats et les fournisseurs | Comptable, Auditeur, Propriétaire et les rôles ci-dessus (sans bouton d'action quand le droit d'écrire manque) |
 
-Le paiement par le Comptable reste une question ouverte pour la tranche 4 (finance).
+Le paiement des fournisseurs par le Comptable reste une question ouverte (voir le fichier de report de la tranche 4).
+
+**Tranche 4 — Clients, ventes et finance : terminée.**
+
+- Clients (par organisation), devis (brouillon, envoyé, accepté, refusé, facturé, expiré), factures (brouillon, émise,
+  partielle, soldée, annulée), paiements numérotés `RC-NNNN`, avoirs `AV-NNNN` avec ou sans retour des marchandises,
+  remboursements, bon de livraison et reçu à imprimer ; numéros `DV-`, `FA-` (attribué à l'émission, sans trou), `AV-`,
+  `RC-`. Pas de TVA, pas de remise.
+- Finance : dépenses et recettes (saisies à la main ou dérivées des achats reçus, des lots achetés, des factures et des
+  avoirs), synthèse par activité et par catégorie, rentabilité par lot, carte « Rentabilité du mois » et graphique
+  « Recettes vs dépenses » du tableau de bord, créances clients, alerte « Créance FA-… » quand l'échéance est dépassée.
+- Tests : parcours de bout en bout `commerce.spec.ts` (un rôle par étape, chiffres calculés) ; captures de Clients, Ventes et
+  Finance comparées à la maquette (`m_clients.png`, `m_ventes.png`, `m_finance.png`, `finance_synthese.png`, `alertes.png`,
+  `rapports.png`) et vérifiées à 375 px (`facture_formulaire_375.png`, `vente_detail_375.png`, `avoir_dialogue_375.png`,
+  `finance_ecritures_375.png`, `finance_synthese_375.png`) ainsi qu'à l'impression (facture, bon de livraison, reçu, avoir, devis).
+- Écarts assumés avec la maquette : la tuile « Total enregistrements » de Finance n'est pas 5 (les écritures dérivées des
+  factures et de l'achat reçu s'ajoutent aux cinq saisies) et la liste s'ouvre sur le mois en cours (la capture règle la
+  période sur octobre) ; les chiffres du tableau de bord suivent le mois civil en cours, pas ceux de la maquette ; FA-0309
+  vend 12 000 œufs, donc des jours de ponte supplémentaires sont créés pour LP-2026-03 (la tuile de « Ponte & œufs » diffère) ;
+  l'activité « Général » de la période d'octobre vaut −1 255 000 FCFA (l'achat reçu BC-0141 s'ajoute à la saisie
+  « Vaccins & médicaments ») ; le « reste dû » d'une facture échue reste jaune comme dans la maquette.
+
+À savoir après une mise à jour : la tranche 4 ajoute des migrations de base de données (clients, devis, factures, paiements,
+avoirs, finance). Après avoir récupéré le code, lancez `npx prisma migrate deploy` dans `backend/` (ou `./scripts/dev.sh`).
+
+Qui peut faire quoi sur les ventes et la finance :
+
+| Action | Rôles |
+|---|---|
+| Créer, modifier ou supprimer un client | Commercial, Super administrateur |
+| Créer, envoyer, faire accepter un devis ; créer, corriger ou supprimer un brouillon de facture | Commercial, Super administrateur |
+| Émettre une facture (avec paiement comptant éventuel), encaisser, supprimer un paiement, rembourser | Commercial, Comptable, Super administrateur |
+| Émettre un avoir, annuler une facture émise (sans paiement ni avoir) | Comptable, Propriétaire, Super administrateur |
+| Saisir, corriger ou supprimer une dépense ou une recette manuelle ; l'attribuer à un lot | Comptable, Super administrateur |
+| Lire la finance, la synthèse et la rentabilité par lot | Comptable, Propriétaire, Directeur de ferme, Auditeur, Super administrateur |
+| Lire les clients, les factures, les devis et les avoirs | Commercial, Comptable, Propriétaire, Directeur de ferme, Auditeur |
+
+Les règles à connaître :
+
+- Un brouillon (facture ou devis) ne touche à rien : ni lot, ni œufs, ni stock. L'émission d'une facture sort les animaux du
+  lot (effectif), les œufs du solde d'œufs du lot et les articles du stock ; l'annulation remet tout.
+- Un lot, un animal ou des œufs en délai d'attente (après un traitement) ne peuvent pas être vendus, le dernier jour du délai
+  compris ; il n'y a pas de dérogation.
+- Un inventaire validé ferme le passé de l'article : une vente de cet article antérieure à l'inventaire est refusée.
+- Un avoir se fait par quantité de ligne, avec ou sans retour des marchandises ; il est définitif. Un animal suivi
+  individuellement ne peut pas être retourné au lot ; un retour dans un lot clôturé est refusé ; des marchandises périmées ne
+  reviennent pas en stock (faites un avoir sans retour).
+- Le « reste dû » d'un client est la somme de ce qu'il doit ; ce que la ferme lui doit après un avoir sur une facture déjà payée
+  s'affiche à part : « À rembourser ».
+- Les écritures manuelles côtoient les écritures dérivées : saisir à la main un achat déjà reçu le compte deux fois, c'est à
+  l'utilisateur d'y veiller. Une entrée de stock saisie à la main avec le motif « Achat », hors du circuit d'achat, n'arrive
+  jamais en finance.
+- La « Marge » de la ferme (recettes − dépenses de la période) et la « Marge du lot » de la rentabilité par lot (recettes du lot −
+  ce qu'il a consommé) sont deux vues différentes : leurs sommes ne sont pas censées concorder.
 
 **À venir**
 
-4. Clients et ventes (devis → paiement, sorties de lots), finance et rentabilité (les achats y deviennent des dépenses).
 5. Personnel et tâches, équipements et maintenance, rapports, alertes complètes, QR (articles de stock, produits),
    calendrier des chaleurs, exports, jeu de données de démonstration (« Ferme Kpalimé »), documentation.
 
-Les modules des tranches 4 et 5 apparaissent dans le menu avec la mention « Module en cours de construction » tant
+Les modules de la tranche 5 apparaissent dans le menu avec la mention « Module en cours de construction » tant
 qu'ils ne sont pas livrés.

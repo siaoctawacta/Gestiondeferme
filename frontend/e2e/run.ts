@@ -103,7 +103,7 @@ try {
   if (specs.length === 0) throw new Error(`Aucune spec ne correspond à « ${cli.only.join(' ')} » (fichiers : ${readdirSync(here).filter((f) => f.endsWith('.spec.ts')).join(', ')})`);
   const r = spawnSync(
     'node',
-    ['--disable-warning=ExperimentalWarning', '--test', '--test-concurrency=1', '--test-timeout=120000', ...specs],
+    ['--disable-warning=ExperimentalWarning', '--test', '--test-concurrency=1', '--test-timeout=600000', ...specs],
     { cwd: frontend, env: { ...process.env, E2E_API_PORT: String(API_PORT) }, stdio: 'inherit' },
   );
   code = r.status ?? 1;

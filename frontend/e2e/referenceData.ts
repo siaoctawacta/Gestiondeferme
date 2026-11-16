@@ -2,7 +2,9 @@
 // rules a user meets: no future dates, a litter batch for every farrowing with live piglets, one open record
 // per sow. Where a rule prevents an exact copy the nearest valid data is seeded; the differences are listed
 // in the task report.
+import assert from 'node:assert/strict';
 import { api, sql, type EnrolledAdmin } from './helpers.ts';
+import { ensureCustomer, REFERENCE_CUSTOMERS } from './commerceData.ts';
 import { ensureItem, ensureSupplier, REFERENCE_ITEMS, REFERENCE_SUPPLIERS } from './logisticsData.ts';
 
 interface Created { id: string; code?: string }
@@ -15,6 +17,18 @@ function deathDays(start: string, perDay: number, total: number): { date: string
     out.push({ date, quantity: Math.min(perDay, total - out.length * perDay) });
   }
   return out;
+}
+
+/**
+ * Moves a numbering counter to exactly `last` (the next number issued is `last + 1`): the reference invoices are
+ * FA-0301, 0305, 0309 and 0310, and no API sets a counter.
+ */
+async function setCounter(kind: 'FA', last: number): Promise<void> {
+  const [{ id: organizationId }] = await sql<{ id: string }>('SELECT "id" FROM "Organization" LIMIT 1');
+  await sql(
+    'INSERT INTO "DocumentCounter" ("organizationId", "kind", "last") VALUES ($1, $2, $3) ON CONFLICT ("organizationId", "kind") DO UPDATE SET "last" = $3',
+    [organizationId, kind, last],
+  );
 }
 
 /** What the logistics reference rows hang on: the production rows seeded above. */
@@ -58,8 +72,16 @@ export async function seedReferenceData(admin: EnrolledAdmin, buildings: Map<str
     await post(`/batches/${lot.id}/weighings`, { date: weighed, sampleSize: 50, averageWeightG: weight });
     // The reference's closed lot kept 4 680 birds. The API closes a lot only once its animals have left through an
     // event, so they are sold first (the closed lot then reads 0 alive); closing frees Poulailler A for the next lot.
+    // 300 of them leave on invoice FA-0310 (2026-10-21, Restaurant Le Palmier): the sale is issued while the lot is still
+    // open, the remaining 4 380 through the existing `VENTE` event, then the lot is closed.
     if (code === 'LC-2026-12') {
-      await post(`/batches/${lot.id}/events`, { type: 'VENTE', date: '2026-08-31', quantity: initialCount - deaths });
+      await post(`/batches/${lot.id}/events`, { type: 'VENTE', date: '2026-08-31', quantity: initialCount - deaths - 300 });
+      await setCounter('FA', 309);
+      await post('/sales/issued', {
+        customerId: await ensureCustomer(admin, REFERENCE_CUSTOMERS.palmier), date: '2026-10-21',
+        lines: [{ kind: 'LOT', batchId: lot.id, designation: 'Poulets de chair', quantity: 300, unitPrice: 3500 }],
+        payment: { amount: 1050000, method: 'ESPECES' },
+      });
       await post(`/batches/${lot.id}/close`, {});
     }
   }
@@ -87,11 +109,13 @@ export async function seedReferenceData(admin: EnrolledAdmin, buildings: Map<str
   const tr027 = await animal('TR-027', 'TRUIE', largeWhite, 'Maternité', '2024-08-19', 180);
   const vr002 = await animal('VR-002', 'VERRAT', duroc, 'Porcherie 1', '2023-11-01', 260);
 
-  // 229 fattening pigs so that, with 4 animals and the 12 live piglets of the farrowing below, the herd is 245.
+  // 251 fattening pigs: 12 leave on FA-0305 and 10 of the 12 piglets on FA-0301 (`seedCommerceReferenceData`), so that with
+  // the 4 animals the herd is 4 + 239 + 2 = 245.
   const fattening = await post('/batches', {
     species: 'PORCIN', type: 'ENGRAISSEMENT', code: 'LOT-ENG-07', breedId: croise,
-    buildingId: buildings.get('Porcherie 1'), entryDate: '2026-05-15', initialCount: 229,
+    buildingId: buildings.get('Porcherie 1'), entryDate: '2026-05-15', initialCount: 251,
   });
+  lots['LOT-ENG-07'] = fattening.id;
   await post(`/batches/${fattening.id}/weighings`, { date: '2026-10-20', sampleSize: 20, averageWeightG: 68000 });
 
   await post('/breeding', { sowId: tr014, method: 'SAILLIE', boarId: vr002, serviceDate: '2026-07-05' });
@@ -191,4 +215,48 @@ export async function seedLogisticsReferenceData(admin: EnrolledAdmin, productio
   await act({ type: 'VACCINATION', status: 'REALISE', date: '2026-10-18', batchId: production.lots['LC-2026-14'], productName: 'Newcastle', dose: 'Eau de boisson', veterinarian: 'Dr Koffi' });
   await act({ type: 'TRAITEMENT', status: 'REALISE', date: '2026-10-20', animalId: production.animals['TR-021'], productName: 'Fer injectable porcelets', dose: '1 ml', veterinarian: 'Dr Amah' });
   await act({ type: 'DESINFECTION', status: 'PLANIFIE', date: '2026-10-15', buildingId: buildings.get('Porcherie 2'), productName: 'Virkon S', dose: '1%', veterinarian: 'Équipe' });
+}
+
+
+/**
+ * The rows of `m_clients`, `m_ventes` and `m_finance` (docs/reference/screens-text.txt), through the write paths a user
+ * meets (invoices issued with their payment, manual finance entries). FA-0310 was issued with the lot (`seedReferenceData`).
+ * Where a rule prevents an exact copy the nearest valid data is seeded:
+ * - the invoice numbers are reached by moving the `FA` counter in the database;
+ * - FA-0309 sells 400 plateaux = 12 000 eggs, more than the five egg days of `m_ponte`: extra egg days of LP-2026-03 are
+ *   seeded before 2026-10-18 (the Ponte tile `Total enregistrements` therefore differs from the reference);
+ * - FA-0305 sells 12 pigs of LOT-ENG-07 and FA-0301 10 piglets of the litter (the herd stays 245: see `seedReferenceData`).
+ * The five finance rows are manual entries; the list also derives the four invoices and the received purchase BC-0141.
+ */
+export async function seedCommerceReferenceData(admin: EnrolledAdmin, production: ProductionIds): Promise<void> {
+  const call = <T = Created>(path: string, method: string, body?: unknown) =>
+    api<T>(path, { method, token: admin.token, farmId: admin.farmId, body });
+  const post = <T = Created>(path: string, body: unknown) => call<T>(path, 'POST', body);
+  const palmier = await ensureCustomer(admin, REFERENCE_CUSTOMERS.palmier);
+  const afi = await ensureCustomer(admin, REFERENCE_CUSTOMERS.afi);
+  const ramco = await ensureCustomer(admin, REFERENCE_CUSTOMERS.ramco);
+
+  // 17 extra egg days (1 500 collected, 20 broken) before the reference ones: 24 000+ marketable eggs in all.
+  for (let d = 1; d <= 17; d += 1) {
+    await post('/egg-production', { batchId: production.lots['LP-2026-03'], date: `2026-10-${String(d).padStart(2, '0')}`, collected: 1500, broken: 20, toIncubation: 0 });
+  }
+
+  const litter = (await call<{ items: { id: string; code: string; type: string }[] }>('/batches?species=PORCIN&pageSize=100', 'GET')).items
+    .find((b) => b.code !== 'LOT-ENG-07');
+  assert.ok(litter, 'the litter lot of the farrowing exists');
+  const sale = async (last: number, customerId: string, date: string, line: object, paid: number) => {
+    await setCounter('FA', last);
+    await post('/sales/issued', { customerId, date, lines: [line], payment: { amount: paid, method: 'ESPECES' } });
+  };
+  await sale(300, palmier, '2026-10-05', { kind: 'LOT', batchId: litter.id, designation: 'Porcelets', quantity: 10, unitPrice: 30000 }, 300000);
+  await sale(304, ramco, '2026-10-12', { kind: 'LOT', batchId: production.lots['LOT-ENG-07'], designation: 'Porcs', quantity: 12, unitPrice: 135000 }, 1620000);
+  await sale(308, afi, '2026-10-20', { kind: 'OEUFS', batchId: production.lots['LP-2026-03'], unit: 'PLATEAU', quantity: 400, unitPrice: 2500 }, 600000);
+
+  const expense = (date: string, label: string, activity: string, category: string, amount: number) =>
+    post('/finance/entries', { date, kind: 'DEPENSE', label, activity, category, amount });
+  await expense('2026-10-01', 'Salaires septembre', 'GENERAL', 'SALAIRES', 950000);
+  await expense('2026-10-03', 'Aliment chair 6 t', 'AVICOLE', 'ALIMENT', 1020000);
+  await expense('2026-10-08', 'Électricité CEET', 'GENERAL', 'ENERGIE', 185000);
+  await expense('2026-10-10', 'Vaccins & médicaments', 'AVICOLE', 'SANTE', 120000);
+  await expense('2026-10-14', 'Aliment porc 2 t', 'PORCIN', 'ALIMENT', 560000);
 }

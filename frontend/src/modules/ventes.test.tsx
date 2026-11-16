@@ -227,7 +227,8 @@ describe('ventes list', () => {
     const draft = within(screen.getByText('Aliment ponte').closest('tr')!);
     expect(cells(draft.getByText('Aliment ponte').closest('tr'))).toContain('2026-11-14 — Restaurant Le Palmier Aliment ponte 100 32 000 FCFA Brouillon');
     expect(tone(draft, 'Brouillon')).toBe('neutral');
-    expect(tone(rowOf('FA-0311'), '500 000 FCFA')).toBe('danger');
+    // The reference shows what is still due in yellow, overdue or not (the Créance alert carries the lateness).
+    expect(tone(rowOf('FA-0311'), '500 000 FCFA')).toBe('warning');
     expect(tone(rowOf('FA-0312'), 'À rembourser 105 000 FCFA')).toBe('danger');
     expect(tone(rowOf('FA-0313'), 'Annulée')).toBe('neutral');
   });
