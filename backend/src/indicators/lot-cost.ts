@@ -20,7 +20,7 @@ export const FEED_COST = 'aliment';
 export const HEALTH_COST = 'sante';
 
 /**
- * Something that knows what a lot cost (the feed and health modules).
+ * Something that knows what a lot cost (the feed, health and finance modules: stock consumption and manual expenses).
  * Sources register themselves so `indicators` never imports them.
  */
 export interface LotCostSource {

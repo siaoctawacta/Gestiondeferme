@@ -61,7 +61,9 @@ interface Shape {
  * stores. The list also shows what the view derives from the documents; those
  * rows are read-only here (409 on a write). Create, edit and delete are daily
  * entries (`finance:create`) with one audit row each, in the same transaction;
- * a PATCH that changes nothing writes nothing.
+ * a PATCH that changes nothing writes nothing. An expense may be attributed to
+ * a CLOSED lot (a bill can arrive after the lot is closed): only the activity
+ * and the kind are checked.
  */
 @Injectable()
 export class FinanceEntriesService {

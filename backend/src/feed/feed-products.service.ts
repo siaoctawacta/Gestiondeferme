@@ -1,3 +1,4 @@
+import { toMoney } from '../common/money';
 import {
   BadRequestException,
   ConflictException,
@@ -48,7 +49,7 @@ const toItem = (p: FeedProduct): FeedProductItem => ({
   name: p.name,
   kind: p.kind,
   unit: p.unit,
-  unitCost: Number(p.unitCost),
+  unitCost: toMoney(p.unitCost),
   active: p.active,
   stockItemId: p.stockItemId,
 });

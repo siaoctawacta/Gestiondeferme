@@ -1,22 +1,21 @@
 import { Injectable } from '@nestjs/common';
-import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
 import { formatDayOrNull } from '../common/days';
-import { toMoney } from '../common/money';
+import { toMoney, zero } from '../common/money';
 import type { Activity, FinanceKind } from '../generated/prisma/enums';
 import { margin, marginRate } from '../indicators/indicators';
 import { PrismaService } from '../prisma/prisma.service';
-import { receivablesOf } from '../sales/sale-view';
+import { receivablesOf } from '../sales/receivables';
+import { OPEN_STATUSES } from '../sales/sale-workflow';
 import {
   CATEGORY_LABEL,
   EXPENSE_CATEGORIES,
   REVENUE_CATEGORIES,
 } from './finance-categories';
 import { FinanceLedger } from './finance-ledger';
-import { monthToDate, periodOf } from './finance-period';
+import { periodOf } from './finance-period';
 
 const ACTIVITY_ORDER: Activity[] = ['AVICOLE', 'PORCIN', 'GENERAL'];
-const zero = () => new Decimal(0);
 
 export interface ActivityFigures {
   activity: Activity;
@@ -34,7 +33,7 @@ export interface FinanceSummary {
   margin: number;
   /** Integer percent of the revenue; null without revenue. */
   marginPct: number | null;
-  /** What customers still owe (every issued invoice, whatever its date). */
+  /** What customers still owe (every issued, unsettled invoice, whatever its date). */
   receivables: number;
   byActivity: ActivityFigures[];
   byCategory: {
@@ -68,8 +67,9 @@ export class FinanceSummaryService {
   ) {}
 
   /**
-   * With neither bound the period is the calendar month to date; with one, the
-   * other stays open (the screen sends what its boxes hold).
+   * Both bounds are inclusive and either may be open: with NEITHER the period is
+   * ALL TIME, like the entries list and the lot view (a caller that wants the
+   * month passes `monthToDate()` itself, as the dashboard does).
    */
   async summary(
     ctx: RequestContext,
@@ -77,10 +77,10 @@ export class FinanceSummaryService {
     opts: { byFarm?: boolean } = {},
   ): Promise<FinanceSummary> {
     const withFarms = ctx.allFarms && opts.byFarm !== false;
-    const period = q.from || q.to ? periodOf(q.from, q.to) : monthToDate();
+    const period = periodOf(q.from, q.to);
     const [sums, receivables, farms] = await Promise.all([
       this.ledger.sums({ farmIds: ctx.farmIds, ...period }),
-      receivablesOf(this.prisma, ctx.farmIds),
+      receivablesOf(this.prisma, ctx.farmIds, { statuses: OPEN_STATUSES }),
       withFarms
         ? this.prisma.farm.findMany({
             where: { id: { in: ctx.farmIds } },

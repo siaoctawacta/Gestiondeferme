@@ -4,6 +4,7 @@ import { can } from '../access/permissions';
 import { SettingsService } from '../admin/settings/settings.service';
 import { BuildingStatus } from '../generated/prisma/enums';
 import { formatDay } from '../common/days';
+import { monthToDate } from '../finance/finance-period';
 import {
   FinanceSummaryService,
   type FinanceSummary,
@@ -34,6 +35,12 @@ const EGG_DAYS = 5;
  * Each section is its own method returning its slice of the DTO; later slices
  * replace those bodies one at a time without touching the response shape.
  */
+/** The calendar month to date, as the `from` / `to` days the summary takes. */
+const monthRange = (): { from: string; to: string } => {
+  const { from, to } = monthToDate();
+  return { from: formatDay(from), to: formatDay(to) };
+};
+
 @Injectable()
 export class DashboardService {
   constructor(
@@ -197,7 +204,7 @@ export class DashboardService {
   /** « Rentabilité du mois »: the finance summary of the calendar month to date; null without `finance:read`. */
   private money(ctx: RequestContext): Promise<FinanceSummary | null> {
     return can(ctx.user.role, 'finance', 'read')
-      ? this.finance.summary(ctx, {}, { byFarm: false })
+      ? this.finance.summary(ctx, monthRange(), { byFarm: false })
       : Promise.resolve(null);
   }
 

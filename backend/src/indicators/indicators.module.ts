@@ -9,7 +9,7 @@ import { IndicatorsService } from './indicators.service';
 import { LotCostRegistry } from './lot-cost';
 
 /**
- * Imports `herd` and `stock` (never the reverse); the feed and health modules import this one to register a `LotCostSource`.
+ * Imports `herd` and `stock` (never the reverse); the feed, health and finance modules import this one to register a `LotCostSource`.
  * Production, stock, expiry and health alert rules live here and read the tables through `PrismaService` (and the stock ledger for levels); other modules may add rules to `AlertsRegistry`.
  */
 @Module({

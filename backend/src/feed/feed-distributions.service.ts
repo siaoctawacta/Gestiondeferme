@@ -1,3 +1,4 @@
+import { toMoney } from '../common/money';
 import {
   BadRequestException,
   Injectable,
@@ -145,8 +146,8 @@ export class FeedDistributionsService {
         quantityKg: Number(r.quantityKg),
         waterLiters: first.get(k) === r.id ? (liters.get(k) ?? null) : null,
         waterEditable: first.get(k) === r.id,
-        unitCost: (current.get(r.id)?.unitCost ?? r.unitCost).toNumber(),
-        cost: (current.get(r.id)?.cost ?? r.cost).toNumber(),
+        unitCost: toMoney(current.get(r.id)?.unitCost ?? r.unitCost),
+        cost: toMoney(current.get(r.id)?.cost ?? r.cost),
         note: r.note,
       };
     });

@@ -31,19 +31,27 @@ const CATEGORY = 'La catégorie est invalide';
 const LOT = 'Le lot est invalide';
 const NOTE = 'La note est invalide';
 
-export class PeriodQueryDto {
-  @ApiPropertyOptional({ example: '2026-10-01' })
-  @IsOptional()
-  @IsDay()
-  from?: string;
+type Constructor<T = object> = new (...args: any[]) => T;
 
-  @ApiPropertyOptional({ example: '2026-10-31' })
-  @IsOptional()
-  @IsDay()
-  to?: string;
+/** Adds the `from` / `to` calendar days (both inclusive, either may be open) to a query class: ONE definition for every period query. */
+function WithPeriod<TBase extends Constructor>(Base: TBase) {
+  class Period extends Base {
+    @ApiPropertyOptional({ example: '2026-10-01' })
+    @IsOptional()
+    @IsDay()
+    from?: string;
+
+    @ApiPropertyOptional({ example: '2026-10-31' })
+    @IsOptional()
+    @IsDay()
+    to?: string;
+  }
+  return Period;
 }
 
-export class FinanceEntriesQueryDto extends ListQueryDto {
+export class PeriodQueryDto extends WithPeriod(Object) {}
+
+export class FinanceEntriesQueryDto extends WithPeriod(ListQueryDto) {
   @ApiPropertyOptional({ enum: FinanceKind })
   @IsOptional()
   @IsEnum(FinanceKind, { message: KIND })
@@ -63,29 +71,9 @@ export class FinanceEntriesQueryDto extends ListQueryDto {
   @IsOptional()
   @IsIn(ORIGINS, { message: "L'origine est invalide" })
   origin?: Origin;
-
-  @ApiPropertyOptional({ example: '2026-10-01' })
-  @IsOptional()
-  @IsDay()
-  from?: string;
-
-  @ApiPropertyOptional({ example: '2026-10-31' })
-  @IsOptional()
-  @IsDay()
-  to?: string;
 }
 
-export class LotsQueryDto extends ListQueryDto {
-  @ApiPropertyOptional({ example: '2026-10-01' })
-  @IsOptional()
-  @IsDay()
-  from?: string;
-
-  @ApiPropertyOptional({ example: '2026-10-31' })
-  @IsOptional()
-  @IsDay()
-  to?: string;
-
+export class LotsQueryDto extends WithPeriod(ListQueryDto) {
   @ApiPropertyOptional({ enum: Species })
   @IsOptional()
   @IsEnum(Species, { message: "L'espèce est invalide" })

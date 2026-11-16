@@ -5,7 +5,7 @@ import {
 } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
-import { toMoney } from '../common/money';
+import { toMoney, zero } from '../common/money';
 import type { Prisma } from '../generated/prisma/client';
 import type {
   BatchStatus,
@@ -35,7 +35,20 @@ type Range = { from?: Date; to?: Date };
 const NOT_FOUND = 'Lot introuvable';
 const BAD_STATUS = 'Le statut est invalide';
 const SORTABLE = ['code', 'entryDate'];
-const zero = () => new Decimal(0);
+
+/** What a lot sold over a period. `unweighed`: a LOT line of the period has no weight, so its kilos are unknown. */
+interface LotSales {
+  sold: Decimal;
+  revenue: Decimal;
+  kg: Decimal;
+  unweighed: boolean;
+}
+const noSales = (): LotSales => ({
+  sold: zero(),
+  revenue: zero(),
+  kg: zero(),
+  unweighed: false,
+});
 
 export interface LotProfitability {
   /** The lot's id (the kit's row id), equal to `batchId`. */
@@ -47,7 +60,7 @@ export interface LotProfitability {
   status: BatchStatus;
   /** Alive + sold (net), the denominator of the cost per animal. */
   animals: number;
-  /** Net animals sold by the lot's LOT lines (credited quantities removed). */
+  /** Net animals sold by the lot's LOT lines (what credit notes WITH return took back is removed). */
   sold: number;
   alive: number;
   costs: { animaux: number; aliment: number; sante: number; autres: number };
@@ -86,13 +99,29 @@ const batchSelect = {
 } satisfies Prisma.AnimalBatchSelect;
 type BatchRow = Prisma.AnimalBatchGetPayload<{ select: typeof batchSelect }>;
 
-/** The finance category a cost reported by a `LotCostSource` counts under. */
-function categoryOf(cost: LotCost): FinanceCategory | 'AUTRE_CHARGE' {
+/**
+ * The categories of the lot view that only the system fills: the purchase price
+ * of the lot (`ANIMAUX`) and what its consumption cost in the stock ledger
+ * (`ALIMENT`, `SANTE`). A manual expense attributed to the lot NEVER counts
+ * there whatever its own category (that category stays visible in the farm view):
+ * it counts under `autres`, so `aliment` and `sante` here are the figures of
+ * `batchPerformance`.
+ */
+const SYSTEM_CATEGORIES: FinanceCategory[] = ['ANIMAUX', 'ALIMENT', 'SANTE'];
+
+/**
+ * The finance category a cost reported by a `LotCostSource` counts under: the
+ * feed and health sources (`FEED_COST`, `HEALTH_COST`) under `ALIMENT` and
+ * `SANTE`, a manual expense under its own category except the system ones
+ * (`AUTRE_CHARGE` instead).
+ */
+function categoryOf(cost: LotCost): FinanceCategory {
   if (cost.category === FEED_COST) return 'ALIMENT';
   if (cost.category === HEALTH_COST) return 'SANTE';
-  return cost.category in CATEGORY_LABEL
+  const own = Object.hasOwn(CATEGORY_LABEL, cost.category)
     ? (cost.category as FinanceCategory)
     : 'AUTRE_CHARGE';
+  return SYSTEM_CATEGORIES.includes(own) ? 'AUTRE_CHARGE' : own;
 }
 
 /**
@@ -223,11 +252,7 @@ export class LotProfitabilityService {
       const sante = get('SANTE');
       const total = [...byCategory.values()].reduce((n, a) => n.add(a), zero());
       const autres = total.sub(animaux).sub(aliment).sub(sante);
-      const s = sales.get(lot.id) ?? {
-        sold: zero(),
-        revenue: zero(),
-        kg: zero(),
-      };
+      const s = sales.get(lot.id) ?? noSales();
       const aliveNow = alive.get(lot.id) ?? 0;
       const sold = s.sold.toNumber();
       const animals = aliveNow + sold;
@@ -254,7 +279,8 @@ export class LotProfitabilityService {
           revenue: toMoney(s.revenue),
           margin: toMoney(lotMargin),
           costPerAnimal: costPerAnimal(total, animals),
-          costPerKg: costPerKg(total, s.kg),
+          // A kilo price needs every sold bird weighed: one LOT line without a weight and there is none.
+          costPerKg: s.unweighed ? null : costPerKg(total, s.kg),
         },
       };
     });
@@ -262,15 +288,16 @@ export class LotProfitabilityService {
 
   /**
    * What the lots sold: LOT and OEUFS lines of issued invoices dated in the
-   * period, less the credit lines of credit notes dated in the period (their
-   * quantity and amount, and the credited share of the weight pro rata).
-   * Two queries.
+   * period, less the credit lines of credit notes dated in the period. A credit
+   * note takes back its AMOUNT from the revenue; only a credit note WITH return
+   * of the goods also takes back the animals (and their weight, pro rata): one
+   * without return leaves them sold. Two queries.
    */
   private async salesOf(
     ctx: RequestContext,
     ids: string[],
     range: Range,
-  ): Promise<Map<string, { sold: Decimal; revenue: Decimal; kg: Decimal }>> {
+  ): Promise<Map<string, LotSales>> {
     const day = (r: Range) =>
       r.from || r.to ? { date: { gte: r.from, lte: r.to } } : {};
     const line = {
@@ -298,6 +325,7 @@ export class LotProfitabilityService {
         select: {
           quantity: true,
           amount: true,
+          creditNote: { select: { withReturn: true } },
           invoiceLine: {
             select: {
               batchId: true,
@@ -310,16 +338,9 @@ export class LotProfitabilityService {
         relationLoadStrategy: 'join',
       }),
     ]);
-    const result = new Map<
-      string,
-      { sold: Decimal; revenue: Decimal; kg: Decimal }
-    >();
+    const result = new Map<string, LotSales>();
     const of = (batchId: string) => {
-      const found = result.get(batchId) ?? {
-        sold: zero(),
-        revenue: zero(),
-        kg: zero(),
-      };
+      const found = result.get(batchId) ?? noSales();
       result.set(batchId, found);
       return found;
     };
@@ -329,15 +350,18 @@ export class LotProfitabilityService {
       if (l.kind === 'LOT') f.sold = f.sold.add(l.quantity);
       f.revenue = f.revenue.add(l.amount);
       if (l.weightKg) f.kg = f.kg.add(l.weightKg);
+      else if (l.kind === 'LOT') f.unweighed = true;
     }
     for (const c of credits) {
       const l = c.invoiceLine;
       if (!l.batchId) continue;
       const f = of(l.batchId);
-      if (l.kind === 'LOT') f.sold = f.sold.sub(c.quantity);
       f.revenue = f.revenue.sub(c.amount);
-      if (l.weightKg)
+      if (!c.creditNote.withReturn) continue;
+      if (l.kind === 'LOT') f.sold = f.sold.sub(c.quantity);
+      if (l.weightKg) {
         f.kg = f.kg.sub(l.weightKg.mul(c.quantity).div(l.quantity));
+      }
     }
     return result;
   }

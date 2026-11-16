@@ -12,8 +12,10 @@ import { PrismaService } from '../prisma/prisma.service';
  * What the manual expenses attributed to a lot cost it: one grouped read of
  * `FinanceEntry` (never of the ledger view: a lot is charged for its own
  * entries, not for purchases). The cost category is the entry's finance category
- * (`TRANSPORT`, `ALIMENT`, ...), so it cannot be mistaken for the `aliment` /
- * `sante` consumption the feed and health sources report.
+ * (`TRANSPORT`, `ALIMENT`, ...), in capitals, apart from the lower-case `aliment`
+ * / `sante` the feed and health sources report; the lot view (`categoryOf`) counts
+ * a manual entry under `autres` whatever its category, so its `aliment` and
+ * `sante` stay the stock-ledger figures.
  */
 @Injectable()
 export class ManualLotCosts implements LotCostSource, OnModuleInit {

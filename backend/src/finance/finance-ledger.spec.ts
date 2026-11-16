@@ -8,12 +8,14 @@ import { EXPENSE_CATEGORIES, REVENUE_CATEGORIES } from './finance-categories';
 const MIGRATIONS = join(__dirname, '..', '..', 'prisma', 'migrations');
 
 /** The SQL of the last migration that (re)defines `needle`. */
-function latestSql(needle: string): string {
+function latestSql(needle: string | RegExp): string {
   const found = readdirSync(MIGRATIONS)
     .filter((d) => /^\d+_/.test(d))
     .sort()
     .map((d) => readFileSync(join(MIGRATIONS, d, 'migration.sql'), 'utf8'))
-    .filter((sql) => sql.includes(needle));
+    .filter((sql) =>
+      typeof needle === 'string' ? sql.includes(needle) : needle.test(sql),
+    );
   if (found.length === 0) throw new Error(`no migration defines ${needle}`);
   return found[found.length - 1];
 }
@@ -22,7 +24,7 @@ const quoted = (list: readonly string[]) =>
   list.map((c) => `'${c}'`).join(', ');
 
 describe('finance ledger SQL', () => {
-  const view = latestSql('CREATE VIEW "FinanceLedgerView"');
+  const view = latestSql(/CREATE( OR REPLACE)? VIEW "FinanceLedgerView"/);
   const table = latestSql('CREATE TABLE "FinanceEntry"');
 
   it('keeps the CHECK category lists of the table equal to finance-categories.ts', () => {

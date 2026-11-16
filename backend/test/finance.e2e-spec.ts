@@ -738,11 +738,10 @@ describe('Finance (e2e)', () => {
       expect(list.total).toBe(5 + 4);
     });
 
-    it('defaults to the current month to today, and takes inclusive bounds', async () => {
-      const first = new Date().toISOString().slice(0, 8) + '01';
+    it('covers ALL time without dates (open bounds), and takes inclusive bounds', async () => {
       const s = await summary();
-      expect(s.from).toBe(first);
-      expect(s.to).toBe(daysAgo(0));
+      expect(s.from).toBeNull();
+      expect(s.to).toBeNull();
       await created({ date: '2026-10-01', amount: 100 });
       await created({ date: '2026-10-31', amount: 10 });
       await created({ date: '2026-11-01', amount: 1000 });
@@ -1337,10 +1336,10 @@ describe('Finance (e2e)', () => {
       await world.post(accountant, `/sales/${inv.id}/credit-notes`, {
         date: '2026-10-25',
         reason: 'Retour',
-        withReturn: false,
+        withReturn: true,
         lines: [{ lineId: inv.lines[0].id, quantity: 25 }],
       });
-      // 25 % credited: 517.5 kg remain; 1 000 000 / 517.5 = 1 932.37
+      // 25 % taken back WITH the goods: 517.5 kg remain; 1 000 000 / 517.5 = 1 932.37
       const row = await lotDetail(chair.id);
       expect(row.costPerKg).toBe(1932.37);
       expect(row.sold).toBe(75);
@@ -1412,11 +1411,12 @@ describe('Finance (e2e)', () => {
         ),
       ).toEqual({ TRANSPORT: '50000', ALIMENT: '20000' });
       const row = await lotDetail(chair.id);
+      // a manual entry always counts under autres, whatever its category
       expect(row.costs).toEqual({
         animaux: 0,
-        aliment: 20000,
+        aliment: 0,
         sante: 0,
-        autres: 50000,
+        autres: 70000,
       });
     });
   });

@@ -14,7 +14,7 @@ import { ManualLotCosts } from './manual-lot-costs';
  * besides them is read from the documents through the SQL view
  * "FinanceLedgerView" (`FinanceLedger` is its only reader). Imports `herd`
  * (headcounts) and `indicators` (the lot cost registry the feed, health and manual
- * sources register in); the dashboard imports this module for the summary.
+ * sources register in); it imports neither sales nor purchases (the view reads their tables); the dashboard imports this module for the summary.
  */
 @Module({
   imports: [HerdModule, IndicatorsModule],

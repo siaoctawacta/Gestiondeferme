@@ -207,7 +207,14 @@ describe('Dashboard (e2e)', () => {
         { activity: 'GENERAL', revenue: 0, expenses: 200, margin: -200 },
       ]);
       const summary = (
-        await http().get('/api/finance/summary').set(accountant).expect(200)
+        await http()
+          .get('/api/finance/summary')
+          .query({
+            from: new Date().toISOString().slice(0, 8) + '01',
+            to: dayStr(0),
+          })
+          .set(accountant)
+          .expect(200)
       ).body as { revenue: number; expenses: number; byActivity: unknown };
       expect(summary).toMatchObject({ revenue: 3000, expenses: 1200 });
       expect(summary.byActivity).toEqual(body.revenueVsExpenses);

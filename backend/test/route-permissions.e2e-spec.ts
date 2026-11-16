@@ -296,6 +296,8 @@ describe('Route permissions walk (e2e)', () => {
       SellablesController: ['ventes'],
       InvoicesController: ['ventes'],
       CreditNotesController: ['ventes'],
+      FinanceEntriesController: ['finance'],
+      FinanceReportsController: ['finance'],
     };
 
     it('states the module of its family on every route, and the guard refuses a role without it', async () => {
@@ -349,6 +351,12 @@ describe('Route permissions walk (e2e)', () => {
         }
       }
       expect(notRefused).toEqual([]);
+    });
+
+    it('refuses a role without finance:read on the lot margin (GET /finance/lots/:batchId)', async () => {
+      const keeper = await world.actor('MAGASINIER');
+      await world.http().get('/api/finance/lots/x').set(keeper).expect(403);
+      await world.http().get('/api/finance/lots').set(keeper).expect(403);
     });
 
     it('walks at least the routes of every family', () => {

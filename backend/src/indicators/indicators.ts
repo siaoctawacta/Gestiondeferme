@@ -74,7 +74,12 @@ export const margin = (revenue: Money, costs: Money): Decimal =>
 /** margin / revenue as an integer percent (half away from zero); null when the revenue is not positive. */
 export const marginRate = (m: Money, revenue: Money): number | null => {
   const r = money(revenue);
-  return ratio(money(m).mul(100).toNumber(), r.toNumber(), 0);
+  if (!r.isFinite() || r.lte(0)) return null;
+  return money(m)
+    .mul(100)
+    .div(r)
+    .toDecimalPlaces(0, Decimal.ROUND_HALF_UP)
+    .toNumber();
 };
 
 /** `total / count` to 2 decimals (half away from zero); null when the denominator is not positive. */
