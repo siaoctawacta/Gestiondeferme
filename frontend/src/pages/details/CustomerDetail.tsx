@@ -63,6 +63,8 @@ export function CustomerDetail({ id }: { id: string }) {
         { label: 'Payé', value: formatMoney(c.paid) },
         { label: 'Avoirs', value: formatMoney(c.credited) },
         { label: 'Reste dû', value: formatMoney(c.balance) },
+        // What the customer is owed back is not part of the balance: shown apart, only when there is some.
+        ...(c.refundDue > 0 ? [{ label: 'À rembourser', value: formatMoney(c.refundDue) }] : []),
       ]}
       tabs={[
         { key: 'invoices', label: 'Factures', content: <Invoices customerId={c.id} /> },

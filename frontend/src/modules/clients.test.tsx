@@ -13,6 +13,7 @@ import { clients } from './clients';
 import { ModuleRoute } from '../pages/ModuleRoute';
 import './index';
 import { devis } from './salesShared';
+import { saleLinesField } from './saleLines';
 
 function json(status: number, body?: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -28,7 +29,7 @@ const CUSTOMERS = [
   { id: 'c2', name: 'Marché Hédzranawoé — Mme Afi', type: 'REVENDEUR', phone: '+228 98 65 43 21', email: 'afi@x.tg', city: 'Lomé', address: 'Marché central', active: true, balance: 400000 },
   { id: 'c3', name: 'SuperMarché Ramco', type: 'GROSSISTE', phone: '+228 22 21 00 00', email: null, city: 'Lomé', address: null, active: false, balance: 0 },
 ];
-const CUSTOMER_DETAIL = { ...CUSTOMERS[1], invoiced: 1000000, paid: 600000, credited: 0, balance: 400000 };
+const CUSTOMER_DETAIL = { ...CUSTOMERS[1], invoiced: 1000000, paid: 600000, credited: 0, refunded: 0, balance: 400000, refundDue: 0 };
 
 const q = (id: string, reference: string, status: string, over: object = {}) => ({
   id, reference, date: '2026-11-10', validUntil: '2026-11-30', customerId: 'c1', customerName: 'Restaurant Le Palmier',
@@ -81,6 +82,7 @@ const calls: Call[] = [];
 const writes = () => calls.filter((c) => c.method !== 'GET' && !c.url.startsWith('/api/auth/'));
 const fetchMock = vi.fn<typeof fetch>();
 const page = (items: unknown[], extra: object = {}) => json(200, { items, total: items.length, page: 1, pageSize: 25, ...extra });
+let detailOverride: object | null = null;
 let failWith: { url: RegExp; status: number; message: string } | null = null;
 
 const COMMERCIAL = { clients: ['read', 'update', 'delete'], ventes: ['read', 'create', 'update', 'delete'], parametres: ['read'] };
@@ -110,7 +112,7 @@ function mount(ui: React.ReactNode, { perms = COMMERCIAL, farm, route = '/' }: {
       }]);
     }
     const customer = /^\/api\/customers\/(\w+)(\?|$)/.exec(url);
-    if (customer) return customer[1] === 'c2' ? json(200, CUSTOMER_DETAIL) : json(404, { message: 'Introuvable' });
+    if (customer) return customer[1] === 'c2' ? json(200, detailOverride ?? CUSTOMER_DETAIL) : json(404, { message: 'Introuvable' });
     if (url.startsWith('/api/customers')) return page(url.includes('active=true') ? CUSTOMERS.filter((c) => c.active) : CUSTOMERS);
     const quote = /^\/api\/quotes\/(\w+)(\?|$)/.exec(url);
     if (quote) {
@@ -139,6 +141,7 @@ const rowOf = (text: string) => within(screen.getByText(text).closest('tr')!);
 beforeEach(() => {
   calls.length = 0;
   failWith = null;
+  detailOverride = null;
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
 });
@@ -194,6 +197,15 @@ describe('clients list', () => {
   });
 });
 
+describe('sale lines source column', () => {
+  // `GET /sales/sellables` needs `ventes:read` (not `create`): a role that may read invoices can list what is sellable.
+  it('is listed under the read right of ventes', () => {
+    const lines = saleLinesField('2026-11-12');
+    const source = lines.columns.find((c) => c.name === 'sourceId')! as { optionsPermission?: unknown };
+    expect(source.optionsPermission).toEqual({ module: 'ventes', action: 'read' });
+  });
+});
+
 describe('customer detail', () => {
   it('shows what was invoiced, paid, credited and is still due, and the customer\'s invoices through the ventes list', async () => {
     mount(<CustomerDetail id="c2" />);
@@ -207,6 +219,20 @@ describe('customer detail', () => {
     expect(screen.getByText('400 000 FCFA', { selector: 'span' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Ajouter|Encaisser|Avoir|Modifier|Supprimer/ })).not.toBeInTheDocument();
     expect(calls.some((c) => c.url.startsWith('/api/sales') && c.url.includes('customerId=c2'))).toBe(true);
+  });
+
+  it('shows what the customer is owed back apart from the balance (À rembourser), only when there is something', async () => {
+    mount(<CustomerDetail id="c2" />);
+    await screen.findByRole('heading', { name: 'Marché Hédzranawoé — Mme Afi' });
+    expect(screen.queryByText('À rembourser', { selector: 'p' })).not.toBeInTheDocument();
+  });
+
+  it('shows À rembourser next to a zero balance when a credit note exceeded what was due', async () => {
+    detailOverride = { ...CUSTOMER_DETAIL, paid: 1105000, credited: 105000, balance: 0, refundDue: 105000 };
+    mount(<CustomerDetail id="c2" />);
+    await screen.findByText('À rembourser', { selector: 'p' });
+    expect(flat(screen.getByText('À rembourser', { selector: 'p' }).nextElementSibling!.textContent)).toBe('105 000 FCFA');
+    expect(flat(screen.getByText('Reste dû', { selector: 'p' }).nextElementSibling!.textContent)).toBe('0 FCFA');
   });
 
   it('shows the not-found card for an unknown customer', async () => {

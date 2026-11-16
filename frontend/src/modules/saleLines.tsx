@@ -21,6 +21,8 @@ export interface Sellable {
   unit: string | null;
   available: number;
   eggsPerTray?: number;
+  /** Eggs only: whole plateaux in `available` (the unit of the line is a plateau by default). */
+  availableTrays?: number;
   /** `YYYY-MM-DD` */
   withdrawalUntil: string | null;
   sellable: boolean;
@@ -106,8 +108,8 @@ export function saleLinesField(date: string, labels: Record<string, string> = {}
         type: 'select',
         required: true,
         dependsOnCell: 'kind',
-        // Listing the sources is a daily-entry right on ventes; without it the grid keeps what is stored.
-        optionsPermission: { module: 'ventes', action: 'create' },
+        // `GET /sales/sellables` needs `ventes:read`; without it the grid keeps what is stored.
+        optionsPermission: { module: 'ventes', action: 'read' },
         options: (row) => (date && row.kind && row.kind !== 'SERVICE'
           ? { endpoint: '/sales/sellables', params: { kind: row.kind, date }, select: sellableOptions }
           : null),

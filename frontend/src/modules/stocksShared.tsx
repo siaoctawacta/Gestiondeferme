@@ -16,7 +16,7 @@ import { text } from './lotsShared';
 export type StockCategory = 'ALIMENT' | 'MEDICAMENT' | 'VACCIN' | 'MATERIEL' | 'CONSOMMABLE';
 export type StockLevel = 'ok' | 'faible' | 'critique';
 export type MovementType = 'ENTREE' | 'SORTIE' | 'AJUSTEMENT';
-export type MovementReason = 'ACHAT' | 'CONSOMMATION' | 'TRAITEMENT' | 'INVENTAIRE' | 'PERTE' | 'AUTRE';
+export type MovementReason = 'ACHAT' | 'CONSOMMATION' | 'TRAITEMENT' | 'INVENTAIRE' | 'PERTE' | 'VENTE' | 'RETOUR' | 'AUTRE';
 
 /** `GET /stock`: one row per active item of the organisation, with this farm's level. `id` is the stock item id. */
 export interface StockRow {
@@ -144,6 +144,9 @@ const REASONS: { value: MovementReason; label: string }[] = [
   { value: 'TRAITEMENT', label: 'Traitement' },
   { value: 'INVENTAIRE', label: 'Inventaire' },
   { value: 'PERTE', label: 'Perte' },
+  // Written by the sales ledger (an invoice's exit, a credit note's return): never entered by hand.
+  { value: 'VENTE', label: 'Vente' },
+  { value: 'RETOUR', label: 'Retour client' },
   { value: 'AUTRE', label: 'Autre' },
 ];
 /** Reasons a person may give to a manual exit. */

@@ -25,7 +25,7 @@ export type { EggUnit, SaleLineData, SaleLineKind, Sellable } from './saleLines'
 
 export type CustomerType = 'PARTICULIER' | 'REVENDEUR' | 'RESTAURANT' | 'GROSSISTE';
 
-/** `GET /customers`. `balance` is derived (what is due, less what is owed back). */
+/** `GET /customers`. `balance` = Σ what is due on the issued invoices; `refundDue` = Σ what is owed back (a credit note beyond what was paid), apart. */
 export interface CustomerRow {
   id: string;
   name: string;
@@ -36,13 +36,15 @@ export interface CustomerRow {
   address: string | null;
   active: boolean;
   balance: number;
+  refundDue: number;
 }
 
-/** `GET /customers/:id`: the row and what the customer was invoiced, paid and credited. */
+/** `GET /customers/:id`: the row and what the customer was invoiced, paid, credited and was refunded. */
 export interface CustomerData extends CustomerRow {
   invoiced: number;
   paid: number;
   credited: number;
+  refunded: number;
 }
 
 /** What `GET /quotes` shows of a status: derived by the API, `EXPIRE` is a sent quote past its validity. */

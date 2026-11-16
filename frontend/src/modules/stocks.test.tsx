@@ -35,6 +35,9 @@ const MOVEMENTS = [
   mv({ id: 'm3', operationId: 'op3', date: '2026-11-04', itemId: 's2', itemName: 'Aliment ponte', type: 'AJUSTEMENT', quantity: -20, reason: 'INVENTAIRE', sourceType: 'INVENTORY' }),
   mv({ id: 'm4', operationId: 'op4', date: '2026-11-05', itemId: 's2', itemName: 'Aliment ponte', type: 'SORTIE', quantity: -300, reason: 'CONSOMMATION', lotNumber: 'L-01' }),
   mv({ id: 'm5', operationId: 'op4', date: '2026-11-05', itemId: 's2', itemName: 'Aliment ponte', type: 'SORTIE', quantity: -50, reason: 'CONSOMMATION', lotNumber: 'L-02' }),
+  // Written by the sales ledger (invoice exit, credit-note return): source-linked, so locked rows.
+  mv({ id: 'm6', operationId: 'op6', date: '2026-11-06', itemId: 's2', itemName: 'Aliment ponte', type: 'SORTIE', quantity: -40, reason: 'VENTE', sourceType: 'SALE' }),
+  mv({ id: 'm7', operationId: 'op7', date: '2026-11-07', itemId: 's2', itemName: 'Aliment ponte', type: 'ENTREE', quantity: 10, reason: 'RETOUR', sourceType: 'CREDIT_NOTE' }),
 ];
 
 const plusDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
@@ -293,6 +296,21 @@ describe('stock movements tab', () => {
     expect(within(entree).getByText('Entrée')).toBeInTheDocument();
     expect(within(entree).getByText('+1 000')).toBeInTheDocument();
     expect(within(entree).getByText('L-01')).toBeInTheDocument();
+  });
+
+  it('labels the sales movements (Vente, Retour client) and locks them like any source-linked row', async () => {
+    const user = await openMovements({ perms: ['read', 'create'] });
+    const sold = within(screen.getByText('2026-11-06').closest('tr')!);
+    expect(sold.getByText('Vente')).toBeInTheDocument();
+    expect(sold.getByText('-40')).toBeInTheDocument();
+    const back = within(screen.getByText('2026-11-07').closest('tr')!);
+    expect(back.getByText('Retour client')).toBeInTheDocument();
+    for (const r of [sold, back]) {
+      const edit = r.getByRole('button', { name: 'Modifier' });
+      expect(edit).toHaveAttribute('aria-disabled', 'true');
+      await user.hover(edit);
+      expect(edit).toHaveAttribute('title', "Mouvement issu d'une autre opération");
+    }
   });
 
   it('locks the source-linked rows with a reason and lets the manual one be edited', async () => {
