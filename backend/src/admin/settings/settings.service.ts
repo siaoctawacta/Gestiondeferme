@@ -9,7 +9,7 @@ type SettingValue = number | string | Legal;
 
 /** A whole number of days (or similar): 1, 2, 3... */
 const positiveInteger =
-  (label: string) =>
+  (label: string, max?: number) =>
   (value: unknown): number => {
     if (
       typeof value !== 'number' ||
@@ -19,6 +19,9 @@ const positiveInteger =
       throw new BadRequestException(
         `${label} doit être un nombre entier supérieur à 0`,
       );
+    }
+    if (max !== undefined && value > max) {
+      throw new BadRequestException(`${label} ne peut pas dépasser ${max}`);
     }
     return value;
   };
@@ -108,17 +111,24 @@ const SETTINGS: Record<string, SettingDefinition> = {
   },
   invoiceDueDays: {
     default: 15,
-    parse: positiveInteger("Le délai d'échéance des factures"),
+    parse: positiveInteger("Le délai d'échéance des factures", 365),
   },
   eggsPerTray: {
     default: 30,
-    parse: positiveInteger("Le nombre d'œufs par plateau"),
+    parse: positiveInteger("Le nombre d'œufs par plateau", 1000),
   },
   legal: {
     default: { name: '', address: '', nif: '', rccm: '' },
     parse: legal,
   },
 };
+
+/** The part of the settings every role may read (`GET /settings/documents`). */
+export interface DocumentSettings {
+  legal: Legal;
+  invoiceDueDays: number;
+  eggsPerTray: number;
+}
 
 /** The settings the sales documents snapshot (days to pay an invoice, eggs in a tray). */
 export type SaleSetting = 'invoiceDueDays' | 'eggsPerTray';
@@ -153,6 +163,20 @@ export class SettingsService {
     return (
       (stored?.value as number | undefined) ?? (SETTINGS[key].default as number)
     );
+  }
+
+  /**
+   * What the print sheets of the sales documents show, for EVERY signed-in
+   * role (read-only, nothing else of the settings): the legal identity, the
+   * days to pay an invoice (the due-date hint) and the eggs of a tray.
+   */
+  async documents(ctx: RequestContext): Promise<DocumentSettings> {
+    const all = await this.getAll(ctx);
+    return {
+      legal: all.legal as Legal,
+      invoiceDueDays: all.invoiceDueDays as number,
+      eggsPerTray: all.eggsPerTray as number,
+    };
   }
 
   async set(

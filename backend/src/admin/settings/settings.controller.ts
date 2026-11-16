@@ -1,7 +1,12 @@
 import { Body, Controller, Get, Param, Put } from '@nestjs/common';
 import { ApiProperty, ApiTags } from '@nestjs/swagger';
 import { IsDefined } from 'class-validator';
-import { Ctx, NoFarm, RequirePermission } from '../../access/decorators';
+import {
+  AnyAuthenticated,
+  Ctx,
+  NoFarm,
+  RequirePermission,
+} from '../../access/decorators';
 import type { RequestContext } from '../../access/decorators';
 import { Audited } from '../../audit/audited.decorator';
 import { SettingsService } from './settings.service';
@@ -24,6 +29,13 @@ export class SettingsController {
   @RequirePermission('parametres', 'read')
   getAll(@Ctx() ctx: RequestContext) {
     return this.settings.getAll(ctx);
+  }
+
+  /** The legal identity and the two figures the documents print, for every signed-in role: nothing else of the settings. */
+  @Get('documents')
+  @AnyAuthenticated()
+  documents(@Ctx() ctx: RequestContext) {
+    return this.settings.documents(ctx);
   }
 
   @Put(':key')
