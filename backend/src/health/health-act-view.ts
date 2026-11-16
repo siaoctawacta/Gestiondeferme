@@ -108,17 +108,29 @@ export const ACT_COLUMNS: ExportColumn<HealthActItem>[] = [
   { header: 'Statut', value: (a) => STATUS_LABEL[a.status] },
 ];
 
-/** Last day under withdrawal: done date + treatment days + withdrawal days (inclusive). */
-export function withdrawalEnd(act: {
+/**
+ * The withdrawal period a done act causes: from the day it was done to done
+ * date + treatment days + withdrawal days, both inclusive. Null for an act that
+ * is not done or states no withdrawal. The sale guard blocks the days INSIDE it.
+ */
+export function withdrawalPeriod(act: {
   status: HealthActStatus;
   doneDate: Date | null;
   durationDays: number | null;
   withdrawalDays: number | null;
-}): Date | null {
+}): { from: Date; until: Date } | null {
   if (act.status !== 'REALISE' || !act.doneDate) return null;
   if (act.withdrawalDays === null) return null;
-  return addDays(act.doneDate, (act.durationDays ?? 0) + act.withdrawalDays);
+  return {
+    from: act.doneDate,
+    until: addDays(act.doneDate, (act.durationDays ?? 0) + act.withdrawalDays),
+  };
 }
+
+/** Last day under withdrawal (done date + treatment days + withdrawal days, inclusive), null when the act causes none. */
+export const withdrawalEnd = (
+  act: Parameters<typeof withdrawalPeriod>[0],
+): Date | null => withdrawalPeriod(act)?.until ?? null;
 
 /** What an act row calls its target: lot code, animal tag or building name. */
 export const targetLabel = (row: {

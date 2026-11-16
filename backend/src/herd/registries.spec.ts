@@ -6,6 +6,7 @@ import { OccupationRegistry } from './occupation';
 import { WithdrawalRegistry } from './withdrawal';
 import { LotCostRegistry } from '../indicators/lot-cost';
 import { AlertsRegistry } from '../indicators/alerts/alerts-registry';
+import { EggOutflowRegistry } from '../eggs/egg-outflow-registry';
 
 describe('the application registries', () => {
   it.each([
@@ -14,6 +15,7 @@ describe('the application registries', () => {
     ['coûts des lots', () => new LotCostRegistry()],
     ['animaux ciblés', () => new AnimalTargetRegistry()],
     ['délais d’attente', () => new WithdrawalRegistry()],
+    ['sorties d’œufs', () => new EggOutflowRegistry()],
   ])('refuses to boot without a source for "%s"', (name, make) => {
     expect(() => make().onApplicationBootstrap()).toThrow(name);
   });

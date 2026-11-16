@@ -19,20 +19,13 @@ export class SaleEggOutflows implements EggOutflowSource {
     registry.register(this);
   }
 
-  async outflows(
-    tx: Prisma.TransactionClient,
-    batchIds: string[],
-    opts?: { excludeSourceId?: string },
-  ) {
+  async outflows(tx: Prisma.TransactionClient, batchIds: string[]) {
     const lines = await tx.invoiceLine.findMany({
       where: {
         kind: 'OEUFS',
         batchId: { in: batchIds },
         invoice: {
           status: { in: [...REVENUE_STATUSES] },
-          ...(opts?.excludeSourceId
-            ? { id: { not: opts.excludeSourceId } }
-            : {}),
         },
       },
       select: {
@@ -44,15 +37,7 @@ export class SaleEggOutflows implements EggOutflowSource {
     });
     const returns = await tx.creditNoteLine.findMany({
       where: {
-        creditNote: {
-          withReturn: true,
-          ...(opts?.excludeSourceId
-            ? {
-                id: { not: opts.excludeSourceId },
-                invoiceId: { not: opts.excludeSourceId },
-              }
-            : {}),
-        },
+        creditNote: { withReturn: true },
         invoiceLine: { kind: 'OEUFS', batchId: { in: batchIds } },
       },
       select: {

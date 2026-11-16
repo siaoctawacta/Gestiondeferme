@@ -6,6 +6,14 @@ export interface EggProductionDay {
   marketable: number;
 }
 
+/** collected − broken − downgraded − toIncubation: the eggs of a record that can be sold (THE one formula). */
+export const marketableOf = (r: {
+  collected: number;
+  broken: number;
+  downgraded: number;
+  toIncubation: number;
+}): number => r.collected - r.broken - r.downgraded - r.toIncubation;
+
 /** Eggs leaving a lot on one day (a sale); negative when they come back (a credit-note return). */
 export interface EggOutflowDay {
   date: Date;

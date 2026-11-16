@@ -31,6 +31,7 @@ import type {
   EggListQueryDto,
   UpdateEggProductionDto,
 } from './dto/egg-production.dto';
+import { marketableOf } from './egg-balance';
 
 type Tx = Prisma.TransactionClient;
 
@@ -65,14 +66,6 @@ export const EGG_COLUMNS: ExportColumn<EggProductionItem>[] = [
   { header: 'Mis en incubation', value: (e) => e.toIncubation },
   { header: 'Taux de casse', value: (e) => e.breakageRate },
 ];
-
-/** collected − broken − downgraded − toIncubation: the eggs that can be sold. */
-const marketableOf = (r: {
-  collected: number;
-  broken: number;
-  downgraded: number;
-  toIncubation: number;
-}): number => r.collected - r.broken - r.downgraded - r.toIncubation;
 
 const SORTABLE = ['date', 'collected'];
 export const NO_EGGS = "Ce lot ne produit pas d'œufs";

@@ -53,7 +53,7 @@ describe('allocateExit', () => {
       batches: [N, B, A],
       date: day('2026-01-10'),
       needed: D(35),
-      consumption: true,
+      refusesExpired: true,
     });
     expect(take(pieces)).toEqual([
       ['A', -10],
@@ -74,7 +74,7 @@ describe('allocateExit', () => {
       batches: [A, B],
       date: day('2026-01-10'),
       needed: D(20),
-      consumption: true,
+      refusesExpired: true,
     });
     expect(take(pieces)).toEqual([['B', -20]]);
   });
@@ -90,7 +90,7 @@ describe('allocateExit', () => {
       batches: [A],
       date: day('2026-01-10'),
       needed: D(30),
-      consumption: true,
+      refusesExpired: true,
     });
     expect(take(pieces)).toEqual([['A', -30]]);
     expect(() =>
@@ -99,7 +99,7 @@ describe('allocateExit', () => {
         batches: [A],
         date: day('2026-01-10'),
         needed: D(31),
-        consumption: true,
+        refusesExpired: true,
       }),
     ).toThrow(AllocationError);
   });
@@ -114,7 +114,7 @@ describe('allocateExit', () => {
           batches: [expired, B],
           date: day('2026-01-10'),
           needed: D(needed),
-          consumption: true,
+          refusesExpired: true,
         });
       } catch (e) {
         return (e as AllocationError).kind;
@@ -130,7 +130,7 @@ describe('allocateExit', () => {
         batches: [expired],
         date: day('2026-01-10'),
         needed: D(1),
-        consumption: true,
+        refusesExpired: true,
       });
     expect(onlyExpired).toThrow(AllocationError);
     try {
@@ -152,7 +152,7 @@ describe('allocateExit', () => {
       batches: [B, N, expired],
       date: day('2026-01-10'),
       needed: D(25),
-      consumption: false,
+      refusesExpired: false,
     });
     expect(take(pieces)).toEqual([
       ['A', -10],
@@ -170,7 +170,7 @@ describe('allocateExit', () => {
           batches: [A, B],
           date: day('2026-01-10'),
           needed: D(4),
-          consumption: true,
+          refusesExpired: true,
           batchId: 'B',
         }),
       ),
@@ -181,7 +181,7 @@ describe('allocateExit', () => {
         batches: [A, B],
         date: day('2026-01-10'),
         needed: D(11),
-        consumption: true,
+        refusesExpired: true,
         batchId: 'B',
       }),
     ).toThrow(AllocationError);
@@ -201,7 +201,7 @@ describe('allocateExit', () => {
       batches: [B],
       date: day('2026-01-05'),
       needed: D(10),
-      consumption: true,
+      refusesExpired: true,
     };
     // At the end of the day lot B is there and FEFO takes it; at the morning position it is not.
     expect(take(allocateExit(args))).toEqual([['B', -10]]);
@@ -224,7 +224,7 @@ describe('allocateExit', () => {
         batches: [A, B],
         date: day('2026-01-05'),
         needed: D(10),
-        consumption: true,
+        refusesExpired: true,
         batchId: 'B',
         anchor: new Date('2026-01-05T08:00:00Z'),
       }),
@@ -238,7 +238,7 @@ describe('allocateExit', () => {
         batches: [A],
         date: day('2026-01-10'),
         needed: D(50),
-        consumption: true,
+        refusesExpired: true,
       });
       throw new Error('should have thrown');
     } catch (e) {

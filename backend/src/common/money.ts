@@ -33,3 +33,6 @@ export const remainingOf = (amount: Num, payments: Num[]): Dec => {
 
 /** The ONLY Decimal → number conversion of an amount: at the API edge, never in between. */
 export const toMoney = (amount: Dec): number => amount.toNumber();
+
+/** A fresh zero amount. */
+export const zero = (): Dec => D(0);

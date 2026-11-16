@@ -212,10 +212,11 @@ const isEntry = (m: { quantity: Dec }): boolean => m.quantity.gt(0);
  * (farm, item), and only then writes.
  *
  * Write interface for the modules that own an operation (purchase, feed
- * distribution, health act, inventory), one transaction each:
+ * distribution, health act, inventory, sale, credit note), one transaction each:
  * - create: `record` / `recordMany` (one call for all the lines);
  * - edit: `replaceBySource` (never `reverseBySource` then `record`);
- * - delete: `reverseBySource`.
+ * - delete: `reverseBySource`;
+ * - take goods back for a sale: `returnBySource` (credit note with return).
  * Never chain two ledger calls that touch different items in one transaction:
  * the locks of each call are ordered only within the call, so two such
  * transactions could deadlock. `replaceBySource` and `reverseBySource` read the
@@ -341,6 +342,13 @@ export class StockLedgerService {
    * sans retour des marchandises` (nothing written) when an article is inactive
    * or the lot it would re-enter is expired on `date`. One transaction, ONE
    * `recordMany`; the caller owns its source row and has taken its other locks.
+   * The new lot is created before the validation and rolled back with the
+   * transaction when a refusal follows.
+   *
+   * A RETURN IS A SNAPSHOT: the `RETOUR` entry keeps the cost read at the credit
+   * note's date. A later re-costing of the sale's exits (a cost-only correction
+   * of the original reception, a back-dated entry) does NOT re-value it: there is
+   * no replay-time re-valuation, by ruling.
    */
   async returnBySource(
     tx: Tx,
@@ -789,7 +797,9 @@ export class StockLedgerService {
     );
     const byItem = new Map<string, typeof moves>();
     for (const m of moves) {
-      byItem.set(m.stockItemId, [...(byItem.get(m.stockItemId) ?? []), m]);
+      const list = byItem.get(m.stockItemId) ?? [];
+      list.push(m);
+      byItem.set(m.stockItemId, list);
     }
     for (const id of itemIds) {
       let total = ZERO;
@@ -1233,7 +1243,7 @@ export class StockLedgerService {
         batches: [...state.batches.values()],
         date: opts.date,
         needed: opts.needed,
-        consumption: REFUSES_EXPIRED_LOTS.includes(opts.reason),
+        refusesExpired: REFUSES_EXPIRED_LOTS.includes(opts.reason),
         batchId: opts.batchId,
         anchor: opts.anchor,
       });

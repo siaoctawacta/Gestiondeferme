@@ -78,8 +78,8 @@ export function headrooms(
 
 /**
  * Splits an exit of `needed` units at `date` across the lots. Lots are served
- * earliest expiry first (no expiry last), then the stock held in no lot. A
- * exit that `consumption` flags (a consumption, a treatment or a sale: the
+ * earliest expiry first (no expiry last), then the stock held in no lot. An
+ * exit that `refusesExpired` flags (a consumption, a treatment or a sale: the
  * ledger's `REFUSES_EXPIRED_LOTS`) never touches an expired lot (expiry before
  * `date`); any other exit writes expired lots off first. `batchId` names the only lot to use. Each
  * bucket gives at most its headroom at the exit's position (`anchor`: the
@@ -90,11 +90,11 @@ export function allocateExit(opts: {
   batches: AllocBatch[];
   date: Date;
   needed: Decimal;
-  consumption: boolean;
+  refusesExpired: boolean;
   batchId?: string | null;
   anchor?: Date;
 }): Piece[] {
-  const { rows, batches, date, needed, consumption } = opts;
+  const { rows, batches, date, needed, refusesExpired } = opts;
   const room = headrooms(rows, date, opts.anchor);
   const roomOf = (id: string | null) => room.get(id) ?? ZERO;
   const expired = (b: AllocBatch) =>
@@ -103,7 +103,7 @@ export function allocateExit(opts: {
   if (opts.batchId) {
     const batch = batches.find((b) => b.id === opts.batchId);
     const available = roomOf(opts.batchId);
-    if (consumption && batch && expired(batch)) {
+    if (refusesExpired && batch && expired(batch)) {
       throw new AllocationError('EXPIRED', available);
     }
     if (available.lt(needed)) throw new AllocationError('SHORT', available);
@@ -119,7 +119,7 @@ export function allocateExit(opts: {
   const fresh = live.filter((b) => !expired(b)).sort(byExpiry);
   const stale = live.filter(expired).sort(byExpiry);
   const sequence: (string | null)[] = [
-    ...(consumption ? [] : stale.map((b) => b.id)),
+    ...(refusesExpired ? [] : stale.map((b) => b.id)),
     ...fresh.map((b) => b.id),
     null,
   ];
@@ -134,7 +134,7 @@ export function allocateExit(opts: {
   }
   if (remaining.gt(0)) {
     const everything = [...room.values()].reduce((s, q) => s.add(q), ZERO);
-    if (consumption && everything.gte(needed)) {
+    if (refusesExpired && everything.gte(needed)) {
       const usable = [...fresh.map((b) => b.id), null].reduce(
         (s, id) => s.add(roomOf(id)),
         ZERO,

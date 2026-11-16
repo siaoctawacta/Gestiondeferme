@@ -34,16 +34,9 @@ interface Sellable {
 /** What a sales module would register: the eggs it sold, held here for the test. */
 class TestOutflows implements EggOutflowSource {
   rows: { batchId: string; date: Date; eggs: number; sourceId: string }[] = [];
-  outflows(
-    _tx: unknown,
-    batchIds: string[],
-    opts?: { excludeSourceId?: string },
-  ) {
+  outflows(_tx: unknown, batchIds: string[]) {
     return Promise.resolve(
-      this.rows.filter(
-        (r) =>
-          batchIds.includes(r.batchId) && r.sourceId !== opts?.excludeSourceId,
-      ),
+      this.rows.filter((r) => batchIds.includes(r.batchId)),
     );
   }
 }
@@ -295,13 +288,9 @@ describe('Ledger seams of a sale (e2e)', () => {
       await produce(daysAgo(2), 2500);
       const eggs = app.get(EggStockService);
       const batch = { id: layer.id, code: layer.code };
-      const check = (
-        n: number,
-        date: string,
-        opts?: { excludeSourceId?: string },
-      ) =>
+      const check = (n: number, date: string) =>
         inTx((tx) =>
-          eggs.assertSale(tx, batch, [{ date: day(date), eggs: n }], opts),
+          eggs.assertSale(tx, batch, [{ date: day(date), eggs: n }]),
         );
       await expect(check(4710, daysAgo(2))).resolves.toBeUndefined();
       await expect(check(4711, daysAgo(2))).rejects.toMatchObject({
@@ -317,10 +306,6 @@ describe('Ledger seams of a sale (e2e)', () => {
       await expect(check(1711, daysAgo(2))).rejects.toMatchObject({
         message: `Œufs disponibles insuffisants pour ${layer.code} (1710 disponibles)`,
       });
-      // Re-checking the document that already sold them leaves it out.
-      await expect(
-        check(3000, daysAgo(2), { excludeSourceId: 'inv-1' }),
-      ).resolves.toBeUndefined();
       // Several lines of one document are checked together.
       await expect(
         inTx((tx) =>
@@ -331,7 +316,11 @@ describe('Ledger seams of a sale (e2e)', () => {
         ),
       ).rejects.toMatchObject({ status: 400 });
       expect(
-        await inTx((tx) => eggs.available(tx, layer.id, day(daysAgo(2)))),
+        (
+          await inTx((tx) =>
+            eggs.availableMany(tx, [layer.id], day(daysAgo(2))),
+          )
+        ).get(layer.id),
       ).toBe(1710);
       // A later sale cannot be starved by an earlier-dated one.
       sold.rows = [];
@@ -348,7 +337,11 @@ describe('Ledger seams of a sale (e2e)', () => {
       sell(-200, daysAgo(1), 'cn-1');
       const eggs = app.get(EggStockService);
       expect(
-        await inTx((tx) => eggs.available(tx, layer.id, day(daysAgo(1)))),
+        (
+          await inTx((tx) =>
+            eggs.availableMany(tx, [layer.id], day(daysAgo(1))),
+          )
+        ).get(layer.id),
       ).toBe(200);
     });
   });
@@ -503,9 +496,7 @@ describe('Ledger seams of a sale (e2e)', () => {
           .status,
       ).toBe('VENDU');
       // Nothing left for that source: a no-op.
-      await expect(
-        inTx((tx) => sales.unsell(tx, SOURCE)),
-      ).resolves.toBeUndefined();
+      await expect(inTx((tx) => sales.unsell(tx, SOURCE))).resolves.toEqual([]);
     });
 
     it('unsell is refused (409, nothing reinstated) when the animal changed since', async () => {
@@ -772,7 +763,7 @@ describe('Ledger seams of a sale (e2e)', () => {
           type: 'ENTREE',
           quantity: 4,
           unitCost: 320,
-          reason: 'RETOUR',
+          reason: 'AUTRE',
           sourceType: 'SALE',
           sourceId: 'inv-1',
           userId: user.id,

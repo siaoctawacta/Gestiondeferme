@@ -1,3 +1,4 @@
+import { SELECT_FARM } from '../common/messages';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { SettingsService } from '../admin/settings/settings.service';
@@ -11,7 +12,12 @@ import { formatCount } from '../common/format-number';
 import { EggStockService } from '../eggs/egg-stock';
 import { canLay, LAYING_TYPES } from '../herd/species';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
-import { WithdrawalRegistry } from '../herd/withdrawal';
+import {
+  coveringPeriods,
+  relevantEnd,
+  WithdrawalRegistry,
+  type WithdrawalPeriod,
+} from '../herd/withdrawal';
 import { PrismaService } from '../prisma/prisma.service';
 import { StockLedgerService } from '../stock/stock-ledger.service';
 import type {
@@ -44,6 +50,12 @@ export interface Sellable {
 }
 
 export const AUCUN_STOCK = 'Aucun stock';
+/**
+ * The reasons an animal cannot be sold are its status words: the picker names
+ * `Gestante` / `Allaitante` to anyone who may read sales (`ventes:read`), who
+ * thereby learns the breeding state of a sow without a read right on pigs.
+ * Accepted: the reason is what lets the seller understand the refusal.
+ */
 const GESTANTE = 'Gestante';
 const ALLAITANTE = 'Allaitante';
 const withdrawalReason = (until: Date): string =>
@@ -72,7 +84,7 @@ export class SellablesService {
     q: SellablesQueryDto,
   ): Promise<{ items: Sellable[] }> {
     const farmId = ctx.farmId;
-    if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
+    if (!farmId) throw new BadRequestException(SELECT_FARM);
     const date = requireDay(q.date);
     assertNotFuture(date);
     switch (q.kind) {
@@ -87,12 +99,19 @@ export class SellablesService {
     }
   }
 
-  private under(until: Date | undefined, date: Date) {
-    const blocked = !!until && until.getTime() >= date.getTime();
+  /**
+   * Where a lot or an animal stands on `date`: blocked when the date falls
+   * INSIDE one of its withdrawal periods, and the end of the period that
+   * matters (the current one, else the next, else the latest past one).
+   */
+  private under(periods: WithdrawalPeriod[] | undefined, date: Date) {
+    const found = periods ?? [];
+    const end = relevantEnd(found, date);
+    const blocked = coveringPeriods(found, date).length > 0;
     return {
-      withdrawalUntil: formatDayOrNull(until ?? null),
+      withdrawalUntil: formatDayOrNull(end ?? null),
       blocked,
-      reason: blocked && until ? withdrawalReason(until) : null,
+      reason: blocked && end ? withdrawalReason(end) : null,
     };
   }
 
@@ -108,12 +127,12 @@ export class SellablesService {
       date,
     );
     const open = batches.filter((b) => (alive.get(b.id) ?? 0) > 0);
-    const until = await this.withdrawals.untilMany({
+    const periods = await this.withdrawals.periods({
       batchIds: open.map((b) => b.id),
     });
     return open.map((b) => {
       const n = alive.get(b.id) ?? 0;
-      const w = this.under(until.get(b.id), date);
+      const w = this.under(periods.get(b.id), date);
       const designation = defaultDesignation('LOT', { batchType: b.type });
       return {
         id: b.id,
@@ -145,11 +164,11 @@ export class SellablesService {
       },
       orderBy: [{ tag: 'asc' }, { id: 'asc' }],
     });
-    const until = await this.withdrawals.untilMany({
+    const periods = await this.withdrawals.periods({
       animalIds: animals.map((a) => a.id),
     });
     return animals.map((a) => {
-      const w = this.under(until.get(a.id), date);
+      const w = this.under(periods.get(a.id), date);
       const category = ANIMAL_LABEL[a.category];
       const reason =
         a.status === 'GESTANTE'
@@ -201,12 +220,12 @@ export class SellablesService {
       this.settings.number(ctx.user.organizationId, 'eggsPerTray'),
     ]);
     const stocked = layers.filter((b) => (available.get(b.id) ?? 0) > 0);
-    const until = await this.withdrawals.untilMany({
+    const periods = await this.withdrawals.periods({
       batchIds: stocked.map((b) => b.id),
     });
     return stocked.map((b) => {
       const eggs = available.get(b.id) ?? 0;
-      const w = this.under(until.get(b.id), date);
+      const w = this.under(periods.get(b.id), date);
       return {
         id: b.id,
         kind: 'OEUFS',

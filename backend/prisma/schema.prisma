@@ -11,6 +11,13 @@ generator client {
   previewFeatures = ["relationJoins"]
 }
 
+// The finance ledger is a SQL view, "FinanceLedgerView", created by migration
+// 20261116090000_finance_ledger and not modelled here (nothing writes it). It
+// reads FinanceEntry, Purchase, PurchaseItem, Supplier, AnimalBatch, Invoice,
+// InvoiceLine, Customer, CreditNote and CreditNoteLine (each carries a note).
+// Migration convention: a migration that renames, retypes or drops a column the
+// view reads must DROP VIEW first, change the table, then CREATE VIEW again with
+// the same text; `finance-ledger.spec.ts` reads the LAST migration that defines it.
 datasource db {
   provider = "postgresql"
 }
@@ -391,6 +398,7 @@ enum BatchSourceType {
   FARROWING
 }
 
+/// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model AnimalBatch {
   id                  String             @id @default(cuid())
   farmId              String
@@ -468,6 +476,7 @@ model BatchEvent {
   @@index([farmId])
   @@index([batchId, date])
   @@index([relatedBatchId])
+  @@index([sourceType, sourceId])
   @@index([createdById])
 }
 
@@ -947,6 +956,7 @@ enum PaymentMethod {
 }
 
 /// Organisation master data (not farm-scoped).
+/// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model Supplier {
   id             String       @id @default(cuid())
   organizationId String
@@ -992,6 +1002,7 @@ enum Activity {
 }
 
 /// A purchase request (DA-NNNN) that becomes an order (BC-NNNN), is received into the stock ledger, then paid.
+/// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model Purchase {
   id             String            @id @default(cuid())
   organizationId String
@@ -1044,6 +1055,7 @@ model Purchase {
   @@index([farmId, date])
 }
 
+/// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model PurchaseItem {
   id               String           @id @default(cuid())
   purchaseId       String
@@ -1322,6 +1334,7 @@ enum CustomerPaymentKind {
 }
 
 /// Organisation master data (not farm-scoped).
+/// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model Customer {
   id             String       @id @default(cuid())
   organizationId String
@@ -1413,6 +1426,7 @@ model QuoteLine {
 }
 
 /// A sales invoice. A draft has no number and touches nothing; the FA-NNNN number is assigned at issue (so issued numbers have no gaps) and kept when the invoice is cancelled.
+/// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model Invoice {
   id             String            @id @default(cuid())
   organizationId String
@@ -1458,6 +1472,7 @@ model Invoice {
 }
 
 /// The line shape of QuoteLine, plus what the line is counted as in finance (set from sales/sale-lines.ts on every save).
+/// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model InvoiceLine {
   id              String           @id @default(cuid())
   invoiceId       String
@@ -1520,6 +1535,7 @@ model CustomerPayment {
 /// A credit note (avoir): final, never edited or deleted. Its lines say how much of each invoice line it takes back.
 /// Enforced by the service under the invoice row lock, NOT by SQL: Σ credit lines of an invoice line <= that line's quantity and amount, Σ credit notes <= the invoice total, the credit note's farm = its invoice's farm.
 /// A credit note worth nothing (every line already used up by rounding) is refused (400).
+/// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model CreditNote {
   id             String           @id @default(cuid())
   organizationId String
@@ -1548,6 +1564,7 @@ model CreditNote {
   @@index([farmId, date])
 }
 
+/// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model CreditNoteLine {
   id            String      @id @default(cuid())
   creditNoteId  String
@@ -1568,6 +1585,7 @@ enum FinanceKind {
 }
 
 /// A manual finance entry (salaries, energy, ...). Everything else the finance screens list is derived at read time from its documents by the SQL view "FinanceLedgerView" (not modelled here: nothing writes it).
+/// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model FinanceEntry {
   id          String          @id @default(cuid())
   farmId      String
@@ -1588,7 +1606,6 @@ model FinanceEntry {
   createdAt   DateTime        @default(now())
   updatedAt   DateTime        @updatedAt
 
-  @@index([farmId])
   @@index([farmId, date])
   @@index([batchId])
   @@index([createdById])

@@ -1,3 +1,5 @@
+import { toMoney } from '../common/money';
+import { SELECT_FARM } from '../common/messages';
 import {
   BadRequestException,
   ConflictException,
@@ -162,7 +164,7 @@ export class BatchesService {
           r.closedAt ? today(r.closedAt) : undefined,
         ),
         supplierName: r.supplierName,
-        purchasePrice: r.purchasePrice ? r.purchasePrice.toNumber() : null,
+        purchasePrice: r.purchasePrice ? toMoney(r.purchasePrice) : null,
         responsibleId: r.responsibleId,
         motherAnimalId: r.motherAnimalId,
         notes: r.notes,
@@ -308,7 +310,7 @@ export class BatchesService {
     source?: { type: BatchSourceType; id: string },
   ): Promise<BatchItem> {
     const farmId = ctx.farmId;
-    if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
+    if (!farmId) throw new BadRequestException(SELECT_FARM);
     if (!TYPES_BY_SPECIES[dto.species].includes(dto.type)) {
       throw new BadRequestException('Type de lot invalide pour cette espèce');
     }

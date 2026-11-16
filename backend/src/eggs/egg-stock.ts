@@ -1,14 +1,21 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { lockRow } from '../common/lock-row';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
-import { SourceRegistry } from '../common/source-registry';
 import type { Prisma } from '../generated/prisma/client';
 import {
   eggAvailable,
   eggShortfall,
+  marketableOf,
   type EggOutflowDay,
   type EggProductionDay,
 } from './egg-balance';
+
+import { EggOutflowRegistry } from './egg-outflow-registry';
+
+export {
+  EggOutflowRegistry,
+  type EggOutflowSource,
+} from './egg-outflow-registry';
 
 type Tx = Prisma.TransactionClient;
 
@@ -17,45 +24,6 @@ export const EGGS_SOLD =
 
 export const notEnoughEggs = (code: string, available: number): string =>
   `Œufs disponibles insuffisants pour ${code} (${available} disponibles)`;
-
-/**
- * What leaves the egg balance of a lot: sales. `eggs` does not keep a ledger
- * of its own (the balance is derived), so whoever sells eggs registers here
- * (`sales`: the egg lines of invoices that count, and, negative, the returns of
- * credit notes), and reads happen inside the caller's transaction.
- */
-export interface EggOutflowSource {
-  /**
-   * The outflows of the lots, with the document (`sourceId`) each belongs to.
-   * `excludeSourceId` leaves one document out (the one being re-checked).
-   */
-  outflows(
-    tx: Tx,
-    batchIds: string[],
-    opts?: { excludeSourceId?: string },
-  ): Promise<{ batchId: string; date: Date; eggs: number; sourceId: string }[]>;
-}
-
-@Injectable()
-export class EggOutflowRegistry extends SourceRegistry<EggOutflowSource> {
-  constructor() {
-    super('sorties d’œufs');
-  }
-
-  async outflows(
-    tx: Tx,
-    batchIds: string[],
-    opts?: { excludeSourceId?: string },
-  ) {
-    const found: Awaited<ReturnType<EggOutflowSource['outflows']>> = [];
-    if (batchIds.length === 0) return found;
-    // One query at a time: a transaction owns a single connection.
-    for (const source of this.all()) {
-      found.push(...(await source.outflows(tx, batchIds, opts)));
-    }
-    return found;
-  }
-}
 
 /**
  * The egg balance of a laying lot: Σ marketable production minus Σ outflows,
@@ -82,11 +50,7 @@ export class EggStockService {
     private readonly ledger: HerdLedgerService,
   ) {}
 
-  private async history(
-    tx: Tx,
-    batchIds: string[],
-    opts?: { excludeSourceId?: string },
-  ) {
+  private async history(tx: Tx, batchIds: string[]) {
     const production = new Map<string, EggProductionDay[]>();
     const outflows = new Map<string, EggOutflowDay[]>();
     for (const id of batchIds) {
@@ -108,10 +72,10 @@ export class EggStockService {
     for (const r of rows) {
       production.get(r.batchId)?.push({
         date: r.date,
-        marketable: r.collected - r.broken - r.downgraded - r.toIncubation,
+        marketable: marketableOf(r),
       });
     }
-    for (const o of await this.outflowRegistry.outflows(tx, batchIds, opts)) {
+    for (const o of await this.outflowRegistry.outflows(tx, batchIds)) {
       outflows.get(o.batchId)?.push({ date: o.date, eggs: o.eggs });
     }
     return { production, outflows };
@@ -132,25 +96,21 @@ export class EggStockService {
     );
   }
 
-  async available(tx: Tx, batchId: string, date: Date): Promise<number> {
-    return (await this.availableMany(tx, [batchId], date)).get(batchId) ?? 0;
-  }
-
   /**
    * 409 `Ce lot est clôturé` on a closed lot; 400 `Œufs disponibles insuffisants pour {code} ({n} disponibles)` when
    * selling `sales` (ALL the egg lines of the lot of one document) would
-   * leave the lot's balance negative on any day. `excludeSourceId`: the
-   * document being re-checked, whose own outflows are already registered.
+   * leave the lot's balance negative on any day. The document's own outflows
+   * are not registered yet (an invoice counts only once issued, and the
+   * caller checks before it writes).
    */
   async assertSale(
     tx: Tx,
     batch: { id: string; code: string },
     sales: EggOutflowDay[],
-    opts?: { excludeSourceId?: string },
   ): Promise<void> {
     if (sales.length === 0) return;
     this.ledger.assertOpen(await this.ledger.lockBatch(tx, batch.id));
-    const { production, outflows } = await this.history(tx, [batch.id], opts);
+    const { production, outflows } = await this.history(tx, [batch.id]);
     const registered = outflows.get(batch.id) ?? [];
     const lot = production.get(batch.id) ?? [];
     if (!eggShortfall(lot, [...registered, ...sales])) return;

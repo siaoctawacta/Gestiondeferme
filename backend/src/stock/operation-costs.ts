@@ -23,48 +23,75 @@ export const operationCost = (pieces: ExitPiece[]): DecimalType =>
     )
     .toDecimalPlaces(2);
 
+/** One stored exit, with what it belongs to. */
+interface ExitRow extends ExitPiece {
+  sourceId: string | null;
+  stockItemId: string;
+}
+
 /**
- * THE rule for every reader of what exits cost (feed, health, later sales): round each operation to the cent, then
- * sum per source. One query for all `sourceIds` of a `sourceType` (`FEED_DISTRIBUTION`, `HEALTH_ACT`...); the costs are
- * the ledger's CURRENT ones (a back-dated entry re-costs the exits). A source with no exit is absent from the map.
+ * The exits (quantity < 0) one source, or several of one type, wrote: the ONE
+ * query behind `operationCosts` and `exitCostsByItem`. Exits only: a source may
+ * also write entries (a credit note returns goods), which are not a cost.
  */
-export async function operationCosts(
+async function exitRows(
   client: Prisma.TransactionClient | PrismaService,
-  of: { sourceType: StockSourceType; sourceIds: string[] },
-): Promise<Map<string, DecimalType>> {
-  const result = new Map<string, DecimalType>();
-  if (of.sourceIds.length === 0) return result;
-  const exits = await client.stockMovement.findMany({
-    // Exits only: a source may also write entries (a credit note returns goods), which are not a cost.
-    where: {
-      sourceType: of.sourceType,
-      sourceId: { in: of.sourceIds },
-      quantity: { lt: 0 },
-    },
+  sourceType: StockSourceType,
+  sourceId: string | { in: string[] },
+): Promise<ExitRow[]> {
+  return client.stockMovement.findMany({
+    where: { sourceType, sourceId, quantity: { lt: 0 } },
     select: {
       sourceId: true,
+      stockItemId: true,
       operationId: true,
       quantity: true,
       unitCost: true,
     },
   });
-  const operations = new Map<string, Map<string, ExitPiece[]>>();
-  for (const e of exits) {
-    const bySource =
-      operations.get(e.sourceId ?? '') ?? new Map<string, ExitPiece[]>();
-    bySource.set(e.operationId, [...(bySource.get(e.operationId) ?? []), e]);
-    operations.set(e.sourceId ?? '', bySource);
+}
+
+/**
+ * The exits grouped by `key`, then by operation (a FEFO exit split over lots is
+ * several pieces of ONE operation): per key, the pieces of each operation.
+ */
+function operationsBy(
+  rows: ExitRow[],
+  key: (row: ExitRow) => string,
+): Map<string, ExitPiece[][]> {
+  const grouped = new Map<string, Map<string, ExitPiece[]>>();
+  for (const row of rows) {
+    const k = key(row);
+    const operations = grouped.get(k) ?? new Map<string, ExitPiece[]>();
+    const pieces = operations.get(row.operationId) ?? [];
+    pieces.push(row);
+    operations.set(row.operationId, pieces);
+    grouped.set(k, operations);
   }
-  for (const [sourceId, ops] of operations) {
-    result.set(
-      sourceId,
-      [...ops.values()].reduce(
-        (sum, pieces) => sum.add(operationCost(pieces)),
-        new Decimal(0),
-      ),
-    );
-  }
-  return result;
+  return new Map([...grouped].map(([k, ops]) => [k, [...ops.values()]]));
+}
+
+const costOf = (operations: ExitPiece[][]): DecimalType =>
+  operations.reduce((sum, p) => sum.add(operationCost(p)), new Decimal(0));
+
+/**
+ * THE rule for every reader of what exits cost (feed, health, sales): round each operation to the cent, then
+ * sum per source. One query for all `sourceIds` of a `sourceType` (`FEED_DISTRIBUTION`, `HEALTH_ACT`...); the costs are
+ * the ledger's CURRENT ones (a back-dated entry re-costs the exits). A source with no exit is absent from the map.
+ * The ids are the caller's own documents: nothing here is scoped to a farm.
+ */
+export async function operationCosts(
+  client: Prisma.TransactionClient | PrismaService,
+  of: { sourceType: StockSourceType; sourceIds: string[] },
+): Promise<Map<string, DecimalType>> {
+  if (of.sourceIds.length === 0) return new Map();
+  const rows = await exitRows(client, of.sourceType, { in: of.sourceIds });
+  return new Map(
+    [...operationsBy(rows, (r) => r.sourceId ?? '')].map(([id, ops]) => [
+      id,
+      costOf(ops),
+    ]),
+  );
 }
 
 /** What the exits of ONE source took of one article: the quantity (Σ |quantity|, every piece) and the cost (per-operation rounding, then summed). */
@@ -76,52 +103,29 @@ export interface ItemExitCost {
 /**
  * What the exits of ONE source (a sale) took of each article, read from the
  * ledger as it is NOW (a back-dated entry or an edit re-costs the exits, so
- * nothing is snapshotted): same rules as `operationCosts` (exits only, each
- * operation rounded to the cent, then summed). One query. An article the
- * source did not take is absent. A credit-note return divides `cost` by
- * `quantity` to get the average unit cost of the sale's exits of that article.
+ * nothing is snapshotted): same rules as `operationCosts` (the same query and
+ * grouping, per article). One query. An article the source did not take is
+ * absent. A credit-note return divides `cost` by `quantity` to get the average
+ * unit cost of the sale's exits of that article. NO FARM SCOPE: `sourceId` is
+ * the id of a document the caller already holds under its row lock (an
+ * invoice), never an id taken from a request.
  */
 export async function exitCostsByItem(
   client: Prisma.TransactionClient | PrismaService,
   of: { sourceType: StockSourceType; sourceId: string },
 ): Promise<Map<string, ItemExitCost>> {
-  const exits = await client.stockMovement.findMany({
-    where: {
-      sourceType: of.sourceType,
-      sourceId: of.sourceId,
-      quantity: { lt: 0 },
-    },
-    select: {
-      stockItemId: true,
-      operationId: true,
-      quantity: true,
-      unitCost: true,
-    },
-  });
-  const operations = new Map<string, Map<string, ExitPiece[]>>();
-  for (const e of exits) {
-    const byOperation =
-      operations.get(e.stockItemId) ?? new Map<string, ExitPiece[]>();
-    byOperation.set(e.operationId, [
-      ...(byOperation.get(e.operationId) ?? []),
-      e,
-    ]);
-    operations.set(e.stockItemId, byOperation);
-  }
-  const result = new Map<string, ItemExitCost>();
-  for (const [itemId, ops] of operations) {
-    const pieces = [...ops.values()];
-    result.set(itemId, {
-      quantity: pieces
-        .flat()
-        .reduce((sum, p) => sum.add(p.quantity.abs()), new Decimal(0)),
-      cost: pieces.reduce(
-        (sum, p) => sum.add(operationCost(p)),
-        new Decimal(0),
-      ),
-    });
-  }
-  return result;
+  const rows = await exitRows(client, of.sourceType, of.sourceId);
+  return new Map(
+    [...operationsBy(rows, (r) => r.stockItemId)].map(([itemId, ops]) => [
+      itemId,
+      {
+        quantity: ops
+          .flat()
+          .reduce((sum, p) => sum.add(p.quantity.abs()), new Decimal(0)),
+        cost: costOf(ops),
+      },
+    ]),
+  );
 }
 
 /** The lot a sale's FIRST exit piece took of each article, in the order FEFO draws lots: expiry (none last), received date, id. */

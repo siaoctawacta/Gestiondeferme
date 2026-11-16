@@ -4,9 +4,13 @@ import {
   BatchHistoryRegistry,
   type BatchHistorySource,
 } from '../herd/batch-history';
-import { WithdrawalRegistry, type WithdrawalSource } from '../herd/withdrawal';
+import {
+  WithdrawalRegistry,
+  type WithdrawalPeriod,
+  type WithdrawalSource,
+} from '../herd/withdrawal';
 import { PrismaService } from '../prisma/prisma.service';
-import { withdrawalEnd } from './health-act-view';
+import { withdrawalPeriod } from './health-act-view';
 
 /**
  * What the health records tell `herd` about a lot or an animal: how long it is
@@ -29,28 +33,17 @@ export class HealthHistory
   }
 
   /**
-   * The latest end among the done acts (not cancelled) that state a
-   * withdrawal: done date + treatment days + withdrawal days. Read inside the
-   * caller's transaction when it gives one (a sale sees the act it just made).
+   * The withdrawal periods of the lots and animals: one per done act (not
+   * cancelled, not planned) that states a withdrawal, from the day it was
+   * done to done date + treatment days + withdrawal days. One query, read
+   * inside the caller's transaction when it gives one (a sale sees the act it
+   * just made).
    */
-  async withdrawalUntil(
-    target: { batchId: string } | { animalId: string },
-    tx?: Prisma.TransactionClient,
-  ): Promise<Date | null> {
-    const id = 'batchId' in target ? target.batchId : target.animalId;
-    const ends = await this.withdrawalUntilMany(
-      'batchId' in target ? { batchIds: [id] } : { animalIds: [id] },
-      tx,
-    );
-    return ends.get(id) ?? null;
-  }
-
-  /** `withdrawalUntil` of many lots and animals: one query. */
-  async withdrawalUntilMany(
+  async withdrawalPeriods(
     ids: { batchIds?: string[]; animalIds?: string[] },
     tx?: Prisma.TransactionClient,
-  ): Promise<Map<string, Date>> {
-    const result = new Map<string, Date>();
+  ): Promise<Map<string, WithdrawalPeriod[]>> {
+    const result = new Map<string, WithdrawalPeriod[]>();
     const targets = [
       ...(ids.batchIds?.length ? [{ batchId: { in: ids.batchIds } }] : []),
       ...(ids.animalIds?.length ? [{ animalId: { in: ids.animalIds } }] : []),
@@ -73,10 +66,11 @@ export class HealthHistory
     });
     for (const act of acts) {
       const id = act.batchId ?? act.animalId;
-      const end = withdrawalEnd(act);
-      if (!id || !end) continue;
-      const known = result.get(id);
-      if (!known || end > known) result.set(id, end);
+      const period = withdrawalPeriod(act);
+      if (!id || !period) continue;
+      const list = result.get(id) ?? [];
+      list.push(period);
+      result.set(id, list);
     }
     return result;
   }

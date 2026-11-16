@@ -1,3 +1,6 @@
+import { Decimal } from '@prisma/client/runtime/client';
+import { SELECT_FARM } from '../common/messages';
+import { toMoney } from '../common/money';
 import {
   BadRequestException,
   Injectable,
@@ -154,7 +157,7 @@ export class StockOverviewService {
     return items.map((item) => {
       const perFarm = new Map<string, FarmLevel>();
       let quantity = 0;
-      let value = 0;
+      let value = new Decimal(0);
       let minQty = 0;
       let maxQty: number | null = 0;
       let perDay = 0;
@@ -173,11 +176,11 @@ export class StockOverviewService {
           maxQty: max,
           level: stockLevel(q, min),
           averageCost:
-            q > 0 ? (l?.averageCost.toDecimalPlaces(2).toNumber() ?? 0) : 0,
-          value: l?.value.toNumber() ?? 0,
+            q > 0 && l ? toMoney(l.averageCost.toDecimalPlaces(2)) : 0,
+          value: l ? toMoney(l.value) : 0,
         });
         quantity += q;
-        value += l?.value.toNumber() ?? 0;
+        if (l) value = value.add(l.value);
         minQty += min;
         maxQty = maxQty !== null && max !== null ? maxQty + max : null;
         perDay += consumption.get(k)?.toNumber() ?? 0;
@@ -196,8 +199,9 @@ export class StockOverviewService {
           maxQty: maxQty === null ? null : round2(maxQty),
           level: worstLevel([...perFarm.values()].map((f) => f.level)),
           daysOfStock: perDay > 0 ? Math.floor(quantity / perDay) : null,
-          averageCost: quantity > 0 ? round2(value / quantity) : 0,
-          value: round2(value),
+          averageCost:
+            quantity > 0 ? toMoney(value.div(quantity).toDecimalPlaces(2)) : 0,
+          value: toMoney(value.toDecimalPlaces(2)),
           nextExpiry: next ? formatDay(next) : null,
         },
       };
@@ -294,7 +298,7 @@ export class StockOverviewService {
     dto: SetThresholdsDto,
   ): Promise<StockRow> {
     const farmId = ctx.farmId;
-    if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
+    if (!farmId) throw new BadRequestException(SELECT_FARM);
     const maxQty = dto.maxQty ?? null;
     if (maxQty !== null && maxQty < dto.minQty) {
       throw new BadRequestException(
