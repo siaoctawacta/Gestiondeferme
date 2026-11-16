@@ -683,13 +683,18 @@ describe('Quotes (e2e)', () => {
     });
 
     it('shows a sent quote past its validity as Expiré, and still lets it be decided', async () => {
+      // a draft past its validity cannot be sent: it expires after being sent
       const expired = await quote({
         date: daysAgo(10),
-        validUntil: daysAgo(3),
+        validUntil: daysAgo(0),
       });
       const today = await quote({ date: daysAgo(10), validUntil: daysAgo(0) });
       await act(expired.id, 'send');
       await act(today.id, 'send');
+      await prisma.quote.update({
+        where: { id: expired.id },
+        data: { validUntil: new Date(daysAgo(3)) },
+      });
       const draft = await quote({ date: daysAgo(10), validUntil: daysAgo(3) });
       expect((await get(expired.id)).status).toBe('EXPIRE');
       expect((await get(today.id)).status).toBe('ENVOYE');
@@ -767,7 +772,6 @@ describe('Quotes (e2e)', () => {
             designation: 'Transport',
             quantity: 2,
             unitPrice: 1000,
-            unit: 'course',
           }),
         ],
       });
@@ -787,7 +791,7 @@ describe('Quotes (e2e)', () => {
         customerName: 'SuperMarché Ramco',
         product: 'Transport',
         quantity: 2,
-        unit: 'course',
+        unit: null,
         total: 2000,
         status: 'BROUILLON',
         invoiceId: null,

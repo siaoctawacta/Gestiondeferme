@@ -13,7 +13,8 @@ import type { ExportColumn } from '../listing/export';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
-import { receivablesOf } from '../sales/sale-view';
+import { toMoney } from '../common/money';
+import { receivablesOf } from '../sales/receivables';
 import type {
   CreateCustomerDto,
   CustomerQueryDto,
@@ -138,8 +139,8 @@ export class CustomersService {
   private toItem(c: Customer, standing: Standing | undefined): CustomerItem {
     return {
       ...sheet(c),
-      balance: (standing ?? NOTHING).balance.toNumber(),
-      refundDue: (standing ?? NOTHING).refundDue.toNumber(),
+      balance: toMoney((standing ?? NOTHING).balance),
+      refundDue: toMoney((standing ?? NOTHING).refundDue),
     };
   }
 
@@ -193,10 +194,10 @@ export class CustomersService {
     const standing = (await this.standings([id], farmIds)).get(id) ?? NOTHING;
     return {
       ...this.toItem(row, standing),
-      invoiced: standing.invoiced.toNumber(),
-      paid: standing.paid.toNumber(),
-      credited: standing.credited.toNumber(),
-      refunded: standing.refunded.toNumber(),
+      invoiced: toMoney(standing.invoiced),
+      paid: toMoney(standing.paid),
+      credited: toMoney(standing.credited),
+      refunded: toMoney(standing.refunded),
     };
   }
 

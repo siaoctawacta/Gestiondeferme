@@ -57,7 +57,7 @@ export class SaleLineDto {
   @ApiPropertyOptional({
     nullable: true,
     description:
-      'OEUFS: `PLATEAU` (default, eggsPerTray eggs) or `OEUF`; ARTICLE: defaults to the article unit',
+      'OEUFS: `PLATEAU` (default, eggsPerTray eggs) or `OEUF`; ARTICLE: always the article unit (a unit sent is ignored); refused (400) on LOT, ANIMAL and SERVICE lines',
   })
   @IsOptional()
   @Trim()

@@ -1,3 +1,4 @@
+import { SELECT_FARM } from '../common/messages';
 import {
   BadRequestException,
   ConflictException,
@@ -404,7 +405,7 @@ export class AnimalsService implements OccupationSource {
   create(ctx: RequestContext, dto: CreateAnimalDto): Promise<AnimalItem> {
     return this.prisma.$transaction(async (tx) => {
       const farmId = ctx.farmId;
-      if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
+      if (!farmId) throw new BadRequestException(SELECT_FARM);
       const sex = SEX_OF[dto.category];
       if (dto.sex && dto.sex !== sex) {
         throw new BadRequestException(

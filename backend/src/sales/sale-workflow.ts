@@ -65,21 +65,19 @@ export const quoteRefusal = (
   action: QuoteAction,
 ): string | null => (canQuote(status, action) ? null : QUOTE_REFUSED[action]);
 
-/** The status an action leads to (null for `edit` and `delete`: the status does not change). */
-export function quoteStatusAfter(action: QuoteAction): QuoteStatusValue | null {
-  switch (action) {
-    case 'send':
-      return 'ENVOYE';
-    case 'accept':
-      return 'ACCEPTE';
-    case 'refuse':
-      return 'REFUSE';
-    case 'convert':
-      return 'FACTURE';
-    default:
-      return null;
-  }
-}
+/** The actions that move a quote to another status (the others, `edit` and `delete`, leave it where it is). */
+export type QuoteStep = Exclude<QuoteAction, 'edit' | 'delete'>;
+
+const QUOTE_AFTER: Record<QuoteStep, QuoteStatusValue> = {
+  send: 'ENVOYE',
+  accept: 'ACCEPTE',
+  refuse: 'REFUSE',
+  convert: 'FACTURE',
+};
+
+/** The status a step leads to. */
+export const quoteStatusAfter = (action: QuoteStep): QuoteStatusValue =>
+  QUOTE_AFTER[action];
 
 /**
  * `EXPIRE` when a sent quote is past its validity (`validUntil < today`; the
@@ -195,9 +193,12 @@ export function refusal(
         ? null
         : 'Seul un brouillon de facture peut être supprimé';
     case 'issue':
-      return status === 'BROUILLON' ? null : 'Cette facture est déjà émise';
+      if (status === 'BROUILLON') return null;
+      return status === 'ANNULEE'
+        ? 'Cette facture est annulée : elle ne peut plus être émise'
+        : 'Cette facture est déjà émise';
     case 'pay':
-      return status === 'EMISE' || status === 'PARTIELLE'
+      return OPEN_STATUSES.includes(status)
         ? null
         : 'Seule une facture émise et non soldée peut être payée';
     case 'unpay':
@@ -250,7 +251,7 @@ export function isOverdue(
   today: string,
 ): boolean {
   return (
-    (invoice.status === 'EMISE' || invoice.status === 'PARTIELLE') &&
+    OPEN_STATUSES.includes(invoice.status) &&
     invoice.due.gt(0) &&
     invoice.dueDate !== null &&
     invoice.dueDate < today

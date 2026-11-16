@@ -49,6 +49,5 @@ import { SellablesService } from './sellables.service';
     SaleLineResolver,
     SellablesService,
   ],
-  exports: [SaleLineResolver],
 })
 export class SalesModule {}

@@ -1,3 +1,4 @@
+import { SELECT_FARM } from '../common/messages';
 import {
   BadRequestException,
   ConflictException,
@@ -214,16 +215,23 @@ export class BreedingService implements LitterWeaningSource {
   }
 
   /**
-   * Locks a record's sow, then the record (the order every breeding transition
-   * and the animal exit follow, so they cannot deadlock), and returns both
-   * freshly read. 404 outside the caller's farms.
+   * Locks a record's litter lot (when it has one), then its sow, then the
+   * record (the order every breeding transition and the animal exit follow, so
+   * they cannot deadlock), and returns the record and the sow freshly read. A
+   * sale takes lots before animals, so the litter lot comes before the sow here
+   * too. 404 outside the caller's farms. A litter that appeared while the locks
+   * were being taken (a farrowing committed in between) is a 409: the step the
+   * caller asked for was decided on a record that has since moved on.
    */
   private async lockRecord(tx: Tx, ctx: RequestContext, id: string) {
     const pre = await tx.breedingRecord.findFirst({
       where: { id, farmId: { in: ctx.farmIds } },
-      select: { sowId: true },
+      select: { sowId: true, litterBatchId: true, farmId: true },
     });
     if (!pre) throw new NotFoundException(NOT_FOUND);
+    if (pre.litterBatchId) {
+      await this.ledger.lockBatch(tx, pre.litterBatchId, [pre.farmId]);
+    }
     await lockRow(tx, 'Animal', pre.sowId);
     await lockRow(tx, 'BreedingRecord', id);
     const row = await tx.breedingRecord.findFirst({
@@ -231,6 +239,9 @@ export class BreedingService implements LitterWeaningSource {
       include: breedingInclude,
     });
     if (!row) throw new NotFoundException(NOT_FOUND);
+    if (row.litterBatchId !== pre.litterBatchId) {
+      throw new ConflictException(STEP_DONE);
+    }
     const sow = await tx.animal.findUniqueOrThrow({ where: { id: row.sowId } });
     return { row, sow };
   }
@@ -283,7 +294,7 @@ export class BreedingService implements LitterWeaningSource {
   create(ctx: RequestContext, dto: CreateBreedingDto): Promise<BreedingItem> {
     return this.prisma.$transaction(async (tx) => {
       const farmId = ctx.farmId;
-      if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
+      if (!farmId) throw new BadRequestException(SELECT_FARM);
       const serviceDate = requireDay(dto.serviceDate);
       assertNotFuture(serviceDate);
       if (dto.method === 'SAILLIE') {

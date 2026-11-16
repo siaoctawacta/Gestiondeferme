@@ -94,8 +94,8 @@ export const sameLines = (
   });
 
 /**
- * Turns the lines of a request into stored lines, for quotes and (later)
- * invoice drafts: the shape of each line, its source checked against the
+ * Turns the lines of a request into stored lines, for quotes and invoice
+ * drafts: the shape of each line, its source checked against the
  * ACTIVE FARM (lots, animals) or the ORGANISATION (articles) with a 400 —
  * never a 404 for an id of a body —, the designation, the unit, the eggs per
  * unit snapshotted from the `eggsPerTray` setting, and every amount from the
@@ -220,7 +220,8 @@ export class SaleLineResolver {
         }
         eggsPerUnit = unit === 'PLATEAU' ? eggsPerTray : 1;
       } else if (l.kind === 'ARTICLE') {
-        unit = unit ?? item?.unit ?? null;
+        // The unit of an article is the article's own: one a request names is ignored.
+        unit = item?.unit ?? null;
       }
       const source: LineSource = {
         batchType: batch?.type,

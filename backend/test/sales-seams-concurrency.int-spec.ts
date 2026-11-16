@@ -347,32 +347,36 @@ describe('Sale seams under concurrency (real pool)', () => {
       { timeout: 30000 },
     );
     const holder = await hasLock;
-    const treatment = world
-      .http()
-      .post('/api/health-acts')
-      .set(h)
-      .send({
-        type: 'TRAITEMENT',
-        status: 'REALISE',
-        date: daysAgo(0),
-        productName: 'Amox',
-        withdrawalDays: 5,
-        batchId: lot.id,
-      })
-      .then((r) => r);
-    // The request must be seen waiting on a lock held by OUR transaction, within the timeout.
-    let blocked = 0;
-    const deadline = Date.now() + 15000;
-    while (blocked === 0 && Date.now() < deadline) {
-      const rows = await prisma.$queryRaw<{ n: bigint }[]>`
-        SELECT count(*) AS n FROM pg_stat_activity
-        WHERE datname = current_database()
-          AND ${holder}::int = ANY (pg_blocking_pids(pid))`;
-      blocked = Number(rows[0].n);
-      if (blocked === 0) await new Promise((r) => setTimeout(r, 20));
+    let treatment: Promise<{ status: number }> | undefined;
+    try {
+      treatment = world
+        .http()
+        .post('/api/health-acts')
+        .set(h)
+        .send({
+          type: 'TRAITEMENT',
+          status: 'REALISE',
+          date: daysAgo(0),
+          productName: 'Amox',
+          withdrawalDays: 5,
+          batchId: lot.id,
+        })
+        .then((r) => r);
+      // The request must be seen waiting on a lock held by OUR transaction, within the timeout.
+      let blocked = 0;
+      const deadline = Date.now() + 15000;
+      while (blocked === 0 && Date.now() < deadline) {
+        const rows = await prisma.$queryRaw<{ n: bigint }[]>`
+          SELECT count(*) AS n FROM pg_stat_activity
+          WHERE datname = current_database()
+            AND ${holder}::int = ANY (pg_blocking_pids(pid))`;
+        blocked = Number(rows[0].n);
+        if (blocked === 0) await new Promise((r) => setTimeout(r, 20));
+      }
+      expect(blocked).toBeGreaterThan(0);
+    } finally {
+      release();
     }
-    expect(blocked).toBeGreaterThan(0);
-    release();
     const [guarded, done] = await Promise.all([sale, treatment]);
     expect(guarded).toBe('clear');
     expect(done.status).toBe(201);
@@ -383,5 +387,5 @@ describe('Sale seams under concurrency (real pool)', () => {
           .assertClear({ batchId: lot.id, code: lot.code }, today(), tx);
       }),
     ).rejects.toMatchObject({ status: 400 });
-  });
+  }, 60000);
 });

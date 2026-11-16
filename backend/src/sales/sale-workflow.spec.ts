@@ -91,8 +91,6 @@ describe('quote workflow', () => {
     expect(quoteStatusAfter('accept')).toBe('ACCEPTE');
     expect(quoteStatusAfter('refuse')).toBe('REFUSE');
     expect(quoteStatusAfter('convert')).toBe('FACTURE');
-    expect(quoteStatusAfter('edit')).toBeNull();
-    expect(quoteStatusAfter('delete')).toBeNull();
   });
 
   it('derives Expiré from a sent quote past its validity, never from another status', () => {

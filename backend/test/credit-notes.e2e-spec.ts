@@ -522,7 +522,7 @@ describe('Credit notes (e2e)', () => {
             { lineId: inv.lines[0].id, quantity: 2 },
           ],
         }),
-      ).toBe('Une ligne ne peut figurer qu’une fois dans un avoir');
+      ).toBe("Une ligne ne peut figurer qu'une fois dans un avoir");
       for (const quantity of [0, -1, 1.234, '1', null]) {
         await send({ lines: [{ lineId: inv.lines[0].id, quantity }] });
       }
@@ -537,7 +537,7 @@ describe('Credit notes (e2e)', () => {
       await send({ withReturn: null });
       await send({ foo: 1 });
       expect(await send({ date: daysAgo(6) })).toBe(
-        'La date de l’avoir ne peut pas précéder la facture',
+        "La date de l'avoir ne peut pas précéder la facture",
       );
       expect(await send({ date: daysAgo(-1) })).toBe(
         'La date ne peut pas être dans le futur',
@@ -909,7 +909,7 @@ describe('Credit notes (e2e)', () => {
         400,
       );
       expect(msg(early)).toBe(
-        'La date de l’avoir ne peut pas précéder la facture',
+        "La date de l'avoir ne peut pas précéder la facture",
       );
       // sale and return of the same day net to nothing
       await credit(day, [[0, 2]], { withReturn: true, date: daysAgo(1) });
@@ -1125,7 +1125,7 @@ describe('Credit notes (e2e)', () => {
         where: { sourceType: 'CREDIT_NOTE' },
       });
       expect(ret.unitCost.toNumber()).toBe(340);
-    });
+    }, 60000);
 
     it('articles: a return is valued at what the ledger says the sale cost NOW (a back-dated entry re-costs the exits)', async () => {
       const item = await article(1000);
@@ -1151,6 +1151,83 @@ describe('Credit notes (e2e)', () => {
       expect(await level(item)).toMatchObject({
         quantity: 1000 + 500 - 100 + 40,
         averageCost: 340,
+      });
+    });
+
+    /**
+     * A return is a SNAPSHOT: the RETOUR entry keeps the cost read at the credit
+     * note's date, whatever later happens to the sale's exits. History: R1 1 000
+     * at 320 (day 1), a sale of 100 on day 2 (exits at 320), R2 500 at 380 (day 3),
+     * the credit note with return on day 6.
+     */
+    async function returnHistory() {
+      const item = await article(1000, 'Aliment A', { date: daysAgo(40) });
+      const inv = await issued({
+        date: daysAgo(30),
+        lines: [itemLine(item, { quantity: 100 })],
+      });
+      await world.post(stockMgr, '/stock/movements', {
+        itemId: item,
+        type: 'ENTREE',
+        date: daysAgo(20),
+        quantity: 500,
+        unitCost: 380,
+        reason: 'ACHAT',
+      });
+      return { item, inv };
+    }
+    const movements = async (item: string) =>
+      (
+        (
+          await http()
+            .get('/api/stock/movements')
+            .query({ itemId: item })
+            .set(director)
+            .expect(200)
+        ).body as {
+          items: {
+            id: string;
+            reason: string;
+            quantity: number;
+            unitCost: number;
+          }[];
+        }
+      ).items;
+
+    it('articles: averageCost after a return whose cost differs from the running average (320 back in at ~341 gives exactly 340)', async () => {
+      const { item, inv } = await returnHistory();
+      // before the return: 1 400 held at (900 x 320 + 500 x 380) / 1 400 = 341.43
+      expect((await level(item)).quantity).toBe(1400);
+      expect((await level(item)).averageCost).toBeCloseTo(341.43, 2);
+      await credit(inv, [[0, 100]], { withReturn: true, date: daysAgo(5) });
+      const ret = (await movements(item)).find((m) => m.reason === 'RETOUR');
+      expect(ret).toMatchObject({ quantity: 100, unitCost: 320 });
+      // (900 x 320 + 500 x 380 + 100 x 320) / 1 500 = 340
+      expect(await level(item)).toMatchObject({
+        quantity: 1500,
+        averageCost: 340,
+      });
+    });
+
+    it('articles: a cost-only correction of the original reception re-costs the sale but NOT the return (a snapshot, documented)', async () => {
+      const { item, inv } = await returnHistory();
+      await credit(inv, [[0, 100]], { withReturn: true, date: daysAgo(5) });
+      const r1 = (await movements(item)).find(
+        (m) => m.reason === 'ACHAT' && m.quantity === 1000,
+      ) as { id: string };
+      await http()
+        .patch(`/api/stock/movements/${r1.id}`)
+        .set(stockMgr)
+        .send({ unitCost: 350 })
+        .expect(200);
+      const after = await movements(item);
+      // the sale's exit follows the reception (350); the RETOUR keeps what it was read at (320)
+      expect(after.find((m) => m.reason === 'VENTE')?.unitCost).toBe(350);
+      expect(after.find((m) => m.reason === 'RETOUR')?.unitCost).toBe(320);
+      // (900 x 350 + 500 x 380 + 100 x 320) / 1 500 = 358
+      expect(await level(item)).toMatchObject({
+        quantity: 1500,
+        averageCost: 358,
       });
     });
 

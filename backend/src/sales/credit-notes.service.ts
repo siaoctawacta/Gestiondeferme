@@ -8,7 +8,8 @@ import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import { assertNotFuture, formatDay, requireDay } from '../common/days';
 import { nextDocumentNumber } from '../common/document-numbers';
-import { toMoney } from '../common/money';
+import { formatCount } from '../common/format-number';
+import { sumAmounts, toMoney } from '../common/money';
 import type { Prisma } from '../generated/prisma/client';
 import { containsInsensitive } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
@@ -43,9 +44,9 @@ import {
 
 const NOT_FOUND = 'Avoir introuvable';
 const INVALID_LINE = 'Ligne de facture invalide';
-const TWICE = 'Une ligne ne peut figurer qu’une fois dans un avoir';
+const TWICE = "Une ligne ne peut figurer qu'une fois dans un avoir";
 const WHOLE = 'La quantité doit être un nombre entier';
-const BEFORE_INVOICE = 'La date de l’avoir ne peut pas précéder la facture';
+const BEFORE_INVOICE = "La date de l'avoir ne peut pas précéder la facture";
 const WORTHLESS = "L'avoir doit porter sur un montant positif";
 const NO_ANIMAL_RETURN =
   "Le retour d'un animal vendu n'est pas pris en charge : annulez la facture ou faites un avoir sans retour";
@@ -53,7 +54,7 @@ const SORTABLE = ['date', 'number', 'total'];
 const WHOLE_KINDS = ['LOT', 'OEUFS', 'ANIMAL'];
 
 const overCredit = (left: Decimal): string =>
-  `La quantité dépasse la quantité restant à créditer (${left.toNumber()})`;
+  `La quantité dépasse la quantité restant à créditer (${formatCount(left.toNumber())})`;
 
 /**
  * Credit notes (avoirs): a partial credit of an issued invoice by line
@@ -66,7 +67,9 @@ const overCredit = (left: Decimal): string =>
  * counter row, the credit note rows, and — with return — `SaleEffects.
  * applyReturn` (lots incl. egg lots ascending -> ONE stock-ledger call, last).
  * One transaction: a refusal anywhere, a ledger's included, writes nothing, not
- * even a number. Credit notes and payments of one invoice serialise on its row,
+ * even a number. A credit note is worth money (`WORTHLESS`): goods sold at price
+ * 0 cannot be returned through one (cancel the invoice, which has no payment or
+ * credit note, or take them back with a stock movement). Credit notes and payments of one invoice serialise on its row,
  * so two credit notes racing for the same line cannot both take it.
  */
 @Injectable()
@@ -171,7 +174,7 @@ export class CreditNotesService {
           amount: creditLineAmount(line, before, quantity),
         };
       });
-      const total = taken.reduce((sum, t) => sum.add(t.amount), new Decimal(0));
+      const total = sumAmounts(taken.map((t) => t.amount));
       if (!total.gt(0)) throw new BadRequestException(WORTHLESS);
       if (withReturn && taken.some((t) => t.line.kind === 'ANIMAL')) {
         throw new BadRequestException(NO_ANIMAL_RETURN);

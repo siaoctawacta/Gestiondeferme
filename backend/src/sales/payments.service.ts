@@ -25,6 +25,7 @@ import {
   statusWith,
 } from './invoice-guard';
 import { InvoiceReads } from './invoice-reads.service';
+import { balanceOf } from './sale-money';
 import { standingOf, type InvoiceDetail, type InvoiceMoney } from './sale-view';
 
 type Tx = Prisma.TransactionClient;
@@ -36,6 +37,8 @@ const REFUND_FIRST = "Supprimez d'abord le remboursement";
 const NOT_FOUND = 'Paiement introuvable';
 const BEFORE_CREDIT =
   'La date du remboursement ne peut pas précéder le dernier avoir';
+const BEFORE_ENCASHMENT =
+  'La date du remboursement ne peut pas précéder le dernier encaissement';
 
 /** What the audit log calls a payment of each kind. */
 const labelOf = (kind: CustomerPaymentKind): string =>
@@ -134,12 +137,21 @@ export class PaymentsService {
       if (date.getTime() < invoice.date.getTime()) {
         throw new BadRequestException(BEFORE_INVOICE);
       }
-      // What is given back stems from a credit note: not dated before the latest one.
-      if (
-        kind === 'REMBOURSEMENT' &&
-        invoice.creditNotes.some((c) => c.date.getTime() > date.getTime())
-      ) {
-        throw new BadRequestException(BEFORE_CREDIT);
+      // What is given back stems from a credit note and from what was collected: not dated before the latest of either.
+      if (kind === 'REMBOURSEMENT') {
+        if (
+          invoice.creditNotes.some((c) => c.date.getTime() > date.getTime())
+        ) {
+          throw new BadRequestException(BEFORE_CREDIT);
+        }
+        if (
+          invoice.payments.some(
+            (p) =>
+              p.kind === 'ENCAISSEMENT' && p.date.getTime() > date.getTime(),
+          )
+        ) {
+          throw new BadRequestException(BEFORE_ENCASHMENT);
+        }
       }
       const amount = new Decimal(dto.amount);
       const standing = standingOf(invoice, money);
@@ -197,10 +209,12 @@ export class PaymentsService {
       if (
         payment.kind === 'ENCAISSEMENT' &&
         money.refunded.gt(0) &&
-        next.paid
-          .sub(money.refunded)
-          .sub(invoice.total.sub(money.credited))
-          .lt(0)
+        balanceOf({
+          total: invoice.total,
+          credited: money.credited,
+          paid: next.paid,
+          refunded: money.refunded,
+        }).due.gt(0)
       ) {
         throw new ConflictException(REFUND_FIRST);
       }

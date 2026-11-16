@@ -10,6 +10,7 @@ import type {
   SaleLineKind,
 } from '../generated/prisma/enums';
 import type { ExportColumn } from '../listing/export';
+import { standingOf, type InvoiceMoney } from './receivables';
 import { lineActivity, lineCategory } from './sale-lines';
 import { creditable } from './sale-money';
 import {
@@ -22,12 +23,10 @@ import {
 
 export {
   moneyOf,
-  receivablesOf,
   standingOf,
   type InvoiceMoney,
   type Receivable,
 } from './receivables';
-import { standingOf, type InvoiceMoney } from './receivables';
 
 /** The relations a sale line view needs to name its source and derive its activity. */
 export const lineInclude = {
@@ -257,14 +256,6 @@ export type InvoiceListed = Prisma.InvoiceGetPayload<{
 export type InvoiceFull = Prisma.InvoiceGetPayload<{
   include: typeof invoiceInclude;
 }>;
-
-export const INVOICE_STATUS_LABELS: Record<InvoiceStatusValue, string> = {
-  BROUILLON: 'Brouillon',
-  EMISE: 'Émise',
-  PARTIELLE: 'Partielle',
-  SOLDEE: 'Soldée',
-  ANNULEE: 'Annulée',
-};
 
 export interface InvoiceRow {
   id: string;

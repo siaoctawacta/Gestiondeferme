@@ -96,6 +96,19 @@ export interface RecordInput {
    * audits the same way.
    */
   audit?: { ctx: RequestContext };
+  /**
+   * An event that adds animals checks its building's capacity (locking the
+   * building) right after the write. A caller that records several events, or
+   * holds other locks to take first (the sales module: lots -> animals ->
+   * buildings ascending), passes `true` and calls `assertCapacities` itself,
+   * once all its lot and animal locks are held. Never skip the check.
+   */
+  deferCapacity?: boolean;
+}
+
+/** Options of the removals and the other writes whose capacity check the caller may take over (see `RecordInput.deferCapacity`). */
+export interface DeferCapacity {
+  deferCapacity?: boolean;
 }
 
 export interface EventPatch {
@@ -198,6 +211,23 @@ export class HerdLedgerService implements OccupationSource {
       throw new BadRequestException(
         `Capacité du bâtiment dépassée (${occupation} / ${building.capacity})`,
       );
+    }
+  }
+
+  /**
+   * `assertCapacity` for several buildings of one farm, always in ascending
+   * id order (each building is locked, then checked, before the next): the one
+   * way a path that holds several lots or animals may lock buildings, so two
+   * of them cannot take the same buildings in opposite orders. Call it AFTER
+   * every lot and animal lock of the path and BEFORE its stock-ledger call.
+   */
+  async assertCapacities(
+    tx: Tx,
+    farmId: string,
+    buildingIds: string[],
+  ): Promise<void> {
+    for (const id of [...new Set(buildingIds)].sort()) {
+      await this.assertCapacity(tx, farmId, id);
     }
   }
 
@@ -308,7 +338,7 @@ export class HerdLedgerService implements OccupationSource {
         createdAt,
       },
     });
-    if (EVENT_SIGN[input.type] > 0) {
+    if (EVENT_SIGN[input.type] > 0 && !input.deferCapacity) {
       await this.assertCapacity(tx, batch.farmId, batch.buildingId);
     }
     if (input.audit) {
@@ -393,13 +423,16 @@ export class HerdLedgerService implements OccupationSource {
    * treatment...), to reverse it. Each affected batch's history is replayed
    * without them first (400 when a later event would no longer fit; nothing is
    * removed then), batches are locked in id order, and a removal that puts
-   * animals back is capacity-checked. Returns the removed events.
+   * animals back is capacity-checked, the buildings in ascending id order
+   * (`assertCapacities`) — unless `deferCapacity` says the caller does it,
+   * after its own animal locks. Returns the removed events.
    */
   async removeBySource(
     tx: Tx,
     sourceType: string,
     sourceId: string,
     farmIds?: string[],
+    opts: DeferCapacity = {},
   ): Promise<BatchEvent[]> {
     const events = await tx.batchEvent.findMany({
       where: {
@@ -431,11 +464,20 @@ export class HerdLedgerService implements OccupationSource {
       await this.assertWeaned(tx, batch, left);
     }
     await tx.batchEvent.deleteMany({ where: { id: { in: removedIds } } });
-    for (const batch of batches) {
-      if (
-        events.some((e) => e.batchId === batch.id && EVENT_SIGN[e.type] < 0)
-      ) {
-        await this.assertCapacity(tx, batch.farmId, batch.buildingId);
+    if (!opts.deferCapacity) {
+      const byFarm = new Map<string, string[]>();
+      for (const batch of batches) {
+        if (
+          events.some((e) => e.batchId === batch.id && EVENT_SIGN[e.type] < 0)
+        ) {
+          byFarm.set(batch.farmId, [
+            ...(byFarm.get(batch.farmId) ?? []),
+            batch.buildingId,
+          ]);
+        }
+      }
+      for (const [farmId, buildingIds] of byFarm) {
+        await this.assertCapacities(tx, farmId, buildingIds);
       }
     }
     return events;
@@ -565,7 +607,9 @@ export class HerdLedgerService implements OccupationSource {
       : [];
     const byBatch = new Map<string, typeof later>();
     for (const e of later) {
-      byBatch.set(e.batchId, [...(byBatch.get(e.batchId) ?? []), e]);
+      const list = byBatch.get(e.batchId) ?? [];
+      list.push(e);
+      byBatch.set(e.batchId, list);
     }
     const result = new Map<string, number>();
     for (const id of batchIds) {

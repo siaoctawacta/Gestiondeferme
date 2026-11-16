@@ -5,7 +5,7 @@ import { EggStockService } from '../eggs/egg-stock';
 import type { Prisma } from '../generated/prisma/client';
 import type { SaleLineKind } from '../generated/prisma/enums';
 import { AnimalTargetRegistry } from '../herd/animal-target';
-import { HerdLedgerService } from '../herd/herd-ledger.service';
+import { EVENT_SIGN, HerdLedgerService } from '../herd/herd-ledger.service';
 import { WithdrawalRegistry } from '../herd/withdrawal';
 import { AnimalSales } from '../pigs/animal-sales';
 import {
@@ -63,18 +63,37 @@ const RETURN_SOURCE = 'CREDIT_NOTE';
 const ascending = (ids: (string | null)[]): string[] =>
   [...new Set(ids.filter((id): id is string => !!id))].sort();
 
+/** The quantity of each lot over its LOT lines, in ascending lot id: two lines of one lot make ONE herd event. */
+const quantityByLot = (
+  lines: { batchId: string | null; quantity: Decimal }[],
+): { batchId: string; quantity: Decimal }[] => {
+  const sums = new Map<string, Decimal>();
+  for (const l of lines) {
+    const id = l.batchId as string;
+    sums.set(id, (sums.get(id) ?? new Decimal(0)).add(l.quantity));
+  }
+  return ascending([...sums.keys()]).map((batchId) => ({
+    batchId,
+    quantity: sums.get(batchId) as Decimal,
+  }));
+};
+
 /**
  * THE only file of `sales` that calls a ledger or a seam: it turns the lines
  * of an invoice into effects, and takes them back. Everything it writes
  * carries the source `SALE` / the invoice id, so cancelling removes exactly
  * what issuing wrote.
  *
- * Lock order (binding, the caller already holds the invoice row and, at
- * issue, the counter row): lots (`lockBatches`, ascending id, egg lots
- * included) -> animals (`lockAnimal`, ascending id) -> the withdrawal guard
- * (reads only) -> herd events -> egg balance check -> animal sales -> ONE
- * stock-ledger call, last. Nothing is written when a step refuses: the caller
- * runs it in one transaction.
+ * Lock order (binding for every path of this class; the caller already holds
+ * the document row and, when it takes one, the counter row): lots
+ * (`lockBatches`, ascending id, egg lots included) -> animals (`lockAnimal` /
+ * `unsell`, ascending id) -> buildings (`assertCapacities`, ascending id, once
+ * per building, only where animals come back: a return, a cancellation) ->
+ * ONE stock-ledger call, last. The withdrawal guard, the herd events (written
+ * with their capacity check deferred) and the egg balance only read or write
+ * rows already locked. Breeding follows it too: its weaning takes the litter
+ * lot before the sow. Nothing is written when a step refuses: the caller runs
+ * it in one transaction.
  */
 @Injectable()
 export class SaleEffects {
@@ -128,11 +147,11 @@ export class SaleEffects {
         tx,
       );
     }
-    // 4. herd events
-    for (const l of lotLines) {
+    // 4. herd events: one per lot, whatever the number of lines naming it
+    for (const l of quantityByLot(lotLines)) {
       await this.herd.record(tx, {
         farmId: invoice.farmId,
-        batchId: l.batchId as string,
+        batchId: l.batchId,
         date: invoice.date,
         type: 'VENTE',
         quantity: l.quantity.toNumber(),
@@ -186,7 +205,8 @@ export class SaleEffects {
    * Takes back what `apply` wrote, in the same order of locks: ALL the lots of
    * the invoice (LOT and OEUFS lines, ascending), a closed egg lot refused by
    * the egg seam (`assertReturn`), the herd events, the animals (ascending),
-   * then ONE stock reversal. Eggs need no write: their balance reads the
+   * the buildings they go back to (ascending, once each), then ONE stock
+   * reversal. Eggs need no write: their balance reads the
    * invoices that count. A refusal (closed lot, an animal no longer as it was
    * left, a building that is full, a validated inventory, a later exit that
    * would go negative) aborts the whole cancellation.
@@ -214,12 +234,29 @@ export class SaleEffects {
         await this.eggs.assertReturn(tx, batch.id);
       }
     }
-    await this.herd.removeBySource(tx, SOURCE, invoice.id, farmIds);
-    await this.animals.unsell(tx, {
-      type: SOURCE,
-      id: invoice.id,
-      label: invoice.number,
-    });
+    // the herd events and the animals go back; the capacity of the buildings
+    // they return to is checked once, ascending, after every lot and animal lock
+    const removed = await this.herd.removeBySource(
+      tx,
+      SOURCE,
+      invoice.id,
+      farmIds,
+      { deferCapacity: true },
+    );
+    const animalBuildings = await this.animals.unsell(
+      tx,
+      { type: SOURCE, id: invoice.id, label: invoice.number },
+      { deferCapacity: true },
+    );
+    const lotBuildings = batches
+      .filter((b) =>
+        removed.some((e) => e.batchId === b.id && EVENT_SIGN[e.type] < 0),
+      )
+      .map((b) => b.buildingId);
+    await this.herd.assertCapacities(tx, invoice.farmId, [
+      ...lotBuildings,
+      ...animalBuildings,
+    ]);
     await this.stock.reverseBySource(tx, SOURCE, invoice.id, farmIds);
   }
 
@@ -227,9 +264,10 @@ export class SaleEffects {
    * Puts the goods of a credit note with return back, at the credit note's
    * date, in the same order of locks as `apply`: the lots (LOT and OEUFS
    * lines, `lockBatches`, ascending id) -> the egg lots checked open
-   * (`assertReturn`: a closed lot is a 409) -> the herd events (an `ENTREE`
-   * `Retour client`, source `CREDIT_NOTE`; the ledger refuses a closed lot and
-   * a full building) -> ONE stock-ledger call last. ANIMAL lines are refused
+   * (`assertReturn`: a closed lot is a 409) -> the herd events (one `ENTREE`
+   * `Retour client` per lot, source `CREDIT_NOTE`; the ledger refuses a closed
+   * lot) -> the capacity of the lots' buildings (`assertCapacities`, ascending
+   * id, once each: a full building is a 400) -> ONE stock-ledger call last. ANIMAL lines are refused
    * by the caller before any lock, SERVICE lines have nothing to return, eggs
    * need no write (the credit note's lines are counted as negative outflow by
    * `SaleEggOutflows`, the caller having stored them first).
@@ -262,11 +300,11 @@ export class SaleEffects {
         await this.eggs.assertReturn(tx, batch.id);
       }
     }
-    // 3. herd events
-    for (const l of lotLines) {
+    // 3. herd events, one per lot; the capacity checks come once, ascending, below
+    for (const l of quantityByLot(lotLines)) {
       await this.herd.record(tx, {
         farmId: note.farmId,
-        batchId: l.batchId as string,
+        batchId: l.batchId,
         date: note.date,
         type: 'ENTREE',
         quantity: l.quantity.toNumber(),
@@ -275,9 +313,18 @@ export class SaleEffects {
         sourceType: RETURN_SOURCE,
         sourceId: note.id,
         userId: ctx.user.id,
+        deferCapacity: true,
       });
     }
-    // 4. ONE stock-ledger call: the ledger reads the sale's costs under its own locks
+    // 4. the buildings the lots live in, ascending
+    await this.herd.assertCapacities(
+      tx,
+      note.farmId,
+      batches
+        .filter((b) => lotLines.some((l) => l.batchId === b.id))
+        .map((b) => b.buildingId),
+    );
+    // 5. ONE stock-ledger call: the ledger reads the sale's costs under its own locks
     if (itemLines.length === 0) return;
     await this.stock.returnBySource(tx, {
       farmId: note.farmId,

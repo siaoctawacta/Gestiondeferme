@@ -8,7 +8,10 @@ import { EXITED } from '../common/messages';
 import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
 import type { AnimalCategory } from '../generated/prisma/enums';
-import { HerdLedgerService } from '../herd/herd-ledger.service';
+import {
+  HerdLedgerService,
+  type DeferCapacity,
+} from '../herd/herd-ledger.service';
 import {
   AnimalsService,
   assertAfterLastRecord,
@@ -34,11 +37,14 @@ export interface SaleSource {
  * it, so the manual `exit` / `reinstate` / delete routes leave it alone and
  * only the same source can put it back.
  *
- * LOCKS: the animal row (`Animal`, `FOR NO KEY UPDATE`) and, on `unsell`, the
- * building and the animal's breeding rows are only read. The caller takes the
- * lots first, then the animals in ascending id order (`lockAnimal`); `sell`
- * re-takes its animal's lock (free when held), `unsell` locks the animals of
- * the source itself, ascending. Neither takes a stock lock.
+ * LOCKS: the animal row (`Animal`, `FOR NO KEY UPDATE`); the building and the
+ * animal's breeding rows are only read. The caller takes the lots first, then
+ * the animals in ascending id order (`lockAnimal`); `sell` re-takes its
+ * animal's lock (free when held), `unsell` locks the animals of the source
+ * itself, ascending. `unsell` puts animals back in their buildings: it checks
+ * their capacity (locking them, ascending) at its end, or leaves that to the
+ * caller (`deferCapacity`) who must take it after every lot and animal lock.
+ * Neither takes a stock lock.
  */
 @Injectable()
 export class AnimalSales {
@@ -105,15 +111,23 @@ export class AnimalSales {
    * there is none). Refused whole (409, nothing changed) when one of them is
    * no longer as it was left: not `VENDU` any more, or something recorded
    * for it since the sale. The building must still take pigs and have room
-   * (400). The caller has already taken the lot locks.
+   * (400). The caller has already taken the lot locks. Returns the ids of the
+   * buildings the animals went back to, ascending; with `deferCapacity` the caller
+   * checks their capacity (`HerdLedgerService.assertCapacities`).
    */
-  async unsell(tx: Tx, source: SaleSource): Promise<void> {
+  async unsell(
+    tx: Tx,
+    source: SaleSource,
+    opts: DeferCapacity = {},
+  ): Promise<string[]> {
     const sold = await tx.animal.findMany({
       where: { exitSourceType: source.type, exitSourceId: source.id },
       select: { id: true },
       orderBy: { id: 'asc' },
     });
     for (const { id } of sold) await lockRow(tx, 'Animal', id);
+    const buildings = new Set<string>();
+    let farmId = '';
     for (const { id } of sold) {
       const animal = await tx.animal.findUniqueOrThrow({ where: { id } });
       if (
@@ -138,7 +152,14 @@ export class AnimalSales {
           exitSourceLabel: null,
         },
       });
-      await this.ledger.assertCapacity(tx, animal.farmId, animal.buildingId);
+      buildings.add(animal.buildingId);
+      farmId = animal.farmId;
     }
+    const back = [...buildings].sort();
+    // A source is one document of one farm: its animals share the farm.
+    if (!opts.deferCapacity && back.length > 0) {
+      await this.ledger.assertCapacities(tx, farmId, back);
+    }
+    return back;
   }
 }

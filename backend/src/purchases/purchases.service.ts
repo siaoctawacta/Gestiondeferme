@@ -1,3 +1,4 @@
+import { SELECT_FARM } from '../common/messages';
 import {
   BadRequestException,
   ConflictException,
@@ -323,7 +324,7 @@ export class PurchasesService {
 
   create(ctx: RequestContext, dto: CreatePurchaseDto): Promise<PurchaseDetail> {
     const farmId = ctx.farmId;
-    if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
+    if (!farmId) throw new BadRequestException(SELECT_FARM);
     const date = requireDay(dto.date);
     assertNotFuture(date);
     this.assertTotal(dto.lines);

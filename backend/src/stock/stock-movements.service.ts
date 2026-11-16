@@ -1,3 +1,5 @@
+import { toMoney } from '../common/money';
+import { SELECT_FARM } from '../common/messages';
 import {
   BadRequestException,
   ConflictException,
@@ -72,8 +74,8 @@ export const movementItems = (rows: Row[]): MovementItem[] =>
     farmId: r.farmId,
     type: r.type,
     quantity: r.quantity.toNumber(),
-    unitCost: r.unitCost.toNumber(),
-    value: r.quantity.abs().mul(r.unitCost).toDecimalPlaces(2).toNumber(),
+    unitCost: toMoney(r.unitCost),
+    value: toMoney(r.quantity.abs().mul(r.unitCost).toDecimalPlaces(2)),
     reason: r.reason,
     batchId: r.stockBatchId,
     lotNumber: r.stockBatch?.lotNumber ?? null,
@@ -136,7 +138,7 @@ export class StockMovementsService {
   /** One movement per lot the stock was taken from (FEFO may split an exit). */
   create(ctx: RequestContext, dto: CreateMovementDto): Promise<MovementItem[]> {
     const farmId = ctx.farmId;
-    if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
+    if (!farmId) throw new BadRequestException(SELECT_FARM);
     if (!MANUAL_REASONS[dto.type].includes(dto.reason)) {
       throw new BadRequestException(BAD_REASON);
     }

@@ -1,3 +1,4 @@
+import { SELECT_FARM } from '../common/messages';
 import {
   BadRequestException,
   ConflictException,
@@ -10,7 +11,6 @@ import { assertNotFuture, formatDay, requireDay, today } from '../common/days';
 import { nextDocumentNumber } from '../common/document-numbers';
 import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
-import type { AuditAction } from '../generated/prisma/enums';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -20,6 +20,7 @@ import type {
   QuoteQueryDto,
   UpdateQuoteDto,
 } from './dto/quote.dto';
+import { logSale } from './invoice-guard';
 import { assertSaleCustomer } from './sale-customer';
 import {
   quoteLineData,
@@ -48,6 +49,7 @@ type Tx = Prisma.TransactionClient;
 
 const NOT_FOUND = 'Devis introuvable';
 const BEFORE_DATE = 'La validité ne peut pas précéder la date du devis';
+const VALIDITY_PASSED = 'La date de validité est dépassée';
 const SORTABLE = ['date', 'total', 'reference'];
 
 /**
@@ -183,31 +185,6 @@ export class QuotesService {
     if (message) throw new ConflictException(message);
   }
 
-  private log(
-    tx: Tx,
-    ctx: RequestContext,
-    action: AuditAction,
-    recordId: string,
-    label: string,
-    farmId: string,
-    before?: unknown,
-    after?: unknown,
-  ): Promise<void> {
-    return this.audit.log(
-      {
-        ctx,
-        module: 'ventes',
-        action,
-        recordId,
-        label,
-        farmId,
-        before,
-        after,
-      },
-      tx,
-    );
-  }
-
   /** Audits a change of the quote itself and returns the new detail. */
   private async saved(
     tx: Tx,
@@ -216,16 +193,14 @@ export class QuotesService {
   ): Promise<QuoteDetail> {
     const day = formatDay(today());
     const after = quoteDetail(await this.load(tx, ctx, before.id), day);
-    await this.log(
-      tx,
-      ctx,
-      'UPDATE',
-      before.id,
-      after.reference,
-      before.farmId,
-      quoteDetail(before, day),
+    await logSale(this.audit, tx, ctx, {
+      action: 'UPDATE',
+      recordId: before.id,
+      label: after.reference,
+      farmId: before.farmId,
+      before: quoteDetail(before, day),
       after,
-    );
+    });
     return after;
   }
 
@@ -233,7 +208,7 @@ export class QuotesService {
 
   create(ctx: RequestContext, dto: CreateQuoteDto): Promise<QuoteDetail> {
     const farmId = ctx.farmId;
-    if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
+    if (!farmId) throw new BadRequestException(SELECT_FARM);
     const date = requireDay(dto.date);
     assertNotFuture(date);
     const validUntil = dto.validUntil ? requireDay(dto.validUntil) : null;
@@ -271,16 +246,13 @@ export class QuotesService {
           await this.load(tx, ctx, created.id),
           formatDay(today()),
         );
-        await this.log(
-          tx,
-          ctx,
-          'CREATE',
-          detail.id,
-          detail.reference,
+        await logSale(this.audit, tx, ctx, {
+          action: 'CREATE',
+          recordId: detail.id,
+          label: detail.reference,
           farmId,
-          undefined,
-          detail,
-        );
+          after: detail,
+        });
         return detail;
       }),
     );
@@ -375,15 +347,13 @@ export class QuotesService {
         this.allow(before, 'delete');
         await tx.quoteLine.deleteMany({ where: { quoteId: id } });
         await tx.quote.delete({ where: { id } });
-        await this.log(
-          tx,
-          ctx,
-          'DELETE',
-          id,
-          before.reference,
-          before.farmId,
-          quoteDetail(before, formatDay(today())),
-        );
+        await logSale(this.audit, tx, ctx, {
+          action: 'DELETE',
+          recordId: id,
+          label: before.reference,
+          farmId: before.farmId,
+          before: quoteDetail(before, formatDay(today())),
+        });
       }),
     );
   }
@@ -399,11 +369,19 @@ export class QuotesService {
     return this.prisma.$transaction(async (tx) => {
       const before = await this.lock(tx, ctx, id);
       this.allow(before, action);
+      // A quote sent already expired could only be shown as `Expiré`: refuse it.
+      if (
+        action === 'send' &&
+        before.validUntil &&
+        before.validUntil.getTime() < today().getTime()
+      ) {
+        throw new BadRequestException(VALIDITY_PASSED);
+      }
       const now = new Date();
       await tx.quote.update({
         where: { id },
         data: {
-          status: quoteStatusAfter(action) ?? before.status,
+          status: quoteStatusAfter(action),
           ...(action === 'send'
             ? { sentAt: now, sentById: ctx.user.id }
             : action === 'accept'
@@ -428,7 +406,7 @@ export class QuotesService {
         await this.invoices.createFromQuote(tx, ctx, before);
         await tx.quote.update({
           where: { id },
-          data: { status: quoteStatusAfter('convert') ?? before.status },
+          data: { status: quoteStatusAfter('convert') },
         });
         return this.saved(tx, ctx, before);
       }),

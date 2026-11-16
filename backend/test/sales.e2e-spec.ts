@@ -691,6 +691,7 @@ describe('Invoices (e2e)', () => {
       });
       expect(
         await refusedIssued({
+          date: daysAgo(0),
           lines: [
             { kind: 'OEUFS', batchId: layer.id, quantity: 1, unitPrice: 1 },
           ],
@@ -707,6 +708,7 @@ describe('Invoices (e2e)', () => {
       });
       expect(
         await refusedIssued({
+          date: daysAgo(0),
           lines: [
             { kind: 'ANIMAL', animalId: sow.id, quantity: 1, unitPrice: 1 },
           ],
@@ -989,13 +991,13 @@ describe('Invoices (e2e)', () => {
       expect(msg(quoteRes)).toBe('Cet animal figure déjà sur le devis');
     });
 
-    it('takes two LOT lines of one lot as two VENTE events and gives them back together', async () => {
+    it('takes two LOT lines of one lot as ONE VENTE event (the sum) and gives it back', async () => {
       const inv = await issued({
         lines: [lotLine({ quantity: 100 }), lotLine({ quantity: 50 })],
       });
       expect(await alive(lotId)).toBe(250);
       const ev = await events(lotId);
-      expect(ev.map((e) => e.quantity).sort()).toEqual([100, 50]);
+      expect(ev.map((e) => e.quantity)).toEqual([150]);
       await issue(inv.id, accountant, 409);
       await cancel(inv.id);
       expect(await alive(lotId)).toBe(400);

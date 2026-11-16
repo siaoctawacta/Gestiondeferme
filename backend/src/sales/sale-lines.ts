@@ -94,6 +94,8 @@ export interface LineInput {
   stockItemId?: string | null;
   designation?: string | null;
   weightKg?: number | null;
+  /** Only eggs (plateau or egg) and articles (pinned to the article's unit) carry one. */
+  unit?: string | null;
   quantity: number;
 }
 
@@ -145,6 +147,9 @@ export function lineShapeError(line: LineInput): string | null {
     line.kind !== 'ANIMAL'
   ) {
     return 'Le poids ne concerne que les lots et les animaux';
+  }
+  if (line.unit && line.kind !== 'OEUFS' && line.kind !== 'ARTICLE') {
+    return "L'unité ne concerne que les œufs et les articles";
   }
   return null;
 }

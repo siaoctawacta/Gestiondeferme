@@ -1,3 +1,4 @@
+import { SELECT_FARM } from '../common/messages';
 import {
   BadRequestException,
   ConflictException,
@@ -246,7 +247,7 @@ export class IncubationsService implements BatchHistorySource {
   ): Promise<IncubationItem> {
     return this.prisma.$transaction(async (tx) => {
       const farmId = ctx.farmId;
-      if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
+      if (!farmId) throw new BadRequestException(SELECT_FARM);
       const startDate = requireDay(dto.startDate);
       assertNotFuture(startDate);
       if (dto.sourceBatchId) {

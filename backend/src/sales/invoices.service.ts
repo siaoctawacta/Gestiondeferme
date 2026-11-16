@@ -1,3 +1,4 @@
+import { SELECT_FARM } from '../common/messages';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
@@ -70,7 +71,9 @@ const labelOf = (i: { number: string | null; customer: { name: string } }) =>
  * (ascending) -> animals (ascending) -> the withdrawal guard -> ONE stock-ledger
  * call last. Deleting a draft made from a quote takes the quote row after the
  * invoice; converting a quote takes the quote row before it inserts the
- * invoice (which nobody else can see yet), so the two never cross.
+ * invoice (which nobody else can see yet), so the two never cross. Cancelling
+ * an invoice made from a quote takes the quote row right after the invoice
+ * row, before any ledger lock, and gives the quote back.
  */
 @Injectable()
 export class InvoicesService {
@@ -150,6 +153,32 @@ export class InvoicesService {
     return created.id;
   }
 
+  /**
+   * Puts the quote an invoice was made from back to what it was before the
+   * conversion (`ACCEPTE` if it had been accepted, else `ENVOYE`), audited.
+   * The quote row is taken AFTER the invoice row (the caller holds it).
+   */
+  private async restoreQuote(
+    tx: Tx,
+    ctx: RequestContext,
+    quoteId: string,
+  ): Promise<void> {
+    await lockRow(tx, 'Quote', quoteId, ctx.farmIds);
+    const quote = await tx.quote.findUniqueOrThrow({ where: { id: quoteId } });
+    const status = quoteStatusBeforeConversion(quote);
+    await tx.quote.update({ where: { id: quote.id }, data: { status } });
+    await this.log(
+      tx,
+      ctx,
+      'UPDATE',
+      quote.id,
+      quote.reference,
+      quote.farmId,
+      { status: quote.status },
+      { status },
+    );
+  }
+
   // ------------------------------------------------------------- invoice CRUD
 
   private async createDraftIn(
@@ -180,7 +209,7 @@ export class InvoicesService {
   }
 
   private farm(ctx: RequestContext): string {
-    if (!ctx.farmId) throw new BadRequestException('Sélectionnez une ferme');
+    if (!ctx.farmId) throw new BadRequestException(SELECT_FARM);
     return ctx.farmId;
   }
 
@@ -346,28 +375,7 @@ export class InvoicesService {
         assertAllowed(locked, 'delete');
         const before = locked.invoice;
         const day = formatDay(today());
-        if (before.quoteId) {
-          // The quote goes back to what it was before it was converted (quote row after the invoice row).
-          await lockRow(tx, 'Quote', before.quoteId, ctx.farmIds);
-          const quote = await tx.quote.findUniqueOrThrow({
-            where: { id: before.quoteId },
-          });
-          const status = quoteStatusBeforeConversion(quote);
-          await tx.quote.update({
-            where: { id: quote.id },
-            data: { status },
-          });
-          await this.log(
-            tx,
-            ctx,
-            'UPDATE',
-            quote.id,
-            quote.reference,
-            quote.farmId,
-            { status: quote.status },
-            { status },
-          );
-        }
+        if (before.quoteId) await this.restoreQuote(tx, ctx, before.quoteId);
         await tx.invoiceLine.deleteMany({ where: { invoiceId: id } });
         await tx.invoice.delete({ where: { id } });
         await this.log(
@@ -529,6 +537,8 @@ export class InvoicesService {
       const locked = await this.lock(tx, ctx, id);
       assertAllowed(locked, 'cancel');
       const before = locked.invoice;
+      // An invoice made from a quote gives it back (a quote is invoiced once at a time).
+      if (before.quoteId) await this.restoreQuote(tx, ctx, before.quoteId);
       await this.effects.reverse(tx, {
         id,
         farmId: before.farmId,
@@ -548,6 +558,8 @@ export class InvoicesService {
           cancelledAt: new Date(),
           cancelledById: ctx.user.id,
           cancelReason: dto.reason,
+          // the link goes with the quote's return: it can be converted again
+          ...(before.quoteId ? { quoteId: null } : {}),
         },
       });
       const after = await this.reads.detail(tx, ctx, id);

@@ -320,7 +320,7 @@ describe('Client payments and credit notes under concurrency (real pool)', () =>
     await lockRow(tx, 'Invoice', invoiceId);
   };
   const saleGate = async (tx: Tx) => {
-    await tx.$queryRaw`SELECT 1 FROM "DocumentCounter" WHERE "kind" = 'FA' FOR NO KEY UPDATE`;
+    await tx.$queryRaw`SELECT 1 FROM "DocumentCounter" WHERE "kind" = 'FA' AND "organizationId" = ${world.orgId} FOR NO KEY UPDATE`;
   };
   const sale = (lines: unknown[]) => (): Promise<Res> =>
     send('post', '/sales/issued', accountant, {

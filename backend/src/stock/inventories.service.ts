@@ -1,3 +1,4 @@
+import { SELECT_FARM } from '../common/messages';
 import {
   BadRequestException,
   ConflictException,
@@ -185,7 +186,7 @@ export class InventoriesService {
 
   create(ctx: RequestContext, dto: CreateInventoryDto): Promise<InventoryItem> {
     const farmId = ctx.farmId;
-    if (!farmId) throw new BadRequestException('Sélectionnez une ferme');
+    if (!farmId) throw new BadRequestException(SELECT_FARM);
     const date = requireDay(dto.date);
     assertNotFuture(date);
     return this.prisma.$transaction(async (tx) => {
