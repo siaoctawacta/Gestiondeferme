@@ -31,8 +31,8 @@ import { INVOICE_COLUMNS } from './sale-view';
 /**
  * Permissions on `ventes`: a draft is a daily entry (`create`: create, edit,
  * delete while it is a draft); issuing (alone or with the creation) and the
- * client payments (and their deletion) are `update`; cancelling an issued
- * invoice and refunding a customer are `validate`.
+ * client payments, refunds and their deletion are `update`; cancelling an
+ * issued invoice is `validate`.
  *
  * `SalesModule` registers `SellablesController` BEFORE this controller, so
  * `GET /sales/sellables` is not taken for `GET /sales/:id`.
@@ -125,8 +125,7 @@ export class InvoicesController {
 
   /**
    * An encashment, or (`kind: REMBOURSEMENT`) the refund of what a credit note
-   * left owed back: the route needs `update`, a refund also `validate`
-   * (checked by the service).
+   * left owed back: both need `update`.
    */
   @Post(':id/payments')
   @RequirePermission('ventes', 'update')

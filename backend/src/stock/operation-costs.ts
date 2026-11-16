@@ -123,3 +123,68 @@ export async function exitCostsByItem(
   }
   return result;
 }
+
+/** The lot a sale's FIRST exit piece took of each article, in the order FEFO draws lots: expiry (none last), received date, id. */
+export interface SoldLot {
+  lotNumber: string | null;
+  expiryDate: Date | null;
+}
+
+/**
+ * Where the goods of a return belong: the lot (number and expiry) of the FIRST
+ * piece the source's exits took of each article, FEFO order (expiry, then
+ * received date, then id) so the answer does not depend on when rows were
+ * written. An article whose first piece sat in no lot maps to null; an article
+ * the source did not take is absent. One query.
+ */
+export async function firstSoldLots(
+  client: Prisma.TransactionClient | PrismaService,
+  of: { sourceType: StockSourceType; sourceId: string; stockItemIds: string[] },
+): Promise<Map<string, SoldLot | null>> {
+  const pieces = await client.stockMovement.findMany({
+    where: {
+      sourceType: of.sourceType,
+      sourceId: of.sourceId,
+      stockItemId: { in: of.stockItemIds },
+      quantity: { lt: 0 },
+    },
+    select: {
+      stockItemId: true,
+      stockBatch: {
+        select: {
+          id: true,
+          lotNumber: true,
+          expiryDate: true,
+          receivedDate: true,
+        },
+      },
+    },
+  });
+  const rank = (
+    b: (typeof pieces)[number]['stockBatch'],
+  ): [number, number, string] =>
+    b
+      ? [b.expiryDate?.getTime() ?? Infinity, b.receivedDate.getTime(), b.id]
+      : [Infinity, Infinity, '￿'];
+  const first = new Map<string, (typeof pieces)[number]['stockBatch']>();
+  for (const p of pieces) {
+    const known = first.get(p.stockItemId);
+    if (known === undefined) {
+      first.set(p.stockItemId, p.stockBatch);
+      continue;
+    }
+    const [a, b] = [rank(p.stockBatch), rank(known)];
+    if (
+      a[0] - b[0] < 0 ||
+      (a[0] === b[0] && (a[1] - b[1] < 0 || (a[1] === b[1] && a[2] < b[2])))
+    ) {
+      first.set(p.stockItemId, p.stockBatch);
+    }
+  }
+  return new Map(
+    [...first].map(([id, b]) => [
+      id,
+      b ? { lotNumber: b.lotNumber, expiryDate: b.expiryDate } : null,
+    ]),
+  );
+}

@@ -5,7 +5,6 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
-import { AccessService } from '../access/access.service';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import { assertNotFuture, formatDay, requireDay } from '../common/days';
@@ -35,6 +34,12 @@ const OVER_REFUND = 'Le montant dépasse le montant à rembourser';
 const BEFORE_INVOICE = 'La date du paiement ne peut pas précéder la facture';
 const REFUND_FIRST = "Supprimez d'abord le remboursement";
 const NOT_FOUND = 'Paiement introuvable';
+const BEFORE_CREDIT =
+  'La date du remboursement ne peut pas précéder le dernier avoir';
+
+/** What the audit log calls a payment of each kind. */
+const labelOf = (kind: CustomerPaymentKind): string =>
+  kind === 'REMBOURSEMENT' ? 'remboursement' : 'paiement';
 
 /** A client payment to write: its receipt number is taken by the caller (counter lock before any ledger lock). */
 export interface NewPayment {
@@ -62,7 +67,6 @@ export class PaymentsService {
     private readonly prisma: PrismaService,
     private readonly reads: InvoiceReads,
     private readonly audit: AuditService,
-    private readonly access: AccessService,
   ) {}
 
   /**
@@ -99,7 +103,7 @@ export class PaymentsService {
     await logSale(this.audit, tx, ctx, {
       action: 'CREATE',
       recordId: created.id,
-      label: `${invoice.number ?? ''} · paiement`,
+      label: `${invoice.number ?? ''} · ${labelOf(payment.kind)}`,
       farmId: invoice.farmId,
       after: {
         invoiceId: invoice.id,
@@ -121,9 +125,6 @@ export class PaymentsService {
     dto: CreateClientPaymentDto,
   ): Promise<InvoiceDetail> {
     const kind: CustomerPaymentKind = dto.kind ?? 'ENCAISSEMENT';
-    // Giving money back is a decision of the roles that issue credit notes.
-    if (kind === 'REMBOURSEMENT')
-      this.access.assertCan(ctx, 'ventes', 'validate');
     const date = requireDay(dto.date);
     assertNotFuture(date);
     return this.prisma.$transaction(async (tx) => {
@@ -132,6 +133,13 @@ export class PaymentsService {
       const { invoice, money } = locked;
       if (date.getTime() < invoice.date.getTime()) {
         throw new BadRequestException(BEFORE_INVOICE);
+      }
+      // What is given back stems from a credit note: not dated before the latest one.
+      if (
+        kind === 'REMBOURSEMENT' &&
+        invoice.creditNotes.some((c) => c.date.getTime() > date.getTime())
+      ) {
+        throw new BadRequestException(BEFORE_CREDIT);
       }
       const amount = new Decimal(dto.amount);
       const standing = standingOf(invoice, money);
@@ -202,7 +210,7 @@ export class PaymentsService {
       await logSale(this.audit, tx, ctx, {
         action: 'DELETE',
         recordId: paymentId,
-        label: `${invoice.number ?? ''} · paiement`,
+        label: `${invoice.number ?? ''} · ${labelOf(payment.kind)}`,
         farmId: invoice.farmId,
         before: {
           invoiceId: id,

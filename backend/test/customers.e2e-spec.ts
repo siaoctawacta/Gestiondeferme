@@ -87,6 +87,7 @@ describe('Customers (e2e)', () => {
       address: null,
       active: true,
       balance: 0,
+      refundDue: 0,
     });
     await create(AFI);
     await create(RAMCO);
@@ -107,6 +108,7 @@ describe('Customers (e2e)', () => {
       address: null,
       active: true,
       balance: 0,
+      refundDue: 0,
     });
   });
 

@@ -31,6 +31,11 @@ export class CreditNoteQueryDto extends ListQueryDto {
   customerId?: string;
 }
 
+/**
+ * One line of a credit note. A line whose amount is already used up (rounding
+ * of earlier partial credits) is worth 0: it can ride along with a line that
+ * is worth something, but a credit note worth nothing is a 400.
+ */
 export class CreditLineDto {
   @ApiProperty({ description: 'A line of the invoice being credited' })
   @IsString({ message: 'Ligne de facture invalide' })

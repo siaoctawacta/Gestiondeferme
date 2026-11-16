@@ -1,5 +1,6 @@
 import type { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
+import { can } from '../access/permissions';
 import { formatDay, today } from '../common/days';
 import { formatFcfa } from '../common/format-number';
 import type { AlertItem, AlertRule } from '../indicators/alerts/alert.types';
@@ -59,13 +60,15 @@ export function receivableAlerts(
     });
 }
 
-/** The rules of the sales module, in the order they rank: the overdue receivables. */
+/** The rules of the sales module, in the order they rank: the overdue receivables (not run for a role without `ventes` read). */
 export function receivableAlertRules(
   data: ReceivableAlertData,
   now: () => Date = () => new Date(),
 ): AlertRule[] {
   return [
     async (ctx) => {
+      // A role that cannot read ventes would see none of them: do not read them.
+      if (!can(ctx.user.role, 'ventes', 'read')) return [];
       const day = today(now());
       return receivableAlerts(await data.overdue(ctx, day), formatDay(day));
     },

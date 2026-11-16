@@ -158,6 +158,12 @@ export const REVENUE_STATUSES: readonly InvoiceStatusValue[] = [
   'SOLDEE',
 ];
 
+/** Invoices that can still be owed: issued or partly paid (a settled one owes nothing, though it may owe a refund). */
+export const OPEN_STATUSES: readonly InvoiceStatusValue[] = [
+  'EMISE',
+  'PARTIELLE',
+];
+
 const isIssued = (status: InvoiceStatusValue): boolean =>
   REVENUE_STATUSES.includes(status);
 

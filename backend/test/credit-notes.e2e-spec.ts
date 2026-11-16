@@ -1,8 +1,8 @@
 import { INestApplication } from '@nestjs/common';
 import { HerdLedgerService } from '../src/herd/herd-ledger.service';
+import { lockRow } from '../src/common/lock-row';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { StockLedgerService } from '../src/stock/stock-ledger.service';
-import { exitCostsByItem } from '../src/stock/operation-costs';
 import { daysAgo, Headers, Id, Msg, World } from './fixtures';
 import { createFarm, createTestApp, createUser, tokenFor } from './setup';
 
@@ -943,8 +943,9 @@ describe('Credit notes (e2e)', () => {
       await credit(inv, [[0, 10]]);
     });
 
-    it('articles: ONE entry RETOUR at the sale cost into a NEW batch with the lot number and expiry of the first piece sold', async () => {
-      const item = await article(40, 'Vaccin', {
+    it('articles: ONE entry RETOUR at the sale cost (368) into a NEW batch with the lot number and expiry of the first piece sold', async () => {
+      const item = await article(100, 'Vaccin', {
+        unitCost: 300,
         lotNumber: 'SOON',
         expiryDate: '2090-01-01',
       });
@@ -953,21 +954,17 @@ describe('Credit notes (e2e)', () => {
         type: 'ENTREE',
         date: daysAgo(30),
         quantity: 100,
-        unitCost: 400,
+        unitCost: 436,
         reason: 'ACHAT',
         lotNumber: 'LATE',
         expiryDate: '2099-01-01',
       });
-      const inv = await issued({ lines: [itemLine(item, { quantity: 100 })] });
-      const before = await level(item);
-      expect(before.quantity).toBe(40);
-      const exits = await exitCostsByItem(prisma, {
-        sourceType: 'SALE',
-        sourceId: inv.id,
+      // (100 x 300 + 100 x 436) / 200 = 368: 100 from SOON and 50 from LATE
+      const inv = await issued({ lines: [itemLine(item, { quantity: 150 })] });
+      expect(await level(item)).toMatchObject({
+        quantity: 50,
+        averageCost: 368,
       });
-      const unit =
-        (exits.get(item)?.cost.toNumber() ?? 0) /
-        (exits.get(item)?.quantity.toNumber() ?? 1);
       const batchesBefore = await prisma.stockBatch.count();
       const spy = jest.spyOn(app.get(StockLedgerService), 'recordMany');
       try {
@@ -976,8 +973,10 @@ describe('Credit notes (e2e)', () => {
       } finally {
         spy.mockRestore();
       }
-      const after = await level(item);
-      expect(after.quantity).toBe(65);
+      expect(await level(item)).toMatchObject({
+        quantity: 75,
+        averageCost: 368,
+      });
       expect(await prisma.stockBatch.count()).toBe(batchesBefore + 1);
       const moves = await prisma.stockMovement.findMany({
         where: { sourceType: 'CREDIT_NOTE' },
@@ -986,13 +985,146 @@ describe('Credit notes (e2e)', () => {
       expect(moves).toHaveLength(1);
       expect(moves[0]).toMatchObject({ type: 'ENTREE', reason: 'RETOUR' });
       expect(moves[0].quantity.toNumber()).toBe(25);
-      expect(moves[0].unitCost.toNumber()).toBeCloseTo(unit, 2);
+      expect(moves[0].unitCost.toNumber()).toBe(368);
       expect(moves[0].date).toEqual(new Date(daysAgo(1)));
       expect(moves[0].stockBatch).toMatchObject({
         lotNumber: 'SOON',
         expiryDate: new Date('2090-01-01'),
       });
       expect(moves[0].stockBatch?.receivedDate).toEqual(new Date(daysAgo(1)));
+    });
+
+    it('articles: the lot the goods re-enter is the first of the sale in FEFO order, whatever the order the entries were made in', async () => {
+      const item = await article(50, 'Vaccin', {
+        lotNumber: 'LATE',
+        expiryDate: '2099-01-01',
+      });
+      await world.post(stockMgr, '/stock/movements', {
+        itemId: item,
+        type: 'ENTREE',
+        date: daysAgo(30),
+        quantity: 50,
+        unitCost: 320,
+        reason: 'ACHAT',
+        lotNumber: 'SOON',
+        expiryDate: '2090-01-01',
+      });
+      const inv = await issued({ lines: [itemLine(item, { quantity: 80 })] });
+      await credit(inv, [[0, 10]], { withReturn: true });
+      const batch = await prisma.stockBatch.findFirstOrThrow({
+        where: { movements: { some: { sourceType: 'CREDIT_NOTE' } } },
+      });
+      expect(batch.lotNumber).toBe('SOON');
+    });
+
+    it('articles: a lot expired on the credit note date, or an inactive article, refuses the return (400 Retour impossible) and writes nothing; without return it is credited', async () => {
+      const item = await article(100, 'Vaccin', {
+        lotNumber: 'P1',
+        expiryDate: daysAgo(3),
+      });
+      const inv = await issued({
+        date: daysAgo(5),
+        lines: [itemLine(item, { quantity: 10 })],
+      });
+      const refused = await credit(
+        inv,
+        [[0, 5]],
+        { withReturn: true },
+        accountant,
+        400,
+      );
+      expect(msg(refused)).toBe(
+        'Retour impossible pour Vaccin : faites un avoir sans retour des marchandises',
+      );
+      expect(await counter()).toBeNull();
+      expect(await dbCount('CreditNote')).toBe(0);
+      expect((await level(item)).quantity).toBe(90);
+      // dated while the lot was still good, the return is accepted
+      await credit(inv, [[0, 5]], { withReturn: true, date: daysAgo(4) });
+      expect((await level(item)).quantity).toBe(95);
+      // a deactivated article
+      const other = await article(100, 'Aliment B');
+      const inv2 = await issued({ lines: [itemLine(other, { quantity: 10 })] });
+      await prisma.stockItem.update({
+        where: { id: other },
+        data: { active: false },
+      });
+      const off = await credit(
+        inv2,
+        [[0, 5]],
+        { withReturn: true },
+        accountant,
+        400,
+      );
+      expect(msg(off)).toBe(
+        'Retour impossible pour Aliment B : faites un avoir sans retour des marchandises',
+      );
+      await credit(inv2, [[0, 5]]);
+    });
+
+    it('articles: the cost of a return is read under the stock lock: an entry committed while the credit note waits for it is counted', async () => {
+      const item = await article(1000);
+      const inv = await issued({
+        date: daysAgo(3),
+        lines: [itemLine(item, { quantity: 100 })],
+      });
+      const pair = await prisma.farmStockItem.findFirstOrThrow({
+        where: { farmId: world.farmId, stockItemId: item },
+      });
+      const user = await prisma.user.findFirstOrThrow();
+      let release: () => void = () => undefined;
+      const gate = new Promise<void>((r) => (release = r));
+      let held: (pid: number) => void = () => undefined;
+      const hasLock = new Promise<number>((r) => (held = r));
+      const holder = prisma.$transaction(
+        async (tx) => {
+          await lockRow(tx, 'FarmStockItem', pair.id);
+          const rows = await tx.$queryRaw<
+            { pid: number }[]
+          >`SELECT pg_backend_pid() AS pid`;
+          held(rows[0].pid);
+          await gate;
+          // committed under the lock the credit note is waiting for: re-costs the sale's exits to 340
+          await app.get(StockLedgerService).record(tx, {
+            farmId: world.farmId,
+            stockItemId: item,
+            date: new Date(daysAgo(10)),
+            type: 'ENTREE',
+            quantity: 500,
+            unitCost: 380,
+            reason: 'ACHAT',
+            userId: user.id,
+          });
+        },
+        { timeout: 60000 },
+      );
+      const pid = await hasLock;
+      try {
+        const request = credit(inv, [[0, 40]], {
+          withReturn: true,
+          date: daysAgo(2),
+        });
+        let blocked = 0;
+        const deadline = Date.now() + 15000;
+        while (blocked === 0 && Date.now() < deadline) {
+          const rows = await prisma.$queryRaw<{ n: bigint }[]>`
+            SELECT count(*) AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND ${pid}::int = ANY (pg_blocking_pids(pid))`;
+          blocked = Number(rows[0].n);
+          if (blocked === 0) await new Promise((r) => setTimeout(r, 20));
+        }
+        expect(blocked).toBeGreaterThan(0);
+        release();
+        await holder;
+        await request;
+      } finally {
+        release();
+        await holder.catch(() => undefined);
+      }
+      const ret = await prisma.stockMovement.findFirstOrThrow({
+        where: { sourceType: 'CREDIT_NOTE' },
+      });
+      expect(ret.unitCost.toNumber()).toBe(340);
     });
 
     it('articles: a return is valued at what the ledger says the sale cost NOW (a back-dated entry re-costs the exits)', async () => {
@@ -1015,7 +1147,11 @@ describe('Credit notes (e2e)', () => {
         where: { sourceType: 'CREDIT_NOTE' },
       });
       expect(ret.unitCost.toNumber()).toBe(340);
-      expect((await level(item)).quantity).toBe(1000 + 500 - 100 + 40);
+      // 1 500 at 340, 100 out, 40 back at 340: the average holds
+      expect(await level(item)).toMatchObject({
+        quantity: 1000 + 500 - 100 + 40,
+        averageCost: 340,
+      });
     });
 
     it('articles: two lines of one article and a second article in one credit note are ONE ledger call, one batch per article', async () => {
@@ -1116,6 +1252,77 @@ describe('Credit notes (e2e)', () => {
       expect(msg(refused)).toContain('Capacité du bâtiment dépassée');
       expect(await counter()).toBeNull();
       expect(await alive(lotId)).toBe(100);
+    });
+  });
+
+  describe('partial returns and refunds', () => {
+    it('a partial return of one LOT line across two credit notes (10 then 20 birds) puts 30 birds back, one event each', async () => {
+      const inv = await issued();
+      await credit(inv, [[0, 10]], { withReturn: true });
+      const res = (await credit(inv, [[0, 20]], { withReturn: true }))
+        .body as Detail;
+      expect(res.lines[0]).toMatchObject({
+        creditedQuantity: 30,
+        creditableQuantity: 270,
+        creditableAmount: 945000,
+      });
+      expect(await alive(lotId)).toBe(130);
+      const events = await creditEvents(lotId);
+      expect(events.map((e) => e.quantity).sort((a, b) => a - b)).toEqual([
+        10, 20,
+      ]);
+    });
+
+    it('a 1.25 kg partial return of an article, twice, puts 2.5 kg back at the sale cost', async () => {
+      const item = await article(100);
+      const inv = await issued({
+        lines: [itemLine(item, { quantity: 2.5, unitPrice: 333.33 })],
+      });
+      await credit(inv, [[0, 1.25]], { withReturn: true });
+      await credit(inv, [[0, 1.25]], { withReturn: true });
+      expect(await level(item)).toMatchObject({
+        quantity: 100,
+        averageCost: 320,
+      });
+      const moves = await prisma.stockMovement.findMany({
+        where: { sourceType: 'CREDIT_NOTE' },
+        orderBy: { createdAt: 'asc' },
+      });
+      expect(
+        moves.map((m) => [m.quantity.toNumber(), m.unitCost.toNumber()]),
+      ).toEqual([
+        [1.25, 320],
+        [1.25, 320],
+      ]);
+    });
+
+    it('a refund cannot be dated before the credit note it stems from (400), and a credit note on a settled invoice raises the refund due again', async () => {
+      const inv = await issued();
+      await pay(inv.id, 1050000);
+      await credit(inv, [[0, 30]]); // dated yesterday
+      const early = await pay(
+        inv.id,
+        5000,
+        { kind: 'REMBOURSEMENT', date: daysAgo(2) },
+        accountant,
+        400,
+      );
+      expect(msg(early)).toBe(
+        'La date du remboursement ne peut pas précéder le dernier avoir',
+      );
+      const done = (await pay(inv.id, 105000, { kind: 'REMBOURSEMENT' }))
+        .body as Detail;
+      expect(done).toMatchObject({ status: 'SOLDEE', refundDue: 0 });
+      const again = (await credit(inv, [[0, 10]])).body as Detail;
+      expect(again).toMatchObject({
+        status: 'SOLDEE',
+        due: 0,
+        refundDue: 35000,
+      });
+      const row = (
+        await http().get(`/api/sales/${inv.id}`).set(accountant).expect(200)
+      ).body as Detail;
+      expect(row.refundDue).toBe(35000);
     });
   });
 
@@ -1254,7 +1461,7 @@ describe('Credit notes (e2e)', () => {
         refunded: 0,
         balance: 445000,
       });
-      // what is owed back lowers the balance
+      // what is owed back is a figure of its own: the balance stays what is due
       await pay(inv.id, 445000);
       await credit(inv, [[0, 10]]);
       const owed = (
@@ -1262,8 +1469,13 @@ describe('Credit notes (e2e)', () => {
           .get(`/api/customers/${customerId}`)
           .set(accountant)
           .expect(200)
-      ).body as { balance: number };
-      expect(owed.balance).toBe(-35000);
+      ).body as { balance: number; refundDue: number };
+      expect(owed).toMatchObject({ balance: 0, refundDue: 35000 });
+      const row = (
+        (await http().get('/api/customers').set(accountant).expect(200))
+          .body as Page<{ id: string; balance: number; refundDue: number }>
+      ).items.find((c) => c.id === customerId);
+      expect(row).toMatchObject({ balance: 0, refundDue: 35000 });
     });
   });
 });

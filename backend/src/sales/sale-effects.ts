@@ -1,8 +1,4 @@
-import {
-  BadRequestException,
-  ConflictException,
-  Injectable,
-} from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
 import { EggStockService } from '../eggs/egg-stock';
@@ -12,7 +8,6 @@ import { AnimalTargetRegistry } from '../herd/animal-target';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import { WithdrawalRegistry } from '../herd/withdrawal';
 import { AnimalSales } from '../pigs/animal-sales';
-import { exitCostsByItem } from '../stock/operation-costs';
 import {
   StockLedgerService,
   type RecordInput,
@@ -239,11 +234,11 @@ export class SaleEffects {
    * need no write (the credit note's lines are counted as negative outflow by
    * `SaleEggOutflows`, the caller having stored them first).
    *
-   * Each returned ARTICLE comes back as an `ENTREE` of reason `RETOUR` into a
-   * NEW batch carrying the lot number and expiry of the first piece the sale
-   * took, at the average unit cost of the sale's exits of that article as the
-   * ledger holds them NOW (`exitCostsByItem`: nothing is snapshotted); two
-   * lines of one article make one movement.
+   * The returned ARTICLES are the stock ledger's to take back
+   * (`StockLedgerService.returnBySource`): one `ENTREE` of reason `RETOUR` per
+   * article into a new lot, at the average cost of the sale's exits read UNDER
+   * the stock locks, refused (400 `Retour impossible`) for an expired lot or
+   * an inactive article. Nothing of the stock tables is read here.
    */
   async applyReturn(
     tx: Tx,
@@ -282,67 +277,19 @@ export class SaleEffects {
         userId: ctx.user.id,
       });
     }
-    // 4. ONE stock-ledger call
+    // 4. ONE stock-ledger call: the ledger reads the sale's costs under its own locks
     if (itemLines.length === 0) return;
-    const quantities = new Map<string, Decimal>();
-    for (const l of itemLines) {
-      const id = l.stockItemId as string;
-      quantities.set(
-        id,
-        (quantities.get(id) ?? new Decimal(0)).add(l.quantity),
-      );
-    }
-    const itemIds = [...quantities.keys()].sort();
-    const costs = await exitCostsByItem(tx, {
-      sourceType: SOURCE,
-      sourceId: note.invoiceId,
+    await this.stock.returnBySource(tx, {
+      farmId: note.farmId,
+      sale: { sourceType: SOURCE, sourceId: note.invoiceId },
+      credit: { sourceType: RETURN_SOURCE, sourceId: note.id },
+      date: note.date,
+      userId: ctx.user.id,
+      note: `Avoir ${note.number}`,
+      items: itemLines.map((l) => ({
+        stockItemId: l.stockItemId as string,
+        quantity: l.quantity,
+      })),
     });
-    const pieces = await tx.stockMovement.findMany({
-      where: {
-        sourceType: SOURCE,
-        sourceId: note.invoiceId,
-        stockItemId: { in: itemIds },
-        quantity: { lt: 0 },
-      },
-      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
-      select: {
-        stockItemId: true,
-        stockBatch: { select: { lotNumber: true, expiryDate: true } },
-      },
-    });
-    const inputs: RecordInput[] = [];
-    for (const itemId of itemIds) {
-      const cost = costs.get(itemId);
-      if (!cost || cost.quantity.lte(0)) {
-        throw new ConflictException(
-          'Le coût de sortie de cet article est introuvable',
-        );
-      }
-      const first = pieces.find((p) => p.stockItemId === itemId)?.stockBatch;
-      const batch = first
-        ? await this.stock.createBatch(tx, {
-            farmId: note.farmId,
-            stockItemId: itemId,
-            lotNumber: first.lotNumber,
-            expiryDate: first.expiryDate,
-            receivedDate: note.date,
-          })
-        : null;
-      inputs.push({
-        farmId: note.farmId,
-        stockItemId: itemId,
-        date: note.date,
-        type: 'ENTREE',
-        quantity: quantities.get(itemId) as Decimal,
-        unitCost: cost.cost.div(cost.quantity).toDecimalPlaces(2),
-        reason: 'RETOUR',
-        stockBatchId: batch?.id ?? null,
-        sourceType: RETURN_SOURCE,
-        sourceId: note.id,
-        note: `Avoir ${note.number}`,
-        userId: ctx.user.id,
-      });
-    }
-    await this.stock.recordMany(tx, inputs);
   }
 }

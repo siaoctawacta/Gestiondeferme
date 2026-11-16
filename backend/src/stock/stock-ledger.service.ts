@@ -21,6 +21,7 @@ import type {
   StockReason,
 } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
+import { exitCostsByItem, firstSoldLots } from './operation-costs';
 import {
   allocateExit,
   AllocationError,
@@ -324,6 +325,93 @@ export class StockLedgerService {
     });
     const created = await this.commit(tx, states);
     return this.results(tx, states, planned, created);
+  }
+
+  /**
+   * Takes goods back into stock for a source that sold them (a credit note
+   * with return of a sale): per article ONE `ENTREE` of reason `RETOUR`, at the
+   * average unit cost of the sale's exits of that article, into a NEW lot that
+   * carries the lot number and expiry of the first piece the sale took (see
+   * `firstSoldLots`; no lot when that piece had none).
+   *
+   * The stock locks of the articles are taken FIRST (ascending, like every
+   * ledger write) and the sale's exit costs are read only afterwards, under
+   * them: a back-dated entry cannot re-cost the exits between the read and the
+   * write. Refused with 400 `Retour impossible pour {article} : faites un avoir
+   * sans retour des marchandises` (nothing written) when an article is inactive
+   * or the lot it would re-enter is expired on `date`. One transaction, ONE
+   * `recordMany`; the caller owns its source row and has taken its other locks.
+   */
+  async returnBySource(
+    tx: Tx,
+    input: {
+      farmId: string;
+      sale: { sourceType: StockSourceType; sourceId: string };
+      credit: { sourceType: StockSourceType; sourceId: string };
+      date: Date;
+      userId: string;
+      note?: string | null;
+      items: { stockItemId: string; quantity: Num }[];
+    },
+  ): Promise<RecordResult[]> {
+    const ids = [...new Set(input.items.map((i) => i.stockItemId))].sort();
+    await this.lockItems(tx, input.farmId, ids);
+    const costs = await exitCostsByItem(tx, input.sale);
+    const lots = await firstSoldLots(tx, { ...input.sale, stockItemIds: ids });
+    const articles = new Map(
+      (
+        await tx.stockItem.findMany({
+          where: { id: { in: ids } },
+          select: { id: true, name: true, active: true },
+        })
+      ).map((a) => [a.id, a]),
+    );
+    const inputs: RecordInput[] = [];
+    for (const id of ids) {
+      const article = articles.get(id);
+      const cost = costs.get(id);
+      const lot = lots.get(id) ?? null;
+      const refused = (): never => {
+        throw new BadRequestException(
+          `Retour impossible pour ${article?.name ?? 'cet article'} : faites un avoir sans retour des marchandises`,
+        );
+      };
+      if (!article || !cost || cost.quantity.lte(0)) {
+        throw new ConflictException(
+          'Le coût de sortie de cet article est introuvable',
+        );
+      }
+      if (!article.active) refused();
+      if (lot?.expiryDate && lot.expiryDate.getTime() < input.date.getTime()) {
+        refused();
+      }
+      const batch = lot
+        ? await this.createBatch(tx, {
+            farmId: input.farmId,
+            stockItemId: id,
+            lotNumber: lot.lotNumber,
+            expiryDate: lot.expiryDate,
+            receivedDate: input.date,
+          })
+        : null;
+      inputs.push({
+        farmId: input.farmId,
+        stockItemId: id,
+        date: input.date,
+        type: 'ENTREE',
+        quantity: input.items
+          .filter((i) => i.stockItemId === id)
+          .reduce((sum, i) => sum.add(D(i.quantity)), ZERO),
+        unitCost: cost.cost.div(cost.quantity).toDecimalPlaces(2),
+        reason: 'RETOUR',
+        stockBatchId: batch?.id ?? null,
+        sourceType: input.credit.sourceType,
+        sourceId: input.credit.sourceId,
+        note: input.note ?? null,
+        userId: input.userId,
+      });
+    }
+    return this.recordMany(tx, inputs);
   }
 
   /** A lot received; its quantity is the sum of the movements that carry it. */

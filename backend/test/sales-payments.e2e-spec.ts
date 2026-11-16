@@ -480,7 +480,7 @@ describe('Client payments and receivables (e2e)', () => {
       expect(msg(none)).toBe('Rien à rembourser sur cette facture');
     });
 
-    it('a refund is validate: COMMERCIAL and PROPRIETAIRE without update are told apart from COMPTABLE', async () => {
+    it('a refund is update like any payment: COMMERCIAL and COMPTABLE refund, PROPRIETAIRE (validate only) is refused at the route', async () => {
       const inv = await issued();
       await encash(inv.id, 1050000);
       await http()
@@ -493,18 +493,21 @@ describe('Client payments and receivables (e2e)', () => {
           lines: [{ lineId: (await get(inv.id)).lines[0].id, quantity: 30 }],
         })
         .expect(201);
-      const payload = {
+      const refund = (amount: number) => ({
         date: daysAgo(1),
-        amount: 105000,
+        amount,
         method: 'MOBILE_MONEY',
         kind: 'REMBOURSEMENT',
-      };
-      await pay(inv.id, payload, seller, 403);
-      const refunded = (await pay(inv.id, payload, accountant, 201))
+      });
+      await pay(inv.id, refund(5000), owner, 403);
+      await pay(inv.id, refund(5000), director, 403);
+      await pay(inv.id, refund(50000), seller, 201);
+      const refunded = (await pay(inv.id, refund(55000), accountant, 201))
         .body as Detail;
       expect(refunded).toMatchObject({ refundDue: 0, refunded: 105000 });
       expect(refunded.payments.map((p) => p.kind)).toEqual([
         'ENCAISSEMENT',
+        'REMBOURSEMENT',
         'REMBOURSEMENT',
       ]);
     });

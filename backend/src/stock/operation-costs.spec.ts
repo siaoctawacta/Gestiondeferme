@@ -2,6 +2,7 @@ import { Decimal } from '@prisma/client/runtime/client';
 import type { PrismaService } from '../prisma/prisma.service';
 import {
   exitCostsByItem,
+  firstSoldLots,
   operationCost,
   operationCosts,
 } from './operation-costs';
@@ -124,5 +125,77 @@ describe('exitCostsByItem', () => {
       { sourceType: 'SALE', sourceId: 'none' },
     );
     expect(costs.size).toBe(0);
+  });
+});
+
+describe('firstSoldLots', () => {
+  const lot = (
+    id: string,
+    lotNumber: string,
+    expiry: string | null,
+    received: string,
+  ) => ({
+    id,
+    lotNumber,
+    expiryDate: expiry ? new Date(expiry) : null,
+    receivedDate: new Date(received),
+  });
+  const client = (rows: object[]) =>
+    ({
+      stockMovement: { findMany: jest.fn().mockResolvedValue(rows) },
+    }) as unknown as PrismaService;
+  const of = {
+    sourceType: 'SALE' as const,
+    sourceId: 's1',
+    stockItemIds: ['a', 'b'],
+  };
+
+  it('takes the lot FEFO draws first (expiry, received date, id), whatever the order the pieces come in', async () => {
+    const rows = [
+      { stockItemId: 'a', stockBatch: lot('l3', 'NOEXP', null, '2026-01-01') },
+      {
+        stockItemId: 'a',
+        stockBatch: lot('l2', 'LATE', '2099-01-01', '2026-01-01'),
+      },
+      {
+        stockItemId: 'a',
+        stockBatch: lot('l1', 'SOON', '2090-01-01', '2026-05-01'),
+      },
+      {
+        stockItemId: 'b',
+        stockBatch: lot('l5', 'B2', '2090-01-01', '2026-03-01'),
+      },
+      {
+        stockItemId: 'b',
+        stockBatch: lot('l4', 'B1', '2090-01-01', '2026-02-01'),
+      },
+    ];
+    const found = await firstSoldLots(client(rows), of);
+    expect(found.get('a')?.lotNumber).toBe('SOON');
+    expect(found.get('b')?.lotNumber).toBe('B1');
+  });
+
+  it('maps an article whose first piece sat in no lot to null, and leaves out an article not sold', async () => {
+    const rows = [
+      { stockItemId: 'a', stockBatch: null },
+      {
+        stockItemId: 'a',
+        stockBatch: lot('l1', 'X', '2090-01-01', '2026-01-01'),
+      },
+    ];
+    const found = await firstSoldLots(client(rows), of);
+    expect(found.get('a')).toEqual({
+      lotNumber: 'X',
+      expiryDate: new Date('2090-01-01'),
+    });
+    expect(found.has('b')).toBe(false);
+    expect(
+      (
+        await firstSoldLots(
+          client([{ stockItemId: 'a', stockBatch: null }]),
+          of,
+        )
+      ).get('a'),
+    ).toBeNull();
   });
 });

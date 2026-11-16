@@ -1490,6 +1490,7 @@ model InvoiceLine {
 }
 
 /// A client payment: an encashment, or a refund of what a credit note left owed back. Its `RC-NNNN` is the receipt.
+/// Enforced by the service under the invoice row lock, NOT by SQL: amount <= what is due (or owed back), farm = the invoice's farm. Issuing an invoice with a payment writes two audit rows (the invoice and the payment).
 model CustomerPayment {
   id             String              @id @default(cuid())
   organizationId String
@@ -1517,6 +1518,8 @@ model CustomerPayment {
 }
 
 /// A credit note (avoir): final, never edited or deleted. Its lines say how much of each invoice line it takes back.
+/// Enforced by the service under the invoice row lock, NOT by SQL: Σ credit lines of an invoice line <= that line's quantity and amount, Σ credit notes <= the invoice total, the credit note's farm = its invoice's farm.
+/// A credit note worth nothing (every line already used up by rounding) is refused (400).
 model CreditNote {
   id             String           @id @default(cuid())
   organizationId String

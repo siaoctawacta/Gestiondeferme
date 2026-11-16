@@ -47,7 +47,7 @@ export class CreateClientPaymentDto {
   @ApiPropertyOptional({
     enum: CustomerPaymentKind,
     default: 'ENCAISSEMENT',
-    description: 'REMBOURSEMENT needs the `validate` right on ventes',
+    description: 'REMBOURSEMENT: giving back what a credit note left owed',
   })
   @ValidateIf((_o, v) => v !== undefined)
   @IsEnum(CustomerPaymentKind, { message: 'Le type de paiement est invalide' })

@@ -1,5 +1,6 @@
 import { INestApplication } from '@nestjs/common';
 import { HerdLedgerService } from '../src/herd/herd-ledger.service';
+import { lockRow } from '../src/common/lock-row';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { daysAgo, Headers, Id, World } from './fixtures';
 import { createTestApp } from './setup';
@@ -248,21 +249,103 @@ describe('Client payments and credit notes under concurrency (real pool)', () =>
     expect(await counter('AV')).toBe(3);
   });
 
-  it('a credit note with return racing a sale on the same lot: the lot ends where the order of the two says, no 500, no deadlock', async () => {
-    for (let round = 0; round < 4; round++) {
+  type Tx = Parameters<Parameters<PrismaService['$transaction']>[0]>[0];
+
+  /** A lock held by a transaction of the test's own pool until `release()`. */
+  async function hold(lock: (tx: Tx) => Promise<void>) {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => (release = r));
+    let held: (pid: number) => void = () => undefined;
+    const hasLock = new Promise<number>((r) => (held = r));
+    const done = prisma.$transaction(
+      async (t) => {
+        await lock(t);
+        const rows = await t.$queryRaw<
+          { pid: number }[]
+        >`SELECT pg_backend_pid() AS pid`;
+        held(rows[0].pid);
+        await gate;
+      },
+      { timeout: 60000 },
+    );
+    return { pid: await hasLock, release, done };
+  }
+
+  /** Waits (asserted, 15 s) until a session is blocked by the transaction `pid`. */
+  async function blockedBy(pid: number): Promise<void> {
+    let blocked = 0;
+    const deadline = Date.now() + 15000;
+    while (blocked === 0 && Date.now() < deadline) {
+      const rows = await prisma.$queryRaw<{ n: bigint }[]>`
+        SELECT count(*) AS n FROM pg_stat_activity
+        WHERE datname = current_database() AND ${pid}::int = ANY (pg_blocking_pids(pid))`;
+      blocked = Number(rows[0].n);
+      if (blocked === 0) await new Promise((r) => setTimeout(r, 20));
+    }
+    expect(blocked).toBeGreaterThan(0);
+  }
+
+  /**
+   * Makes `first` commit before `second` whatever the scheduler does: each
+   * request is started and seen WAITING on a lock held by a transaction of
+   * ours (the gate of its own first lock: the invoice row of a credit note, the
+   * FA counter of a sale), then the gates are opened one after the other, the
+   * first request being finished before the second is let go. The two
+   * requests then meet the lot / the stock level in the forced order.
+   */
+  async function ordered(
+    first: { gate: (tx: Tx) => Promise<void>; start: () => Promise<Res> },
+    second: { gate: (tx: Tx) => Promise<void>; start: () => Promise<Res> },
+  ): Promise<[Res, Res]> {
+    const g1 = await hold(first.gate);
+    const g2 = await hold(second.gate);
+    try {
+      const r1 = first.start();
+      await blockedBy(g1.pid);
+      const r2 = second.start();
+      await blockedBy(g2.pid);
+      g1.release();
+      const a = await r1;
+      g2.release();
+      return [a, await r2];
+    } finally {
+      g1.release();
+      g2.release();
+      await g1.done;
+      await g2.done;
+    }
+  }
+
+  const creditGate = (invoiceId: string) => async (tx: Tx) => {
+    await lockRow(tx, 'Invoice', invoiceId);
+  };
+  const saleGate = async (tx: Tx) => {
+    await tx.$queryRaw`SELECT 1 FROM "DocumentCounter" WHERE "kind" = 'FA' FOR NO KEY UPDATE`;
+  };
+  const sale = (lines: unknown[]) => (): Promise<Res> =>
+    send('post', '/sales/issued', accountant, {
+      customerId,
+      date: daysAgo(1),
+      lines,
+    });
+
+  it('a credit note with return and a sale on the same lot, each commit order forced: return first the sale fits (201), sale first it is short (400) and the return still goes through', async () => {
+    for (const returnFirst of [true, false]) {
       const lot = await world.lot(director, { initialCount: 400 });
       const inv = await issued([lotLine(lot.id, 300)]); // 100 left
-      const sale = (): Promise<Res> =>
-        send('post', '/sales/issued', accountant, {
-          customerId,
-          date: daysAgo(2),
-          lines: [lotLine(lot.id, 120)],
-        });
-      const [c, s] = await Promise.all([credit(inv, 30, true), sale()]);
-      noServerError([c, s]);
+      const credit30 = {
+        gate: creditGate(inv.id as string),
+        start: () => credit(inv, 30, true),
+      };
+      const sell120 = { gate: saleGate, start: sale([lotLine(lot.id, 120)]) };
+      const rs = returnFirst
+        ? await ordered(credit30, sell120)
+        : (await ordered(sell120, credit30)).reverse();
+      const [c, s] = rs;
+      noServerError(rs);
       expect(c.status).toBe(201);
-      if (s.status === 201) {
-        // the return came first: 130 birds were there for 120
+      if (returnFirst) {
+        expect(s.status).toBe(201);
         expect(await alive(lot.id)).toBe(10);
       } else {
         expect(s.status).toBe(400);
@@ -270,22 +353,25 @@ describe('Client payments and credit notes under concurrency (real pool)', () =>
         expect(await alive(lot.id)).toBe(130);
       }
     }
-  });
+  }, 60000);
 
-  it('a credit note with return racing a sale of the same article: the level ends where the order of the two says', async () => {
-    for (let round = 0; round < 4; round++) {
-      const item = await article(100, `Aliment ${round}`);
+  it('a credit note with return and a sale of the same article, each commit order forced: return first the sale fits (201), sale first it is short (400) and the return still goes through', async () => {
+    for (const returnFirst of [true, false]) {
+      const item = await article(100, `Aliment ${returnFirst}`);
       const inv = await issued([itemLine(item, 100)]); // level 0
-      const sale = (): Promise<Res> =>
-        send('post', '/sales/issued', accountant, {
-          customerId,
-          date: daysAgo(2),
-          lines: [itemLine(item, 40)],
-        });
-      const [c, s] = await Promise.all([credit(inv, 40, true), sale()]);
-      noServerError([c, s]);
+      const credit40 = {
+        gate: creditGate(inv.id as string),
+        start: () => credit(inv, 40, true),
+      };
+      const sell40 = { gate: saleGate, start: sale([itemLine(item, 40)]) };
+      const rs = returnFirst
+        ? await ordered(credit40, sell40)
+        : (await ordered(sell40, credit40)).reverse();
+      const [c, s] = rs;
+      noServerError(rs);
       expect(c.status).toBe(201);
-      if (s.status === 201) {
+      if (returnFirst) {
+        expect(s.status).toBe(201);
         expect(await level(item)).toBe(0);
       } else {
         expect(s.status).toBe(400);
@@ -293,7 +379,7 @@ describe('Client payments and credit notes under concurrency (real pool)', () =>
         expect(await level(item)).toBe(40);
       }
     }
-  });
+  }, 60000);
 
   it('credit notes with return and invoices taking the same lots and articles in opposite orders do not deadlock', async () => {
     const lots = [

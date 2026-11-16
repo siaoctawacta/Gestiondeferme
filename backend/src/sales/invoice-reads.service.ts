@@ -13,6 +13,7 @@ import type { InvoiceQueryDto } from './dto/invoice.dto';
 import {
   invoiceDetail,
   invoiceInclude,
+  invoiceListInclude,
   invoiceRow,
   moneyOf,
   standingOf,
@@ -78,7 +79,7 @@ export class InvoiceReads {
     const rows = async (ids: string[]): Promise<InvoiceRow[]> => {
       const found = await this.prisma.invoice.findMany({
         where: { id: { in: ids } },
-        include: invoiceInclude,
+        include: invoiceListInclude,
       });
       const money = await moneyOf(this.prisma, ids);
       const byId = new Map(found.map((i) => [i.id, i]));

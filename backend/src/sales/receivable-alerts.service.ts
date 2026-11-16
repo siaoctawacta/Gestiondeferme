@@ -7,7 +7,8 @@ import {
   type OpenReceivable,
   type ReceivableAlertData,
 } from './receivable-alerts';
-import { receivablesOf } from './sale-view';
+import { receivablesOf } from './receivables';
+import { OPEN_STATUSES } from './sale-workflow';
 
 /**
  * Reads the overdue receivables for the `Créance` alert rule and registers it
@@ -35,6 +36,7 @@ export class ReceivableAlertsService
   async overdue(ctx: RequestContext, day: Date): Promise<OpenReceivable[]> {
     const rows = await receivablesOf(this.prisma, ctx.farmIds, {
       dueBefore: day,
+      statuses: OPEN_STATUSES,
     });
     const several = ctx.farmIds.length > 1;
     return rows.map((r) => ({

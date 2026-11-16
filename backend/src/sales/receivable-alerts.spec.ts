@@ -79,7 +79,7 @@ describe('receivableAlerts', () => {
 });
 
 describe('receivableAlertRules', () => {
-  const ctx = {} as RequestContext;
+  const ctx = { user: { role: 'COMPTABLE' } } as RequestContext;
 
   it('is one rule that asks the data for the invoices overdue on the day of `now` and applies the same rule', async () => {
     const overdue = jest.fn(() =>
@@ -95,5 +95,13 @@ describe('receivableAlertRules', () => {
     expect(items.map((i) => i.key)).toEqual(['receivable:inv1']);
     expect(overdue).toHaveBeenCalledTimes(1);
     expect(overdue).toHaveBeenCalledWith(ctx, new Date(Date.UTC(2026, 10, 15)));
+  });
+
+  it('does not read anything for a role without ventes read', async () => {
+    const overdue = jest.fn(() => Promise.resolve([row()]));
+    const [rule] = receivableAlertRules({ overdue });
+    const keeper = { user: { role: 'MAGASINIER' } } as RequestContext;
+    expect(await rule(keeper, {})).toEqual([]);
+    expect(overdue).not.toHaveBeenCalled();
   });
 });

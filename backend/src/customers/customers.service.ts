@@ -29,8 +29,10 @@ export interface CustomerItem {
   city: string | null;
   address: string | null;
   active: boolean;
-  /** What the customer still owes (the selected farm's invoices, or every visible farm's under `all`) minus what is owed back. */
+  /** What the customer still owes: Σ due of the issued invoices (the selected farm's, or every visible farm's under `all`). */
   balance: number;
+  /** What is owed back to the customer (« À rembourser »): Σ refund due of the same invoices. */
+  refundDue: number;
 }
 
 export interface CustomerDetail extends CustomerItem {
@@ -74,9 +76,10 @@ const sheet = (c: Customer) => ({
   active: c.active,
 });
 
-/** What a customer owes across the farms: Σ due − Σ refund due of the invoices in `REVENUE_STATUSES`, and the totals behind it. */
+/** What a customer owes across the farms: Σ due of the invoices in `REVENUE_STATUSES`, what is owed back to it, and the totals behind them. */
 interface Standing {
   balance: Decimal;
+  refundDue: Decimal;
   invoiced: Decimal;
   paid: Decimal;
   credited: Decimal;
@@ -85,6 +88,7 @@ interface Standing {
 
 const NOTHING: Standing = {
   balance: dec(0),
+  refundDue: dec(0),
   invoiced: dec(0),
   paid: dec(0),
   credited: dec(0),
@@ -107,8 +111,9 @@ export class CustomersService {
   /**
    * The standing of each customer over `farmIds`, from `receivablesOf` (the
    * one read of what customers owe): THREE queries whatever the number of
-   * customers. `balance` = Σ due − Σ refund due of the invoices in
-   * `REVENUE_STATUSES`; the totals behind it count the same invoices.
+   * customers. `balance` = Σ due of the invoices in `REVENUE_STATUSES` (the
+   * figure of the dashboard and of the alerts), `refundDue` = Σ what is owed
+   * back to the customer; the totals behind them count the same invoices.
    */
   private async standings(
     customerIds: string[],
@@ -119,7 +124,8 @@ export class CustomersService {
     for (const r of rows) {
       const so = result.get(r.customerId) ?? NOTHING;
       result.set(r.customerId, {
-        balance: so.balance.add(r.due).sub(r.refundDue),
+        balance: so.balance.add(r.due),
+        refundDue: so.refundDue.add(r.refundDue),
         invoiced: so.invoiced.add(r.total),
         paid: so.paid.add(r.paid),
         credited: so.credited.add(r.credited),
@@ -133,6 +139,7 @@ export class CustomersService {
     return {
       ...sheet(c),
       balance: (standing ?? NOTHING).balance.toNumber(),
+      refundDue: (standing ?? NOTHING).refundDue.toNumber(),
     };
   }
 
