@@ -84,14 +84,14 @@ export default function Alerts() {
                     <p className="text-xs leading-6 text-primary">{MODULE_LABEL.get(a.module) ?? a.module}</p>
                   </div>
                   {masked ? (
-                    <Button variant="ghost" size="sm" disabled={pending === a.key} onClick={() => void change(a.key, unacknowledgeAlert)}>
+                    <Button variant="ghost" size="sm" aria-label={`Réafficher l'alerte : ${a.title}`} disabled={pending === a.key} onClick={() => void change(a.key, unacknowledgeAlert)}>
                       Réafficher
                     </Button>
                   ) : (
                     <Button
                       variant="ghost"
                       size="sm"
-                      aria-label="Masquer l'alerte"
+                      aria-label={`Masquer l'alerte : ${a.title}`}
                       title="Masquer l'alerte"
                       className="-mr-2 -mt-1 size-8 shrink-0 px-0 text-muted-foreground"
                       disabled={pending === a.key}

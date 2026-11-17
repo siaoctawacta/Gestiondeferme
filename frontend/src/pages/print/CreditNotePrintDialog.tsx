@@ -1,5 +1,6 @@
 import { ErrorRetry } from '../../components/module/ErrorRetry';
 import { errorMessage } from '../../components/module/errorMessage';
+import { LoadingBlock } from '../../components/module/LoadingBlock';
 import { Button } from '../../components/ui/Button';
 import { Dialog, DialogActions } from '../../components/ui/Dialog';
 import { api } from '../../lib/api';
@@ -24,7 +25,7 @@ export function CreditNotePrintDialog({ row, onClose }: { row: { id: string; num
         {note.isError ? (
           <ErrorRetry message={errorMessage(note.error)} onRetry={() => note.refetch()} />
         ) : note.isPending ? (
-          <div aria-busy role="status" className="h-16 animate-pulse rounded-3xl bg-muted"><span className="sr-only">Chargement…</span></div>
+          <LoadingBlock className="h-16" />
         ) : (
           <p className="text-sm">L'avoir {row.number} est prêt à imprimer.</p>
         )}

@@ -5,6 +5,7 @@ import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Dialog, DialogActions } from '../ui/Dialog';
 import { errorMessage } from './errorMessage';
+import { LoadingBlock } from './LoadingBlock';
 
 export interface LoadedRecordProps<D> {
   /** Title of the dialog shown while the record loads (or fails to). */
@@ -32,7 +33,7 @@ export function LoadedRecord<D>({ title, queryKey, path, load, onClose, children
         {query.isError ? (
           <Alert>{errorMessage(query.error)}</Alert>
         ) : (
-          <div aria-busy role="status" className="h-24 animate-pulse rounded-3xl bg-muted"><span className="sr-only">Chargement…</span></div>
+          <LoadingBlock className="h-24" />
         )}
         <DialogActions><Button variant="outline" onClick={onClose}>Fermer</Button></DialogActions>
       </Dialog>

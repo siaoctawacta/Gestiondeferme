@@ -108,4 +108,18 @@ describe('/scan with BarcodeDetector and a camera', () => {
     unmount();
     await waitFor(() => expect(stop).toHaveBeenCalled());
   });
+
+  it('explains when the camera cannot be opened and still offers the field', async () => {
+    (navigator.mediaDevices.getUserMedia as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('denied'));
+    mount();
+    expect(await screen.findByText("La caméra n'est pas disponible : collez le lien de l'étiquette ci-dessous.")).toBeInTheDocument();
+    expect(screen.queryByTestId('scan-video')).toBeNull();
+    expect(screen.getByLabelText("Lien ou code de l'étiquette")).toBeInTheDocument();
+  });
+
+  it('labels the camera preview', async () => {
+    value = '';
+    mount();
+    expect(screen.getByLabelText('Aperçu de la caméra')).toBe(screen.getByTestId('scan-video'));
+  });
 });

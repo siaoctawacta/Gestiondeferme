@@ -7,6 +7,7 @@ import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Dialog, DialogActions } from '../ui/Dialog';
 import { errorMessage } from './errorMessage';
+import { LoadingBlock } from './LoadingBlock';
 
 /** A4 sheet of 3 × 8 labels of 63,5 × 33,9 mm (the usual adhesive sheet), QR of 25 mm. */
 const COLUMNS = 3;
@@ -58,7 +59,7 @@ export function QrLabelPrint({ labels }: { labels: QrTarget[] }) {
           <section
             key={i}
             aria-label={`Planche ${i + 1}`}
-            style={{ width: '210mm', height: '297mm', padding: `${MARGIN_Y}mm ${MARGIN_X}mm`, breakAfter: i < sheets.length - 1 ? 'page' : undefined }}
+            style={{ width: '210mm', height: '296.5mm', overflow: 'hidden', padding: `${MARGIN_Y}mm ${MARGIN_X}mm`, breakAfter: i < sheets.length - 1 ? 'page' : undefined }}
             className="box-border"
           >
             <ul style={GRID}>
@@ -104,7 +105,7 @@ export function QrLabelSheet({ title, rows, onClose }: { title: string; rows: La
         {query.isError ? (
           <Alert>{errorMessage(query.error)}</Alert>
         ) : !labels ? (
-          <div aria-busy role="status" className="h-24 animate-pulse rounded-3xl bg-muted"><span className="sr-only">Chargement…</span></div>
+          <LoadingBlock className="h-24" />
         ) : (
           <div className="overflow-x-auto">
             <p className="mb-3 text-sm text-muted-foreground">

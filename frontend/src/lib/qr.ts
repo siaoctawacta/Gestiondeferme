@@ -2,7 +2,13 @@
  * The QR contract of the API (`GET /qr/:kind/:id`, `POST /qr/labels`), in ONE place. A QR encodes only
  * `{APP_URL}/q/{kind}/{id}`: the label, the farm and the picture below all come from the API's answer.
  */
-export type QrKind = 'lot' | 'animal' | 'batiment' | 'article' | 'equipement';
+export const QR_KINDS = ['lot', 'animal', 'batiment', 'article', 'equipement'] as const;
+export type QrKind = (typeof QR_KINDS)[number];
+
+export const isQrKind = (v: string | undefined): v is QrKind => QR_KINDS.some((k) => k === v);
+
+/** `GET /qr/:kind/:id` with the id made safe for a path. */
+export const qrEndpoint = (kind: QrKind, id: string): string => `/qr/${kind}/${encodeURIComponent(id)}`;
 
 /** What the API resolves a `kind/id` to, and what a label is drawn from. */
 export interface QrTarget {

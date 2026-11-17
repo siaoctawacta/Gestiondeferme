@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen } from '@testing-library/react';
 import { MemoryRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '../lib/auth';
@@ -99,9 +99,25 @@ describe('/q/:kind/:id', () => {
     expect(screen.queryByText('Page du lot')).toBeNull();
   });
 
-  it('asks the API again with the same card for any failure of the lookup', async () => {
+  it('offers a retry, not the unknown-QR card, when the lookup itself fails', async () => {
     qr = () => json(500, { message: 'Erreur interne' });
     mount('/q/lot/abc');
-    await waitFor(() => expect(screen.getByText('QR code inconnu ou inaccessible')).toBeInTheDocument());
+    expect(await screen.findByText('Erreur interne')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Réessayer' })).toBeInTheDocument();
+    expect(screen.queryByText('QR code inconnu ou inaccessible')).toBeNull();
+  });
+
+  it('shows the unknown-QR card for a kind that does not exist, without calling the API', async () => {
+    qr = () => json(200, answer('f1'));
+    mount('/q/..%2Fusers/abc');
+    expect(await screen.findByText('QR code inconnu ou inaccessible')).toBeInTheDocument();
+    expect(calls.some((c) => c.url.startsWith('/api/qr/'))).toBe(false);
+  });
+
+  it('encodes the id in the request path', async () => {
+    qr = () => json(404, { message: 'x' });
+    mount('/q/lot/a%2Fb%3Fc');
+    await screen.findByText('QR code inconnu ou inaccessible');
+    expect(calls.find((c) => c.url.startsWith('/api/qr/'))!.url).toBe('/api/qr/lot/a%2Fb%3Fc');
   });
 });

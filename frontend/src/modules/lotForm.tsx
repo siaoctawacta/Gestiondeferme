@@ -23,6 +23,7 @@ export interface LotFormProps {
  */
 export function LotForm({ species, id, onSaved, onClose }: LotFormProps) {
   const { can } = useAuth();
+  const withPrice = can('finance', 'read');
   const buildings = useBuildingOptions(species);
   const fields: Field[] = [
     { name: 'code', label: 'Code (généré si vide)', type: 'text', only: 'create' },
@@ -32,7 +33,8 @@ export function LotForm({ species, id, onSaved, onClose }: LotFormProps) {
     { name: 'entryDate', label: "Date d'entrée", type: 'date', required: true, defaultValue: todayIso },
     { name: 'initialCount', label: 'Effectif initial', type: 'number', required: true, min: 1, step: 1 },
     { name: 'supplierName', label: 'Fournisseur', type: 'text' },
-    { name: 'purchasePrice', label: "Prix d'achat", type: 'number', min: 0, step: 0.01 },
+    // Money needs `finance` read (Q32): the API sends `null` otherwise, and the form must never write back what it cannot show.
+    ...(withPrice ? [{ name: 'purchasePrice', label: "Prix d'achat", type: 'number', min: 0, step: 0.01 } as Field] : []),
     ...(can('utilisateurs', 'read') ? [{ name: 'responsibleId', label: 'Responsable', type: 'select', options: { endpoint: '/users' } } as Field] : []),
   ];
 
@@ -48,7 +50,7 @@ export function LotForm({ species, id, onSaved, onClose }: LotFormProps) {
         entryDate: v.entryDate,
         initialCount: num(v.initialCount),
         supplierName: text(v.supplierName),
-        purchasePrice: num(v.purchasePrice),
+        ...(withPrice ? { purchasePrice: num(v.purchasePrice) } : {}),
         responsibleId: v.responsibleId,
       })}
       createPath="/batches"

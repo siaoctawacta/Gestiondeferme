@@ -1,10 +1,11 @@
 import { api } from '../../lib/api';
-import { svgDataUrl, type QrKind, type QrTarget } from '../../lib/qr';
+import { qrEndpoint, svgDataUrl, type QrKind, type QrTarget } from '../../lib/qr';
 import { useFarmQuery } from '../../lib/query';
 import { Alert } from '../ui/Alert';
 import { Button } from '../ui/Button';
 import { Dialog, DialogActions } from '../ui/Dialog';
 import { errorMessage } from './errorMessage';
+import { LoadingBlock } from './LoadingBlock';
 import { QrLabelPrint } from './QrLabelSheet';
 
 /**
@@ -12,7 +13,7 @@ import { QrLabelPrint } from './QrLabelSheet';
  * page), with its label, sub-label, farm and the address it encodes; `Imprimer l'étiquette` prints one label on an A4 sheet.
  */
 export function QrDialog({ kind, id, onClose }: { kind: QrKind; id: string; onClose: () => void }) {
-  const query = useFarmQuery<QrTarget>(['/qr', kind, id], () => api.get<QrTarget>(`/qr/${kind}/${id}`));
+  const query = useFarmQuery<QrTarget>(['/qr', kind, id], () => api.get<QrTarget>(qrEndpoint(kind, id)));
   const target = query.data;
   return (
     <>
@@ -20,7 +21,7 @@ export function QrDialog({ kind, id, onClose }: { kind: QrKind; id: string; onCl
         {query.isError ? (
           <Alert>{errorMessage(query.error)}</Alert>
         ) : !target ? (
-          <div aria-busy role="status" className="h-48 animate-pulse rounded-3xl bg-muted"><span className="sr-only">Chargement…</span></div>
+          <LoadingBlock className="h-48" />
         ) : (
           <div className="flex flex-col items-center gap-1 text-center">
             <img src={svgDataUrl(target.svg)} alt={`QR code ${target.label}`} className="size-48" />

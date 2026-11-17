@@ -82,7 +82,7 @@ describe('the alerts page', () => {
     expect(screen.getByText('2 alertes ouvertes, calculées automatiquement à partir de vos données.')).toBeInTheDocument();
     expect(screen.queryByText(/Afficher les alertes masquées/)).toBeNull();
 
-    await userEvent.setup().click(card('Stock faible : Aliment ponte').getByRole('button', { name: "Masquer l'alerte" }));
+    await userEvent.setup().click(card('Stock faible : Aliment ponte').getByRole('button', { name: "Masquer l'alerte : Stock faible : Aliment ponte" }));
     await waitFor(() => expect(screen.queryByText('Stock faible : Aliment ponte')).toBeNull());
     expect(calls.find((c) => c.url === '/api/alerts/ack')!.body).toEqual({ key: 'stock:1' });
     // The subtitle counts what the API counts as open.
@@ -94,19 +94,19 @@ describe('the alerts page', () => {
     mount();
     const user = userEvent.setup();
     await screen.findByText('Stock faible : Aliment ponte');
-    await user.click(card('Stock faible : Aliment ponte').getByRole('button', { name: "Masquer l'alerte" }));
+    await user.click(card('Stock faible : Aliment ponte').getByRole('button', { name: "Masquer l'alerte : Stock faible : Aliment ponte" }));
     await user.click(await screen.findByRole('link', { name: 'Afficher les alertes masquées (1)' }));
 
     const masked1 = await screen.findByText('Stock faible : Aliment ponte');
     expect(calls.some((c) => c.method === 'GET' && c.url.includes('acknowledged=include'))).toBe(true);
     expect(masked1.closest('li')!.className).toContain('opacity-60');
-    expect(card('Stock faible : Aliment ponte').queryByRole('button', { name: "Masquer l'alerte" })).toBeNull();
+    expect(card('Stock faible : Aliment ponte').queryByRole('button', { name: "Masquer l'alerte : Stock faible : Aliment ponte" })).toBeNull();
     // The subtitle still counts the open ones only.
     expect(screen.getByText('1 alerte ouverte, calculées automatiquement à partir de vos données.')).toBeInTheDocument();
 
-    await user.click(card('Stock faible : Aliment ponte').getByRole('button', { name: 'Réafficher' }));
+    await user.click(card('Stock faible : Aliment ponte').getByRole('button', { name: "Réafficher l'alerte : Stock faible : Aliment ponte" }));
     await waitFor(() => expect(calls.find((c) => c.url === '/api/alerts/unack')!.body).toEqual({ key: 'stock:1' }));
-    await waitFor(() => expect(card('Stock faible : Aliment ponte').getByRole('button', { name: "Masquer l'alerte" })).toBeInTheDocument());
+    await waitFor(() => expect(card('Stock faible : Aliment ponte').getByRole('button', { name: "Masquer l'alerte : Stock faible : Aliment ponte" })).toBeInTheDocument());
     expect(screen.queryByText(/Afficher les alertes masquées/)).toBeNull();
   });
 
@@ -114,7 +114,7 @@ describe('the alerts page', () => {
     mount();
     const user = userEvent.setup();
     await screen.findByText('Stock faible : Aliment ponte');
-    await user.click(card('Stock faible : Aliment ponte').getByRole('button', { name: "Masquer l'alerte" }));
+    await user.click(card('Stock faible : Aliment ponte').getByRole('button', { name: "Masquer l'alerte : Stock faible : Aliment ponte" }));
     await user.click(await screen.findByRole('link', { name: 'Afficher les alertes masquées (1)' }));
     await user.click(await screen.findByRole('link', { name: 'Ne plus afficher les alertes masquées' }));
     await waitFor(() => expect(screen.queryByText('Stock faible : Aliment ponte')).toBeNull());

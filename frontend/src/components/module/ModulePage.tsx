@@ -17,6 +17,7 @@ import { DataTable, type TableAction } from './DataTable';
 import { ErrorRetry } from './ErrorRetry';
 import { errorMessage } from './errorMessage';
 import { ExportMenu } from './ExportMenu';
+import { LoadingBlock } from './LoadingBlock';
 import { PageHeader } from './PageHeader';
 import { QrDialog } from './QrDialog';
 import { QrLabelSheet, type LabelRow } from './QrLabelSheet';
@@ -315,7 +316,7 @@ function ModuleView<T extends { id: string }>({
       {labels && <QrLabelSheet title={config.title} rows={labels} onClose={() => setLabels(null)} />}
       {acting?.action.dialog && (
         // A dialog may be a lazy component (a print sheet): the page stays while it loads.
-        <Suspense fallback={null}>
+        <Suspense fallback={<LoadingBlock className="fixed bottom-6 left-1/2 z-50 h-10 w-44 -translate-x-1/2 shadow-card" />}>
           <acting.action.dialog
             row={acting.row}
             onClose={() => setActing(null)}

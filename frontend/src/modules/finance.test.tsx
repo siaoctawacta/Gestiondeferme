@@ -492,6 +492,14 @@ describe('Synthèse', () => {
     expect(await screen.findByText('La date de début est après la date de fin')).toBeInTheDocument();
   });
 
+  it('asks for a period instead of loading forever when both dates are cleared', async () => {
+    await openSummary();
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '' } });
+    expect(await screen.findByText('Choisissez une période pour afficher la synthèse.')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Chargement')).toBeNull();
+  });
+
   it('sends the chosen period to the summary endpoint', async () => {
     await openSummary();
     fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-10-01' } });

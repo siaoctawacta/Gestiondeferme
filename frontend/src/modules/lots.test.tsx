@@ -42,7 +42,7 @@ let handler: (c: Call) => Response | Promise<Response> | undefined;
 
 const page = (items: unknown[], extra: object = {}) => json(200, { items, total: items.length, page: 1, pageSize: 25, ...extra });
 
-function mount(ui: React.ReactNode, { perms = ALL, farm, path = '/', porcs = [], users = [] }: { perms?: string[]; farm?: string; path?: string; porcs?: string[]; users?: string[] } = {}) {
+function mount(ui: React.ReactNode, { perms = ALL, farm, path = '/', porcs = [], users = [], finance = [] }: { perms?: string[]; farm?: string; path?: string; porcs?: string[]; users?: string[]; finance?: string[] } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
   handler = () => undefined;
   fetchMock.mockImplementation(async (input, init) => {
@@ -50,7 +50,7 @@ function mount(ui: React.ReactNode, { perms = ALL, farm, path = '/', porcs = [],
     calls.push(call);
     if (call.url === '/api/auth/refresh') return json(200, { accessToken: 'acc', user: USER });
     if (call.url === '/api/auth/me') {
-      return json(200, { user: USER, farms: [{ id: 'f1', name: 'Ferme' }], canSeeAllFarms: true, permissions: { lots: perms, porcs, utilisateurs: users } });
+      return json(200, { user: USER, farms: [{ id: 'f1', name: 'Ferme' }], canSeeAllFarms: true, permissions: { lots: perms, porcs, utilisateurs: users, finance } });
     }
     const custom = handler(call);
     if (custom) return custom;
@@ -190,7 +190,7 @@ describe('lots list', () => {
   });
 
   it('loads the lot first, shows the stored supplier, price and responsible, and sends only what changed (null when cleared)', async () => {
-    mountList({ users: ['read'] });
+    mountList({ users: ['read'], finance: ['read'] });
     await screen.findByText('LC-2026-14');
     handler = (c) => {
       if (c.method === 'GET' && /^\/api\/batches\/l1(\?|$)/.test(c.url)) {
@@ -433,6 +433,30 @@ describe('lot detail', () => {
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/batches/l1', body: { initialCount: 5200 } });
     expect(Object.keys(writes()[0].body as object)).toEqual(['initialCount']);
+  });
+
+  it('never shows nor sends the purchase price to a user without finance read (the API hides it)', async () => {
+    mountDetail('l1');
+    await screen.findByText('Chaleur');
+    handler = (c) => (c.method === 'PATCH' ? json(200, {}) : c.method === 'GET' && /^\/api\/batches\/l1(\?|$)/.test(c.url) ? json(200, { ...detailOf(OPEN), purchasePrice: null }) : undefined);
+    const user = userEvent.setup();
+    await user.click(headerButton('Modifier'));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Lots avicoles' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Effectif initial')).toHaveValue(5000));
+    expect(within(dialog).queryByLabelText("Prix d'achat")).toBeNull();
+    await user.clear(within(dialog).getByLabelText('Effectif initial'));
+    await user.type(within(dialog).getByLabelText('Effectif initial'), '5100');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0].body).not.toHaveProperty('purchasePrice');
+  });
+
+  it('offers the purchase price to a user with finance read', async () => {
+    mountDetail('l1', { finance: ['read'] });
+    await screen.findByText('Chaleur');
+    await userEvent.setup().click(headerButton('Modifier'));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Lots avicoles' });
+    expect(within(dialog).getByLabelText("Prix d'achat")).toBeInTheDocument();
   });
 
   it('records a weighing in grams for poultry', async () => {

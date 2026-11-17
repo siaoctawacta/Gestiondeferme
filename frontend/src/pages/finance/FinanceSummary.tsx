@@ -48,7 +48,9 @@ export function FinanceSummary() {
       </div>
       {query.isError ? (
         <ErrorRetry message={errorMessage(query.error)} onRetry={() => query.refetch()} />
-      ) : error ? null : !d ? (
+      ) : error ? null : !from && !to ? (
+        <p className="text-sm text-muted-foreground">Choisissez une période pour afficher la synthèse.</p>
+      ) : !d ? (
         <Skeleton aria-busy="true" aria-label="Chargement" className="h-64" />
       ) : (
         <>

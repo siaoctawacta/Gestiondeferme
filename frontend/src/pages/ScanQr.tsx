@@ -94,7 +94,7 @@ export default function ScanQr() {
       <PageHeader title="Scanner un QR code" />
       <Card className="space-y-4 p-6">
         {supported && !cameraFailure ? (
-          <video ref={video} data-testid="scan-video" muted playsInline className="aspect-square w-full rounded-3xl bg-muted object-cover" />
+          <video ref={video} data-testid="scan-video" aria-label="Aperçu de la caméra" muted playsInline className="aspect-square w-full rounded-3xl bg-muted object-cover" />
         ) : (
           <p className="text-sm text-muted-foreground">{supported ? cameraFailure : NO_DETECTOR}</p>
         )}
