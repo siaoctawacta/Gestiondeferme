@@ -30,6 +30,7 @@ services:
       WEB_ORIGIN: "${WEB_ORIGIN:?WEB_ORIGIN is required, e.g. http://localhost:8080 (see .env.example)}"
       PORT: "3000"
       TRUST_PROXY: "${TRUST_PROXY:-1}"
+      UPLOAD_DIR: /app/uploads
       # Only read by the explicit seed command (see README); harmless otherwise.
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
