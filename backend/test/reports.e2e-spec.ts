@@ -5,6 +5,7 @@ import type { DashboardDto } from '../src/dashboard/dashboard.types';
 import type { ReportDto, ReportSection } from '../src/reports/report.types';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { HerdLedgerService } from '../src/herd/herd-ledger.service';
+import { HealthReport } from '../src/health/health-report';
 import { Headers, Id, Msg, World } from './fixtures';
 import { countQueries } from './query-counter';
 import { createFarm, createTestApp, createUser, tokenFor } from './setup';
@@ -1773,6 +1774,43 @@ describe('Reports (e2e)', () => {
       expect(await late(today)).toBe(3);
       await prisma.healthAct.delete({ where: { id: act.id } });
       await prisma.animalBatch.delete({ where: { id: closed } });
+    });
+
+    it('does not count an act planned on a lot closed before the end day, in any period', async () => {
+      const closed = await mkLot('LC-CLOSED2', 10, '2026-09-01', {
+        status: 'CLOTURE',
+        closedAt: new Date('2026-10-15T10:00:00Z'),
+      });
+      const act = await prisma.healthAct.create({
+        data: {
+          farmId: world.farmId,
+          type: 'VACCINATION',
+          date: D('2026-10-20'),
+          batchId: closed,
+          createdById: userId,
+        },
+      });
+      const late = async (to: string) =>
+        figure(
+          await report('sanitaire', { from: '2026-10-01', to }),
+          'sante',
+          'overdue',
+        );
+      expect(await late('2026-10-31')).toBe(3);
+      expect(await late('2026-11-05')).toBe(3);
+      expect(await late(new Date().toISOString().slice(0, 10))).toBe(3);
+      await prisma.healthAct.delete({ where: { id: act.id } });
+      await prisma.animalBatch.delete({ where: { id: closed } });
+    });
+
+    it('answers an empty report, not a 500, when no farm is in view', async () => {
+      const health = app.get(HealthReport);
+      const day = D('2026-10-31');
+      expect(await health.withdrawalsAt([], day)).toEqual([]);
+      expect(await health.periodFigures([], day, day)).toMatchObject({
+        overdueAtEnd: 0,
+        openQuarantines: 0,
+      });
     });
 
     it('does not count an animal registered after the day in a past headcount', async () => {

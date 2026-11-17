@@ -552,19 +552,34 @@ export class HerdLedgerService implements OccupationSource {
     const ids = [...new Set(requests.map((r) => r.batchId))];
     const open = requests.some((r) => !r.at);
     const last = Math.max(...requests.map((r) => r.at?.getTime() ?? 0));
+    // One shared day (or none): the SQL already keeps the events up to it, so
+    // the cheaper (batch, type) grouping gives the same sums. Several days
+    // need the date of each group to cut it at each request's own day.
+    const sameDay = requests.every(
+      (r) => r.at?.getTime() === requests[0].at?.getTime(),
+    );
+    const where = {
+      batchId: { in: ids },
+      ...(open ? {} : { date: { lte: new Date(last) } }),
+    };
     const [batches, sums] = await Promise.all([
       client.animalBatch.findMany({
         where: { id: { in: ids } },
         select: { id: true, initialCount: true, entryDate: true },
       }),
-      client.batchEvent.groupBy({
-        by: ['batchId', 'date', 'type'],
-        where: {
-          batchId: { in: ids },
-          ...(open ? {} : { date: { lte: new Date(last) } }),
-        },
-        _sum: { quantity: true },
-      }),
+      sameDay
+        ? client.batchEvent
+            .groupBy({
+              by: ['batchId', 'type'],
+              where,
+              _sum: { quantity: true },
+            })
+            .then((rows) => rows.map((r) => ({ ...r, date: new Date(0) })))
+        : client.batchEvent.groupBy({
+            by: ['batchId', 'date', 'type'],
+            where,
+            _sum: { quantity: true },
+          }),
     ]);
     const batch = new Map(batches.map((b) => [b.id, b]));
     const events = new Map<string, { time: number; delta: number }[]>();

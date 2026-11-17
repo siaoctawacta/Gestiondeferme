@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import { addDays, today } from '../common/days';
+import { addDays, formatDay, today } from '../common/days';
 import { Prisma } from '../generated/prisma/client';
 import type { HealthActType } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
@@ -25,6 +25,30 @@ export type HealthPeriodFigures = {
  * The health figures other modules read (the reports): each is a fixed number
  * of queries over the farms given, whatever the number of acts.
  */
+/**
+ * The rule of `toActItem` judged at the end of `day`: an act on a lot closed,
+ * or an animal gone, by then can no longer be done, so it is not late (a lot
+ * closed after `day` still counts).
+ */
+const openAt = (day: Date) => ({
+  AND: [
+    {
+      OR: [
+        { batchId: null },
+        { batch: { closedAt: null } },
+        { batch: { closedAt: { gte: addDays(day, 1) } } },
+      ],
+    },
+    {
+      OR: [
+        { animalId: null },
+        { animal: { exitDate: null } },
+        { animal: { exitDate: { gt: day } } },
+      ],
+    },
+  ],
+});
+
 @Injectable()
 export class HealthReport {
   constructor(private readonly prisma: PrismaService) {}
@@ -46,6 +70,15 @@ export class HealthReport {
     from: Date,
     to: Date,
   ): Promise<HealthPeriodFigures> {
+    if (farmIds.length === 0) {
+      return {
+        done: { VACCINATION: 0, TRAITEMENT: 0, DESINFECTION: 0, DIAGNOSTIC: 0 },
+        overdueAtEnd: 0,
+        openQuarantines: 0,
+        incidents: 0,
+        biosecurityLogs: 0,
+      };
+    }
     const farmId = { in: farmIds };
     const between = { gte: from, lte: to };
     const [done, overdueAtEnd, openQuarantines, incidents, biosecurityLogs] =
@@ -62,11 +95,12 @@ export class HealthReport {
             OR: [
               to.getTime() >= today().getTime()
                 ? overdueActWhere(addDays(to, 1))
-                : { status: 'PLANIFIE' },
+                : { status: 'PLANIFIE', ...openAt(to) },
               {
                 status: 'REALISE',
                 enteredDone: false,
                 doneDate: { gt: to },
+                ...openAt(to),
               },
             ],
           },
@@ -106,6 +140,7 @@ export class HealthReport {
     farmIds: string[],
     day: Date,
   ): Promise<{ target: string; until: Date }[]> {
+    if (farmIds.length === 0) return [];
     // The window (done day to done day + treatment + withdrawal days, as
     // `withdrawalPeriod`) is tested in SQL, so only the acts under withdrawal that
     // day are loaded.
@@ -113,8 +148,8 @@ export class HealthReport {
       SELECT "id" FROM "HealthAct"
       WHERE "farmId" IN (${Prisma.join(farmIds)})
         AND "status" = 'REALISE' AND "withdrawalDays" IS NOT NULL
-        AND "doneDate" <= ${day}::date
-        AND "doneDate" + (COALESCE("durationDays", 0) + "withdrawalDays") * INTERVAL '1 day' >= ${day}::date`);
+        AND "doneDate" <= ${formatDay(day)}::date
+        AND "doneDate" + (COALESCE("durationDays", 0) + "withdrawalDays") * INTERVAL '1 day' >= ${formatDay(day)}::date`);
     if (hits.length === 0) return [];
     const acts = await this.prisma.healthAct.findMany({
       where: { id: { in: hits.map((h) => h.id) } },
