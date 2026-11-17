@@ -75,6 +75,12 @@ const LOT_DETAIL = {
   performance: { ageDays: 55, alive: 5000, deaths: 0, mortalityRate: 0, firstWeightG: 42, lastWeightG: 1450, dailyGainG: 55, feedKg: null, feedConversion: null, feedCost: null },
 };
 
+const MONTHS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+const PAYROLL = (month: string, existing: { id: string; amount: number } | null = null) => ({
+  month, label: `Salaires ${MONTHS[Number(month.slice(5)) - 1]} ${month.slice(0, 4)}`, total: 475000, existing,
+  lines: [{ employeeId: 'e1', name: 'Kodjo A.', jobTitle: "Agent d'élevage", monthlySalary: 85000 }],
+});
+
 interface Call { method: string; url: string; body?: unknown }
 const calls: Call[] = [];
 const writes = () => calls.filter((c) => c.method !== 'GET' && !c.url.startsWith('/api/auth/'));
@@ -87,7 +93,7 @@ const COMPTABLE = {
 };
 const PROPRIETAIRE = { finance: ['read'], ventes: ['read'], lots: ['read'], porcs: ['read'] };
 
-function mount(ui: React.ReactNode, { perms = COMPTABLE, farm, entries = [...ENTRIES, WITH_LOT, ...DERIVED], summary = SUMMARY, route = '/' }: { perms?: Record<string, string[]>; farm?: string; entries?: unknown[]; summary?: object; route?: string } = {}) {
+function mount(ui: React.ReactNode, { perms = COMPTABLE, farm, entries = [...ENTRIES, WITH_LOT, ...DERIVED], summary = SUMMARY, route = '/', payroll }: { perms?: Record<string, string[]>; farm?: string; entries?: unknown[]; summary?: object; route?: string; payroll?: (month: string) => Response } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
   fetchMock.mockImplementation(async (input, init) => {
     const call: Call = { method: init?.method ?? 'GET', url: String(input), body: init?.body ? JSON.parse(String(init.body)) : undefined };
@@ -98,6 +104,7 @@ function mount(ui: React.ReactNode, { perms = COMPTABLE, farm, entries = [...ENT
     }
     if (call.method !== 'GET') return json(201, { id: 'new1' });
     const url = call.url;
+    if (url.startsWith('/api/employees/payroll')) return (payroll ?? ((m) => json(200, PAYROLL(m))))(new URL(url, 'http://x').searchParams.get('month')!);
     if (url.startsWith('/api/finance/entries')) return page(entries);
     if (url.startsWith('/api/finance/summary')) return json(200, summary);
     if (url === '/api/finance/lots/l1') return json(200, LOTS[0]);
@@ -343,6 +350,77 @@ describe('finance form', () => {
     expect(screen.queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
     cleanup();
     mountPage({ farm: 'all' });
+    await screen.findByText('Salaires septembre');
+    expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+  });
+});
+
+describe('payroll prefill', () => {
+  async function openForm(opts?: Parameters<typeof mount>[1]) {
+    mountPage(opts);
+    await screen.findByText('Salaires septembre');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    return { user, dialog: await screen.findByRole('dialog', { name: 'Ajouter — Dépenses & recettes' }) };
+  }
+  const pick = async (user: ReturnType<typeof userEvent.setup>, dialog: HTMLElement, month: string) => {
+    await user.click(within(dialog).getByRole('button', { name: 'Salaires du mois' }));
+    fireEvent.change(within(dialog).getByLabelText('Mois des salaires'), { target: { value: month } });
+    await user.click(within(dialog).getByRole('button', { name: 'Pré-remplir' }));
+  };
+
+  it('prefills the entry from the payroll of a past month: label, expense, general, salaries, total, last day', async () => {
+    const { user, dialog: first } = await openForm();
+    await pick(user, first, '2026-10');
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Dépenses & recettes' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Libellé')).toHaveValue('Salaires octobre 2026'));
+    expect(calls.some((c) => c.url === '/api/employees/payroll?month=2026-10')).toBe(true);
+    expect(within(dialog).getByRole('radio', { name: 'Dépense' })).toBeChecked();
+    expect(within(dialog).getByLabelText('Activité')).toHaveValue('GENERAL');
+    expect(within(dialog).getByLabelText('Catégorie')).toHaveValue('SALAIRES');
+    expect(within(dialog).getByLabelText('Montant')).toHaveValue(475000);
+    expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-10-31');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({
+      method: 'POST', url: '/api/finance/entries',
+      body: { date: '2026-10-31', kind: 'DEPENSE', label: 'Salaires octobre 2026', activity: 'GENERAL', category: 'SALAIRES', amount: 475000 },
+    });
+  });
+
+  it('dates the entry today for the current month', async () => {
+    const { user, dialog: first } = await openForm();
+    await pick(user, first, todayIso().slice(0, 7));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Dépenses & recettes' });
+    await waitFor(() => expect((within(dialog).getByLabelText('Libellé') as HTMLInputElement).value).toMatch(/^Salaires /));
+    expect(within(dialog).getByLabelText('Date')).toHaveValue(todayIso());
+  });
+
+  it('warns when the month already has its salary entry, and still lets it be posted', async () => {
+    const { user, dialog: first } = await openForm({ payroll: (m) => json(200, PAYROLL(m, { id: 'm1', amount: 950000 })) });
+    await pick(user, first, '2026-10');
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Dépenses & recettes' });
+    expect(await within(dialog).findByText((_, el) => flat(el?.textContent ?? '') === 'Une écriture « Salaires octobre 2026 » de 950 000 FCFA existe déjà pour ce mois.' && el?.tagName === 'DIV')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Enregistrer' })).toBeEnabled();
+  });
+
+  it('shows the refusal of the preview (a future month) and leaves the form as it was', async () => {
+    const { user, dialog } = await openForm({ payroll: () => json(400, { message: 'Le mois ne peut pas être dans le futur' }) });
+    await pick(user, dialog, '2027-01');
+    expect(await within(dialog).findByText('Le mois ne peut pas être dans le futur')).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Libellé')).toHaveValue('');
+  });
+
+  it('is offered when adding only, not when editing an entry', async () => {
+    mountPage();
+    await screen.findByText('Salaires septembre');
+    await userEvent.setup().click(rowOf('Salaires septembre').getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).queryByRole('button', { name: 'Salaires du mois' })).not.toBeInTheDocument();
+  });
+
+  it('is not offered to a role that cannot create finance entries', async () => {
+    mountPage({ perms: { finance: ['read', 'update'] } });
     await screen.findByText('Salaires septembre');
     expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
   });

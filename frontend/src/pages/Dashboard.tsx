@@ -1,10 +1,12 @@
-import { Suspense } from 'react';
-import { Link } from 'react-router';
+import { Suspense, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
 import { Bird, Egg, PiggyBank, Plus, Skull } from 'lucide-react';
 import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { formatNumber } from '../lib/format';
 import { rateOrDash, type DashboardDto } from '../lib/dashboard';
-import { useFarmQuery } from '../lib/query';
+import { farmKey, useFarmQuery } from '../lib/query';
+import { MODULES } from '../modules/registry';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { lazyRetry } from '../components/lazyRetry';
 import { ErrorRetry } from '../components/module/ErrorRetry';
@@ -44,6 +46,12 @@ function DashboardSkeleton() {
 export default function Dashboard() {
   const query = useFarmQuery<DashboardDto>(['dashboard'], () => api.get<DashboardDto>('/dashboard'));
   const d = query.data;
+  const { can, farmId } = useAuth();
+  const queryClient = useQueryClient();
+  const [newTask, setNewTask] = useState(false);
+  // The generated dialog of the tasks module; a task is a farm record, so not under "all farms".
+  const TaskForm = MODULES.taches?.form;
+  const canCreateTask = TaskForm !== undefined && can('taches', 'create') && farmId !== 'all';
   // The header (which also sets the title) only renders once the data is in.
   useDocumentTitle('Tableau de bord');
 
@@ -69,13 +77,16 @@ export default function Dashboard() {
                     En attente <b>{d.tasks.pending}</b>
                   </span>
                 </div>
-                <Link
-                  to="/m/taches"
-                  className="inline-flex h-[38px] items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-ink-foreground transition-colors hover:bg-ink-soft"
-                >
-                  <Plus aria-hidden className="size-4" />
-                  Nouvelle tâche
-                </Link>
+                {canCreateTask && (
+                  <button
+                    type="button"
+                    onClick={() => setNewTask(true)}
+                    className="inline-flex h-[38px] items-center gap-2 rounded-full bg-ink px-4 text-sm font-medium text-ink-foreground transition-colors hover:bg-ink-soft"
+                  >
+                    <Plus aria-hidden className="size-4" />
+                    Nouvelle tâche
+                  </button>
+                )}
               </>
             }
           />
@@ -118,6 +129,15 @@ export default function Dashboard() {
 
             <TasksCard tasks={d.upcomingTasks} />
           </div>
+          {newTask && TaskForm && (
+            <TaskForm
+              onClose={() => setNewTask(false)}
+              onSaved={() => {
+                setNewTask(false);
+                void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
+              }}
+            />
+          )}
         </>
       )}
     </div>

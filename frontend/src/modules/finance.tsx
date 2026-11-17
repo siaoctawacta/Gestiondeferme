@@ -1,12 +1,14 @@
+import { useState } from 'react';
 import { ActionDialog } from '../components/module/ActionDialog';
 import type { Field, ModuleConfig } from '../components/module/types';
 import { api } from '../lib/api';
+import { useAuth } from '../lib/auth';
 import { formatDate, todayIso } from '../lib/format';
 import { periodError } from '../pages/finance/period';
 import { FinanceSummary } from '../pages/finance/FinanceSummary';
 import { LotProfitabilityTab } from '../pages/finance/LotProfitability';
 import {
-  ACTIVITIES, AmountPill, EntryLabel, EXPENSE_CATEGORIES, KINDS, REVENUE_CATEGORIES, activityLabel, categoriesOf, categoryLabel, entryKindLabel, lockedReason,
+  ACTIVITIES, AmountPill, EntryLabel, PayrollPicker, usePayrollPicker, EXPENSE_CATEGORIES, KINDS, REVENUE_CATEGORIES, activityLabel, categoriesOf, categoryLabel, entryKindLabel, lockedReason,
   type FinanceEntryRow,
 } from './financeShared';
 
@@ -37,6 +39,10 @@ const toForm = (r: FinanceEntryRow) => ({
  * sent for an expense of those activities, and an edit that no longer qualifies sends `batchId: null`.
  */
 function FinanceForm({ row, onSaved, onClose }: { row?: FinanceEntryRow; onSaved: () => void; onClose: () => void }) {
+  const { can } = useAuth();
+  // `Salaires du mois` hands over the entry's initial values; the dialog restarts from them (`key`).
+  const [prefill, setPrefill] = useState<{ values: Record<string, unknown>; n: number } | null>(null);
+  const picker = usePayrollPicker((values) => setPrefill((p) => ({ values, n: (p?.n ?? 0) + 1 })));
   const hasLot = (values: Record<string, unknown>) => values.kind === 'DEPENSE' && LOT_ACTIVITIES.includes(String(values.activity));
   const fields = (values: Record<string, unknown>): Field[] => [
     { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
@@ -50,10 +56,12 @@ function FinanceForm({ row, onSaved, onClose }: { row?: FinanceEntryRow; onSaved
   ];
   return (
     <ActionDialog
+      key={prefill?.n ?? 0}
       title={`${row ? 'Modifier' : 'Ajouter'} — Dépenses & recettes`}
       mode={row ? 'update' : 'create'}
       fields={fields}
-      initial={row ? toForm(row) : undefined}
+      intro={!row && can('finance', 'create') ? <PayrollPicker picker={picker} /> : undefined}
+      initial={row ? toForm(row) : prefill?.values}
       toPayload={(v) => {
         // A hidden `Lot` is absent from the values: the stored one is kept while kind and activity are the stored ones
         // (the comparison base of an edit), and cleared (`''`, sent as null) once they change.

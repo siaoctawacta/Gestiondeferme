@@ -1,9 +1,16 @@
+import { useId, useState } from 'react';
 import { Link } from 'react-router';
+import { errorMessage } from '../components/module/errorMessage';
+import { Alert } from '../components/ui/Alert';
+import { Button } from '../components/ui/Button';
+import { Input } from '../components/ui/Input';
+import { api } from '../lib/api';
 import { Card } from '../components/ui/Card';
 import { Pill, type PillTone } from '../components/ui/Pill';
 import { useAuth } from '../lib/auth';
 import type { ModuleKey } from '../lib/modules';
-import { formatMoney, signedMoney } from '../lib/format';
+import { formatMoney, signedMoney, todayIso } from '../lib/format';
+import type { PayrollPreview } from './personnelShared';
 import { ACTIVITIES, activityLabel } from './purchasingShared';
 
 /* ---------------------------------------------------------------------------------------------
@@ -172,6 +179,69 @@ export function ActivityCards({ rows }: { rows: ActivitySummary[] }) {
           </p>
         </Card>
       ))}
+    </div>
+  );
+}
+
+/**
+ * The salary entry of a month, as the form's initial values: `Salaires octobre 2026`, an expense of the General
+ * activity, category Salaires, the payroll total, dated the month's last day (today for the current month).
+ */
+export function payrollEntry(p: PayrollPreview): Record<string, unknown> {
+  const [year, month] = p.month.split('-').map(Number);
+  const last = new Date(Date.UTC(year, month, 0)).toISOString().slice(0, 10);
+  return {
+    date: p.month === todayIso().slice(0, 7) ? todayIso() : last,
+    kind: 'DEPENSE', label: p.label, activity: 'GENERAL', category: 'SALAIRES', amount: p.total,
+  };
+}
+
+/**
+ * State of `Salaires du mois` (`finance:create`): the month, the preview read from `GET /employees/payroll?month=` and the
+ * prefilled entry handed to `onPrefill`. It lives in the form that owns the dialog, which restarts from the prefilled values.
+ * When the month already has its salary entry the preview says so, and the entry can still be posted.
+ */
+export function usePayrollPicker(onPrefill: (values: Record<string, unknown>) => void) {
+  const [open, setOpen] = useState(false);
+  const [month, setMonth] = useState(() => todayIso().slice(0, 7));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [existing, setExisting] = useState<string | null>(null);
+
+  const load = async () => {
+    setBusy(true);
+    setError(null);
+    setExisting(null);
+    try {
+      const preview = await api.get<PayrollPreview>('/employees/payroll', { month });
+      if (preview.existing) setExisting(`Une écriture « ${preview.label} » de ${formatMoney(preview.existing.amount)} existe déjà pour ce mois.`);
+      onPrefill(payrollEntry(preview));
+    } catch (e) {
+      setError(errorMessage(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return { open, setOpen, month, setMonth, busy, error, existing, load };
+}
+
+/** The `Salaires du mois` button of the entry form, its month input and what the preview said. */
+export function PayrollPicker({ picker: { open, setOpen, month, setMonth, busy, error, existing, load } }: { picker: ReturnType<typeof usePayrollPicker> }) {
+  const id = useId();
+  return (
+    <div className="space-y-2">
+      <Button variant="outline" onClick={() => setOpen(!open)} aria-expanded={open}>Salaires du mois</Button>
+      {open && (
+        <div className="flex flex-wrap items-end gap-2">
+          <div className="space-y-1.5">
+            <label htmlFor={id} className="block text-sm font-medium text-foreground">Mois des salaires</label>
+            <Input id={id} type="month" max={todayIso().slice(0, 7)} value={month} onChange={(e) => setMonth(e.target.value)} />
+          </div>
+          <Button onClick={load} disabled={busy || month === ''}>Pré-remplir</Button>
+        </div>
+      )}
+      {error && <Alert>{error}</Alert>}
+      {existing && <div role="status" className="rounded-2xl bg-warning/15 px-4 py-2 text-sm text-foreground">{existing}</div>}
     </div>
   );
 }

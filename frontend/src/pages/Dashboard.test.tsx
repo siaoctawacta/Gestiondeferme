@@ -9,6 +9,7 @@ import { setAccessToken, setFarmHeader } from '../lib/api';
 import Alerts from './Alerts';
 import Audit from './Audit';
 import Dashboard from './Dashboard';
+import '../modules';
 import Reports from './Reports';
 import { buildCsv } from './reportCsv';
 import { EggChart, niceDomain } from './dashboard/EggChart';
@@ -71,7 +72,7 @@ const EMPTY = {
   upcomingTasks: [],
 };
 
-function mount(page: ReactElement, routes: (url: string) => Response | undefined) {
+function mount(page: ReactElement, routes: (url: string) => Response | undefined, perms: Record<string, string[]> = { dashboard: ALL, alertes: ALL, rapports: ALL, audit: ['read'] }) {
   fetchMock.mockImplementation(async (input) => {
     const url = String(input);
     urls.push(url);
@@ -79,7 +80,7 @@ function mount(page: ReactElement, routes: (url: string) => Response | undefined
     if (url === '/api/auth/me') {
       return json(200, {
         user: USER, farms: [{ id: 'f1', name: 'Ferme' }], canSeeAllFarms: true,
-        permissions: { dashboard: ALL, alertes: ALL, rapports: ALL, audit: ['read'] },
+        permissions: perms,
       });
     }
     const res = routes(url);
@@ -127,7 +128,9 @@ describe('Dashboard', () => {
     expect(screen.getByText('(14)')).toBeInTheDocument();
     expect(screen.getByText('À voir')).toBeInTheDocument();
     expect(screen.getByText('Urgent')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Nouvelle tâche/ })).toHaveAttribute('href', '/m/taches');
+    expect(screen.getByRole('link', { name: 'Gérer' })).toHaveAttribute('href', '/m/taches');
+    expect(screen.getByText(/Tâches terminées/)).toHaveTextContent('Tâches terminées 1');
+    expect(screen.getByText(/En attente/)).toHaveTextContent('En attente 3');
     expect(screen.getByText('Haute')).toBeInTheDocument();
   });
 
@@ -149,6 +152,33 @@ describe('Dashboard', () => {
     });
     await userEvent.click(await screen.findByRole('button', { name: 'Réessayer' }));
     expect(await screen.findByText('Bonjour 👋 — Ferme Kpalimé')).toBeInTheDocument();
+  });
+});
+
+describe('Dashboard new task', () => {
+  const routes = (u: string) => {
+    if (u === '/api/dashboard') return json(200, FULL);
+    if (u === '/api/tasks') return json(201, { id: 't9' });
+    if (u.startsWith('/api/employees/options')) return json(200, { items: [{ id: 'e1', name: 'Kodjo A.', jobTitle: 'Agent', userId: null }] });
+    return undefined;
+  };
+
+  it('opens the task dialog for a user who may create tasks, and refreshes the dashboard after saving', async () => {
+    mount(<Dashboard />, routes, { dashboard: ['read'], taches: ['read', 'create'] });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Nouvelle tâche/ }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Tâches & personnel' });
+    await user.type(within(dialog).getByLabelText('Tâche'), 'Contrôle eau');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(urls.filter((u) => u === '/api/dashboard').length).toBeGreaterThanOrEqual(2));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it('has no Nouvelle tâche for a user who cannot create tasks', async () => {
+    mount(<Dashboard />, routes, { dashboard: ['read'], taches: ['read'] });
+    await screen.findByText('Bonjour 👋 — Ferme Kpalimé');
+    expect(screen.queryByRole('button', { name: /Nouvelle tâche/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Nouvelle tâche/ })).not.toBeInTheDocument();
   });
 });
 
