@@ -1,7 +1,5 @@
-import { RotateCcw } from 'lucide-react';
 import { toRowActions } from '../components/module/rowActions';
 import type { ModuleConfig } from '../components/module/types';
-import { api } from '../lib/api';
 import { formatDate } from '../lib/format';
 import { lazyRetry } from '../components/lazyRetry';
 import { EQUIPMENT_ACTIONS } from './equipmentActions';
@@ -31,10 +29,7 @@ const reformes: ModuleConfig<EquipmentRow> = {
   noCreate: true,
   canEdit: () => false,
   canDelete: () => false,
-  actions: [{
-    key: 'reinstate', label: 'Remettre en service', icon: RotateCcw, permission: 'update',
-    run: async (e, { refresh }) => { await api.post(`/equipment/${e.id}/reinstate`); refresh(); },
-  }],
+  actions: toRowActions(EQUIPMENT_ACTIONS.filter((a) => a.key === 'reinstate')),
 };
 
 /**

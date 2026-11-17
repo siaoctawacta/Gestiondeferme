@@ -374,6 +374,17 @@ describe('equipements form', () => {
     expect(writes()[0].body).not.toHaveProperty('buildingId');
   });
 
+  it('does not force a location on creation: name and type are enough, no site or building key is sent', async () => {
+    const { user, dialog } = await openAdd();
+    await user.type(within(dialog).getByLabelText('Nom'), 'Balance sans lieu');
+    await user.selectOptions(within(dialog).getByLabelText('Type'), 'Balance');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/equipment', body: { name: 'Balance sans lieu', type: 'BALANCE' } });
+    expect(writes()[0].body).not.toHaveProperty('siteId');
+    expect(writes()[0].body).not.toHaveProperty('buildingId');
+  });
+
   it('switches the location to a building', async () => {
     const { user, dialog } = await openAdd();
     await user.click(within(dialog).getByRole('radio', { name: 'Bâtiment' }));
@@ -406,10 +417,13 @@ describe('equipements form', () => {
     expect(Object.keys(writes()[0].body as object).sort()).toEqual(['brand', 'condition']);
   });
 
-  it('refuses a chosen location kind with nothing picked', async () => {
-    const { user, dialog } = await openAdd();
-    await user.type(within(dialog).getByLabelText('Nom'), 'Ventilateur 5');
-    await user.selectOptions(within(dialog).getByLabelText('Type'), 'Ventilateur');
+  it('refuses, when editing a located equipment, a changed location kind with nothing picked', async () => {
+    mount();
+    await screen.findByText('Pompe forage');
+    const user = userEvent.setup();
+    await user.click(rowOf('Groupe électrogène 20 kVA').getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Équipements' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Marque')).toHaveValue('Honda'));
     await user.click(within(dialog).getByRole('radio', { name: 'Bâtiment' }));
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     expect(await within(dialog).findByText('Le champ « Bâtiment » est requis')).toBeInTheDocument();
@@ -471,11 +485,11 @@ describe('interventions and retired tabs', () => {
     await user.click(screen.getByRole('tab', { name: 'Interventions' }));
     await screen.findByText('Vidange');
     await user.click(screen.getByRole('button', { name: 'Ajouter' }));
-    const add = await screen.findByRole('dialog', { name: 'Ajouter — Équipements' });
+    const add = await screen.findByRole('dialog', { name: 'Ajouter — Interventions' });
     expect(within(add).getByLabelText('Équipement')).toBeInTheDocument();
     await user.click(within(add).getByRole('button', { name: 'Annuler' }));
     await user.click(screen.getByRole('button', { name: 'Modifier' }));
-    const edit = await screen.findByRole('dialog', { name: 'Modifier — Équipements' });
+    const edit = await screen.findByRole('dialog', { name: 'Modifier — Interventions' });
     expect(within(edit).getByLabelText('Description')).toHaveValue('Vidange');
     expect(within(edit).getByLabelText('Intervenant')).toHaveValue('Kossi');
     expect(within(edit).queryByLabelText('Équipement')).not.toBeInTheDocument();
@@ -498,6 +512,7 @@ describe('interventions and retired tabs', () => {
     expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
     expect(rowOf('Balance 300 kg').queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
     await user.click(rowOf('Balance 300 kg').getByRole('button', { name: 'Remettre en service' }));
+    await user.click(within(await screen.findByRole('dialog')).getByRole('button', { name: 'Remettre en service' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/equipment/eq9/reinstate' });
   });
@@ -576,7 +591,7 @@ describe('EquipmentDetail', () => {
     const user = userEvent.setup();
     await screen.findByText('Vidange');
     await user.click(screen.getByRole('button', { name: 'Ajouter' }));
-    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Équipements' });
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Interventions' });
     expect(within(dialog).queryByLabelText('Équipement')).not.toBeInTheDocument();
     expect(await within(dialog).findByRole('checkbox', { name: 'Répare la panne du 2026-11-02' })).toBeChecked();
     expect(within(dialog).getByLabelText('État après intervention')).toHaveValue('BON');
@@ -584,6 +599,20 @@ describe('EquipmentDetail', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/maintenance', body: { equipmentId: 'eq4', kind: 'CORRECTIVE', repairsBreakdown: true, conditionAfter: 'BON' } });
+  });
+
+  it('puts a retired equipment back in service from its page, with a confirmation, and offers nothing else', async () => {
+    open(DIRECTEUR, detailOf(RETIRED[0]));
+    await screen.findByRole('heading', { name: 'Balance 300 kg' });
+    expect(screen.queryByRole('button', { name: 'Réformer' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Intervention' })).not.toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Remettre en service' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(writes()).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: 'Remettre en service' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/equipment/eq9/reinstate' });
   });
 
   it('shows the not-found card for an unknown equipment', async () => {

@@ -601,7 +601,8 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     await mainShows(page, new RegExp(`${day(1)} Réalisé le ${day(-1)}`));
     await page.goto(`${WEB_URL}/m/stocks`);
     await page.getByRole('link', { name: 'Vaccin Newcastle' }).click();
-    await page.waitForLoadState('networkidle');
+    // The list page has a tab of the same name and stays mounted while the lazy detail loads: wait for the detail.
+    await page.getByRole('heading', { level: 1, name: 'Vaccin Newcastle' }).waitFor();
     await page.getByRole('tab', { name: 'Mouvements' }).click();
     assert.match(flat(await page.getByRole('row', { name: /Sortie/ }).innerText()), new RegExp(`^${day(-1)} Vaccin Newcastle Sortie -4 `));
 

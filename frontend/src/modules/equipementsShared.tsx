@@ -138,7 +138,7 @@ const toForm = (d: EquipmentDetailData) => ({
 
 function EquipmentFormBody({ record, onSaved, onClose }: { record?: EquipmentDetailData; onSaved: () => void; onClose: () => void }) {
   const broken = record?.condition === 'EN_PANNE';
-  // A location kind is chosen with its site or building; only an equipment stored with none may stay without.
+  // A location is optional on creation; an edit keeps one for an equipment that has it (only one stored with none may stay without).
   const located = !record || record.siteId !== null || record.buildingId !== null;
   const fields = (values: Record<string, unknown>): Field[] => [
     { name: 'name', label: 'Nom', type: 'text', required: true },
@@ -148,8 +148,8 @@ function EquipmentFormBody({ record, onSaved, onClose }: { record?: EquipmentDet
       options: [{ value: 'SITE', label: 'Site' }, { value: 'BATIMENT', label: 'Bâtiment' }],
     },
     values.locationKind === 'BATIMENT'
-      ? { name: 'buildingId', label: 'Bâtiment', type: 'select', required: located, options: { endpoint: '/buildings' }, optionsPermission: { module: 'batiments', action: 'read' }, currentLabel: record?.location ?? undefined }
-      : { name: 'siteId', label: 'Site', type: 'select', required: located, options: { endpoint: '/sites' }, optionsPermission: { module: 'batiments', action: 'read' }, currentLabel: record?.location ?? undefined },
+      ? { name: 'buildingId', label: 'Bâtiment', type: 'select', required: located && Boolean(record), options: { endpoint: '/buildings' }, optionsPermission: { module: 'batiments', action: 'read' }, currentLabel: record?.location ?? undefined }
+      : { name: 'siteId', label: 'Site', type: 'select', required: located && Boolean(record), options: { endpoint: '/sites' }, optionsPermission: { module: 'batiments', action: 'read' }, currentLabel: record?.location ?? undefined },
     { name: 'brand', label: 'Marque', type: 'text' },
     { name: 'serialNumber', label: 'N° de série', type: 'text' },
     { name: 'purchaseDate', label: "Date d'achat", type: 'date' },
@@ -282,7 +282,7 @@ function MaintenanceFormBody({ row, equipment, scope, onSaved, onClose }: { row?
   const { can } = useAuth();
   return (
     <RecordForm
-      label="Équipements"
+      label="Interventions"
       row={row}
       fields={interventionFields(can, { chooseEquipment: !scope?.equipmentId, equipment })}
       initial={row ? interventionToForm(row) : undefined}

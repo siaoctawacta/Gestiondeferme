@@ -28,7 +28,7 @@ export function ModuleRoute() {
       );
     }
     return (
-      <RequirePermission module={item.slug}>
+      <RequirePermission module={item.slug} also={item.also}>
         {config ? (
           <ModulePage key={item.slug} config={config} />
         ) : (

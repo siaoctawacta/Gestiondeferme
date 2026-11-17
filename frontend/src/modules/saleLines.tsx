@@ -70,7 +70,7 @@ const sellableLabel = (s: Sellable): string => {
 
 /** The sources of one kind as options: one that cannot be sold stays visible, disabled, with the reason. */
 export const sellableOptions = (data: unknown): OptionItem[] =>
-  (data as { items: Sellable[] }).items.map((s) => ({
+  ((data as { items?: Sellable[] }).items ?? []).map((s) => ({
     value: s.id,
     label: sellableLabel(s),
     disabled: !s.sellable,

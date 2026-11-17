@@ -46,11 +46,20 @@ describe('/scan without BarcodeDetector', () => {
     expect(await screen.findByTestId('where')).toHaveTextContent('/q/animal/a1');
   });
 
-  it('refuses another site’s link and anything that is not a QR link', async () => {
+  it('opens the in-app path of a link of another origin, and refuses anything that is not a QR link', async () => {
     mount();
     const user = userEvent.setup();
     const field = screen.getByLabelText("Lien ou code de l'étiquette");
-    await user.type(field, 'https://evil.example/q/lot/abc');
+    await user.type(field, 'https://other.example/q/lot/abc');
+    await user.click(screen.getByRole('button', { name: 'Ouvrir' }));
+    expect(await screen.findByTestId('where')).toHaveTextContent('/q/lot/abc');
+  });
+
+  it('refuses a link that is not under /q/ or has an unknown kind', async () => {
+    mount();
+    const user = userEvent.setup();
+    const field = screen.getByLabelText("Lien ou code de l'étiquette");
+    await user.type(field, 'https://other.example/q/users/abc');
     await user.click(screen.getByRole('button', { name: 'Ouvrir' }));
     expect(await screen.findByText("Ce QR code n'appartient pas à AgriPilot")).toBeInTheDocument();
     expect(screen.queryByTestId('where')).toBeNull();
@@ -94,7 +103,7 @@ describe('/scan with BarcodeDetector and a camera', () => {
   });
 
   it('says so for a QR that is not AgriPilot’s and keeps scanning', async () => {
-    value = 'https://evil.example/q/lot/abc';
+    value = 'https://evil.example/m/lot/abc';
     mount();
     expect(await screen.findByText("Ce QR code n'appartient pas à AgriPilot", undefined, { timeout: 3000 })).toBeInTheDocument();
     expect(screen.queryByTestId('where')).toBeNull();

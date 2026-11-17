@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { api } from '../../lib/api';
 import { formatMoney, signedMoney } from '../../lib/format';
 import { useFarmQuery } from '../../lib/query';
@@ -22,14 +22,17 @@ const CONSUMPTION_HINT = "La consommation d'aliments et de produits vétérinair
  */
 export function FinanceSummary() {
   const { values, set, error } = useSharedFilters();
-  const from = values.from ?? '';
-  const to = values.to ?? '';
-  // Opened without a period (the entries list shows all dates), the summary starts on the month to date.
+  // Opened without a period (the entries list shows all dates), the summary starts on the month to date. The period is
+  // taken for the first render itself (no frame of « Choisissez une période »); an effect then writes it to the shared state.
+  const [opening, setOpening] = useState(() => !values.from && !values.to);
+  const month = monthToDate();
+  const from = opening ? month.from : values.from ?? '';
+  const to = opening ? month.to : values.to ?? '';
   useEffect(() => {
-    if (from || to) return;
-    const month = monthToDate();
+    if (!opening) return;
     set('from', month.from);
     set('to', month.to);
+    setOpening(false);
     // Only when the tab opens: a period the user empties again is theirs to complete.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

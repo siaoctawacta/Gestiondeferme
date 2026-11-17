@@ -6,7 +6,7 @@ import type { Action, ModuleKey, Permissions } from '../../lib/modules';
 const KEYS: ModuleKey[] = [
   'dashboard', 'alertes', 'rapports', 'batiments', 'fermes', 'utilisateurs', 'parametres',
   'lots', 'ponte', 'porcs', 'reproduction', 'alimentation', 'sante', 'stocks',
-  'fournisseurs', 'achats', 'clients', 'ventes', 'finance', 'taches', 'equipements', 'audit',
+  'fournisseurs', 'achats', 'clients', 'ventes', 'finance', 'taches', 'personnel', 'equipements', 'audit',
 ];
 
 function perms(readable: ModuleKey[]): Permissions {
@@ -36,6 +36,13 @@ describe('Sidebar', () => {
     expect(screen.queryByText('Utilisateurs')).not.toBeInTheDocument();
     expect(screen.queryByText('FINANCE')).not.toBeInTheDocument();
     expect(screen.getByText('PRODUCTION')).toBeInTheDocument();
+  });
+
+  it('shows Tâches & personnel to a role that reads personnel only (the accountant)', () => {
+    renderSidebar(perms(['dashboard', 'personnel']));
+    expect(screen.getByText('Tâches & personnel')).toBeInTheDocument();
+    renderSidebar(perms(['dashboard']));
+    expect(screen.getAllByText('Tâches & personnel')).toHaveLength(1);
   });
 
   it('shows the alert count next to Alertes', () => {

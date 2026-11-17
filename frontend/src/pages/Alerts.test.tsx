@@ -119,4 +119,16 @@ describe('the alerts page', () => {
     await user.click(await screen.findByRole('link', { name: 'Ne plus afficher les alertes masquées' }));
     await waitFor(() => expect(screen.queryByText('Stock faible : Aliment ponte')).toBeNull());
   });
+
+  it('moves the focus to the next card\'s button after masking, and to the page heading when none is left', async () => {
+    mount();
+    const user = userEvent.setup();
+    await screen.findByText('Stock faible : Aliment ponte');
+    await user.click(card('Stock faible : Aliment ponte').getByRole('button', { name: "Masquer l'alerte : Stock faible : Aliment ponte" }));
+    await waitFor(() => expect(screen.queryByText('Stock faible : Aliment ponte')).toBeNull());
+    await waitFor(() => expect(card('Tâche en retard : Pesée').getByRole('button', { name: "Masquer l'alerte : Tâche en retard : Pesée" })).toHaveFocus());
+    await user.click(card('Tâche en retard : Pesée').getByRole('button', { name: "Masquer l'alerte : Tâche en retard : Pesée" }));
+    await waitFor(() => expect(screen.queryByText('Tâche en retard : Pesée')).toBeNull());
+    await waitFor(() => expect(screen.getByRole('heading', { level: 1, name: 'Alertes & notifications' })).toHaveFocus());
+  });
 });

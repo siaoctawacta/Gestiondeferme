@@ -64,7 +64,7 @@ const ITEM_FIELD: Partial<Record<HealthActType, string>> = { VACCINATION: 'vacci
 
 /** The batches in stock of `GET /stock/:itemId`, as `lot (quantity)` options. */
 const batchesOf = (data: unknown) =>
-  (data as StockItemDetailData).batches
+  ((data as Partial<StockItemDetailData>).batches ?? [])
     .filter((b) => b.quantity > 0)
     .map((b) => ({ value: b.id, label: `${b.lotNumber ?? 'Sans n°'} (${formatNumber(b.quantity)})` }));
 

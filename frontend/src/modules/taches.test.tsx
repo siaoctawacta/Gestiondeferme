@@ -61,7 +61,7 @@ const page = (items: unknown[], extra: object = {}) => json(200, { items, total:
 
 const RESP_AVICOLE: Record<string, string[]> = { taches: ['read', 'create', 'update', 'delete'], personnel: ['read', 'create'], lots: ['read'], batiments: ['read'] };
 const AGENT = { taches: ['read', 'update'], equipements: ['read', 'create'] };
-const COMPTABLE = { taches: ['read'], personnel: ['read'], finance: ['read', 'create', 'update', 'delete'] };
+const COMPTABLE = { personnel: ['read'], finance: ['read', 'create', 'update', 'delete'] };
 const DIRECTEUR = { taches: ['read', 'create', 'update', 'delete'], personnel: ['read', 'create', 'update', 'delete'], lots: ['read'], batiments: ['read'], equipements: ['read'] };
 
 function mount({ perms = RESP_AVICOLE, tasks = TASKS, route = '/', employees = EMPLOYEE_OPTIONS, scope }: { perms?: Record<string, string[]>; tasks?: unknown[]; route?: string; employees?: unknown[]; scope?: Record<string, string> } = {}) {
@@ -120,6 +120,13 @@ describe('nextDueDate', () => {
     expect(nextDueDate('2026-12-31', 'MENSUELLE')).toBe('2027-01-31');
     expect(nextDueDate('2026-10-23', 'AUCUNE')).toBeNull();
   });
+
+  it('keeps the series anchor day of a monthly task: anchored on the 31st, due 28 Feb gives 31 March', () => {
+    expect(nextDueDate('2026-02-28', 'MENSUELLE', 31)).toBe('2026-03-31');
+    expect(nextDueDate('2026-04-30', 'MENSUELLE', 31)).toBe('2026-05-31');
+    expect(nextDueDate('2026-01-31', 'MENSUELLE', 31)).toBe('2026-02-28');
+    expect(nextDueDate('2026-02-28', 'MENSUELLE', null)).toBe('2026-03-28');
+  });
 });
 
 describe('taches list', () => {
@@ -163,6 +170,29 @@ describe('taches list', () => {
     expect(screen.queryByRole('tab')).not.toBeInTheDocument();
   });
 
+  it('Comptable (personnel read, no taches): no Tâches tab, opens on Employés with the salaries, never asks the tasks', async () => {
+    mount({ perms: COMPTABLE });
+    await screen.findByText('Kodjo A.', { selector: 'td' });
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Employés', 'Présences']);
+    expect(screen.getByRole('tab', { name: 'Employés' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('columnheader', { name: 'SALAIRE MENSUEL' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Ajouter/ })).not.toBeInTheDocument();
+    expect(calls.some((c) => c.url.startsWith('/api/tasks'))).toBe(false);
+    await userEvent.setup().click(screen.getByRole('tab', { name: 'Présences' }));
+    await screen.findByText('Malade');
+  });
+
+  it('Agent (taches only): Tâches without tabs; Directeur: the three tabs with Tâches first', async () => {
+    mount({ perms: AGENT });
+    await screen.findByText('Nettoyage Porcherie 2');
+    expect(screen.queryByRole('tab')).not.toBeInTheDocument();
+    cleanup();
+    mount({ perms: DIRECTEUR });
+    await screen.findByText('Nettoyage Porcherie 2');
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Tâches', 'Employés', 'Présences']);
+    expect(screen.getByRole('tab', { name: 'Tâches' })).toHaveAttribute('aria-selected', 'true');
+  });
+
   it('offers Mes tâches to a user linked to an employee, and sends mine=true', async () => {
     mount();
     await screen.findByText('Nettoyage Porcherie 2');
@@ -199,7 +229,7 @@ describe('taches gating', () => {
     const names = (text: string) => rowOf(text).queryAllByRole('button').map((b) => b.getAttribute('aria-label'));
     expect(names('Pesée hebdomadaire LC-2026-14')).toEqual(['Démarrer', 'Terminer', 'Modifier', 'Supprimer']);
     expect(names('Nettoyage Porcherie 2')).toEqual(['Terminer', 'Modifier', 'Supprimer']);
-    expect(names('Collecte des œufs')).toEqual(['Rouvrir', 'Voir la preuve', 'Modifier', 'Supprimer']);
+    expect(names('Collecte des œufs')).toEqual(['Rouvrir', 'Voir la preuve', 'Remplacer la photo', 'Supprimer la preuve', 'Modifier', 'Supprimer']);
   });
 
   it('locks a finished task with the reason, on edit and delete', async () => {
@@ -312,6 +342,43 @@ describe('taches actions', () => {
     await user.click(rowOf('Collecte des œufs').getByRole('button', { name: 'Voir la preuve' }));
     expect(await screen.findByText('Preuve introuvable')).toBeInTheDocument();
     expect(win.close).toHaveBeenCalled();
+  });
+
+  it('shows the anchored monthly hint in the completion dialog', async () => {
+    mount({ tasks: [task('t8', 'Contrôle mensuel', 'Kodjo A.', '2026-02-28', 'NORMALE', 'A_FAIRE', { recurrence: 'MENSUELLE', recurrenceDay: 31 })] });
+    await userEvent.setup().click(await within(await screen.findByText('Contrôle mensuel').then((e) => e.closest('tr')!)).findByRole('button', { name: 'Terminer' }));
+    expect(await screen.findByText('La prochaine occurrence sera créée pour le 2026-03-31')).toBeInTheDocument();
+  });
+
+  it('removes the proof after a confirmation (DELETE /proof), and replaces it with a new photo (POST /proof)', async () => {
+    mount();
+    await screen.findByText('Collecte des œufs');
+    const user = userEvent.setup();
+    expect(within(screen.getByText('Nettoyage Porcherie 2').closest('tr')!).queryByRole('button', { name: 'Supprimer la preuve' })).not.toBeInTheDocument();
+    await user.click(rowOf('Collecte des œufs').getByRole('button', { name: 'Supprimer la preuve' }));
+    const confirm = await screen.findByRole('dialog');
+    expect(writes()).toHaveLength(0);
+    await user.click(within(confirm).getByRole('button', { name: 'Supprimer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'DELETE', url: '/api/tasks/t4/proof' });
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+
+    await user.click(rowOf('Collecte des œufs').getByRole('button', { name: 'Remplacer la photo' }));
+    const dialog = await screen.findByRole('dialog');
+    const file = new File(['x'], 'nouvelle.png', { type: 'image/png' });
+    fireEvent.change(within(dialog).getByLabelText('Photo (preuve)'), { target: { files: [file] } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(2));
+    expect(writes()[1]).toMatchObject({ method: 'POST', url: '/api/tasks/t4/proof' });
+    expect((writes()[1].body as FormData).get('file')).toBe(file);
+  });
+
+  it('offers no proof removal to a role that reads the tasks without update', async () => {
+    mount({ perms: { taches: ['read'] } });
+    await screen.findByText('Collecte des œufs');
+    expect(rowOf('Collecte des œufs').getByRole('button', { name: 'Voir la preuve' })).toBeInTheDocument();
+    expect(rowOf('Collecte des œufs').queryByRole('button', { name: 'Supprimer la preuve' })).not.toBeInTheDocument();
+    expect(rowOf('Collecte des œufs').queryByRole('button', { name: 'Remplacer la photo' })).not.toBeInTheDocument();
   });
 
   it('on a retry after a refused photo sends only /proof: the task is already completed', async () => {
@@ -449,9 +516,12 @@ describe('shared employee options', () => {
 describe('employés tab', () => {
   const open = async (perms: Record<string, string[]>) => {
     mount({ perms });
-    await screen.findByText('Nettoyage Porcherie 2');
     const user = userEvent.setup();
-    await user.click(screen.getByRole('tab', { name: 'Employés' }));
+    // A role without `taches` read opens on Employés already (no Tâches tab to click away from).
+    if (perms.taches) {
+      await screen.findByText('Nettoyage Porcherie 2');
+      await user.click(screen.getByRole('tab', { name: 'Employés' }));
+    }
     await screen.findByText('Kodjo A.', { selector: 'td' });
     return user;
   };
@@ -650,6 +720,20 @@ describe('présences tab', () => {
     fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: '2026-10-20' } });
     await waitFor(() => expect(within(dialog).getByLabelText('Note ligne 2')).toHaveValue(''));
     expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-10-20');
+  });
+
+  it('drops the previous day\'s unsaved values for good: A, then B, then A shows the stored sheet, not what was typed', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    const user = await open();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Présences' });
+    await waitFor(() => expect(within(dialog).getByText('Dr Koffi')).toBeInTheDocument());
+    await user.type(within(dialog).getByLabelText('Note ligne 2'), 'RAS');
+    fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: '2026-10-20' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Statut ligne 3')).toHaveValue('ABSENT'));
+    fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: todayIso() } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Statut ligne 3')).toHaveValue('PRESENT'));
+    expect(within(dialog).getByLabelText('Note ligne 2')).toHaveValue('');
   });
 
   it('does not ask when nothing was edited', async () => {

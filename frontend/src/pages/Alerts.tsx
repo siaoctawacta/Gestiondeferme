@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router';
 import { AlertTriangle, CircleAlert, EyeOff } from 'lucide-react';
@@ -24,16 +24,36 @@ export default function Alerts() {
   const [pending, setPending] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
   const maskedCount = data?.acknowledgedCount ?? 0;
+  const root = useRef<HTMLDivElement>(null);
+  // Where the focus goes once the list is read again: the clicked card is gone or changed, so its button no longer exists.
+  const refocus = useRef<{ key: string | null } | null>(null);
+
+  useEffect(() => {
+    const target = refocus.current;
+    if (!target) return;
+    refocus.current = null;
+    const button = target.key === null ? null : Array.from(root.current?.querySelectorAll<HTMLElement>('li[data-alert-key]') ?? []).find((li) => li.dataset.alertKey === target.key)?.querySelector('button');
+    if (button) {
+      button.focus();
+      return;
+    }
+    const heading = root.current?.querySelector('h1');
+    heading?.setAttribute('tabindex', '-1');
+    heading?.focus();
+  }, [data]);
 
   // What is visible is the API's call (expiry, a worsened level): after a change everything of the farm is read again, the
   // bell, the sidebar count and the dashboard included. No hiding state lives in the browser.
   const change = async (key: string, run: (key: string) => Promise<unknown>) => {
     setPending(key);
     setFailure(null);
+    const items = data?.items ?? [];
+    refocus.current = { key: items[items.findIndex((a) => a.key === key) + 1]?.key ?? null };
     try {
       await run(key);
       await queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
     } catch (e) {
+      refocus.current = null;
       setFailure(errorMessage(e));
     } finally {
       setPending(null);
@@ -41,7 +61,7 @@ export default function Alerts() {
   };
 
   return (
-    <div className="mx-auto w-full max-w-[1440px]">
+    <div ref={root} className="mx-auto w-full max-w-[1440px]">
       <PageHeader
         title="Alertes & notifications"
         subtitle={data ? `${data.total} ${data.total > 1 ? 'alertes ouvertes' : 'alerte ouverte'}, calculées automatiquement à partir de vos données.` : undefined}
@@ -69,7 +89,7 @@ export default function Alerts() {
             const Icon = urgent ? CircleAlert : AlertTriangle;
             const masked = a.acknowledged === true;
             return (
-              <li key={a.key} className={masked ? 'opacity-60' : undefined}>
+              <li key={a.key} data-alert-key={a.key} className={masked ? 'opacity-60' : undefined}>
                 <Card className="flex items-start gap-4 px-4 pb-3 pt-4">
                   <span
                     className={`flex size-10 shrink-0 items-center justify-center rounded-full ${

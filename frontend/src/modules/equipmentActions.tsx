@@ -1,4 +1,4 @@
-import { Archive, TriangleAlert, Wrench } from 'lucide-react';
+import { Archive, RotateCcw, TriangleAlert, Wrench } from 'lucide-react';
 import { ActionDialog } from '../components/module/ActionDialog';
 import { ConfirmDialog } from '../components/module/ConfirmDialog';
 import type { SharedActionDef } from '../components/module/rowActions';
@@ -54,12 +54,25 @@ function RetireDialog({ row, onClose, onDone }: DialogProps) {
   );
 }
 
+function ReinstateDialog({ row, onClose, onDone }: DialogProps) {
+  return (
+    <ConfirmDialog
+      title={`Remettre ${row.name} en service`}
+      message={`Remettre ${row.name} en service ? Il reviendra dans la liste des équipements.`}
+      confirmLabel="Remettre en service"
+      onClose={onClose}
+      onConfirm={async () => { await api.post(`/equipment/${row.id}/reinstate`); onDone(); }}
+    />
+  );
+}
+
 /**
- * The equipment's own actions, shared by its list rows and its detail page. A retired equipment takes none. Declaring a
+ * The equipment's own actions, shared by its list rows and its detail page. A retired equipment takes none but its reinstatement. Declaring a
  * breakdown is a daily entry (`create`); interventions and retirement are master data (`update`).
  */
 export const EQUIPMENT_ACTIONS: SharedActionDef<EquipmentRow>[] = [
   { key: 'breakdown', label: 'Déclarer une panne', icon: TriangleAlert, permission: 'create', visible: (e) => !e.retiredAt && e.condition !== 'EN_PANNE', Dialog: BreakdownDialog },
   { key: 'intervention', label: 'Intervention', icon: Wrench, permission: 'update', visible: (e) => !e.retiredAt, Dialog: InterventionDialog },
   { key: 'retire', label: 'Réformer', icon: Archive, permission: 'update', visible: (e) => !e.retiredAt, Dialog: RetireDialog },
+  { key: 'reinstate', label: 'Remettre en service', icon: RotateCcw, permission: 'update', visible: (e) => Boolean(e.retiredAt), Dialog: ReinstateDialog },
 ];

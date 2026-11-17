@@ -28,6 +28,8 @@ export interface TaskRow {
   status: TaskStatus;
   overdue: boolean;
   recurrence: TaskRecurrence;
+  /** Day of month a monthly series is anchored on (the backend keeps it across short months); absent or null: the due day. */
+  recurrenceDay?: number | null;
   target: { kind: TaskTargetKind; id: string; label: string } | null;
   completedDate: string | null;
   hasProof: boolean;
@@ -66,14 +68,15 @@ export const RECURRENCES: { value: TaskRecurrence; label: string }[] = [
 
 /**
  * The due date of the occurrence a recurring task creates when it is completed (the backend's `nextDueDate`): a day,
- * a week, or the same day of the next month clamped to its last day; `null` for a one-off task.
+ * a week, or the series' anchor day (default: the due day) of the next month clamped to its last day; `null` for a
+ * one-off task.
  */
-export function nextDueDate(dueDate: string, recurrence: string): string | null {
+export function nextDueDate(dueDate: string, recurrence: string, anchorDay?: number | null): string | null {
   const d = new Date(`${dueDate}T00:00:00Z`);
   if (recurrence === 'QUOTIDIENNE' || recurrence === 'HEBDOMADAIRE') {
     d.setUTCDate(d.getUTCDate() + (recurrence === 'QUOTIDIENNE' ? 1 : 7));
   } else if (recurrence === 'MENSUELLE') {
-    const day = d.getUTCDate();
+    const day = anchorDay ?? d.getUTCDate();
     const lastOfNext = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 2, 0)).getUTCDate();
     d.setUTCDate(1);
     d.setUTCMonth(d.getUTCMonth() + 1);

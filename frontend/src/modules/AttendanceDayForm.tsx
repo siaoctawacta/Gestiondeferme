@@ -28,19 +28,23 @@ function DateInput({ value, onChange }: { value: string; onChange: (v: string) =
 /**
  * The attendance sheet of one day: the `Date` and a fixed grid of the employees active that day (`Employé`, `Statut`
  * default `Présent`, `Heures`, `Note`), posted as one `POST /attendance/day`. A sheet already entered for the day is
- * loaded, so reopening it never resets what is there. The grid belongs to the day: its field is named after the date, so
- * choosing another date shows that day's sheet (what was typed for the previous day is dropped).
+ * loaded, so reopening it never resets what is there. The grid belongs to the day: its field is named after the date and
+ * the visit, so choosing another date shows that day's sheet (what was typed for the previous day is dropped for good).
  */
 export function AttendanceDayForm({ onSaved, onClose }: { onSaved: () => void; onClose: () => void }) {
   const [draft, setDraft] = useState(todayIso);
   const [date, setDate] = useState(draft);
   // The grid was touched: another day would drop what was typed, so it is asked first.
   const [edited, setEdited] = useState(false);
+  // Counts the accepted day changes: the grid's field name carries it, so coming back to a day (A, B, A) starts from the
+  // stored sheet again and never from what was typed there before.
+  const [visit, setVisit] = useState(0);
   useEffect(() => {
     if (!ISO_DATE.test(draft) || draft === date) return;
     const timer = setTimeout(() => {
       if (edited && !window.confirm(LOSE_EDITS)) return setDraft(date);
       setEdited(false);
+      setVisit((n) => n + 1);
       setDate(draft);
     }, SETTLE_MS);
     return () => clearTimeout(timer);
@@ -60,7 +64,7 @@ export function AttendanceDayForm({ onSaved, onClose }: { onSaved: () => void; o
       status: stored?.status ?? 'PRESENT', hours: stored?.hours == null ? '' : String(stored.hours), note: stored?.note ?? '',
     };
   });
-  const field = `sheet:${date}`;
+  const field = `sheet:${date}:${visit}`;
 
   return (
     <ActionDialog

@@ -113,6 +113,18 @@ const everything = (u: string) =>
     : u === '/api/reports/synthese' ? json(200, SYNTHESE)
       : u.startsWith('/api/reports/mensuel') ? json(200, MENSUEL) : undefined;
 
+describe('Reports: a type the role does not have', () => {
+  it('falls back to the first allowed type, never asks the forbidden one, and labels the panel by an existing tab', async () => {
+    mount((u) => (u === '/api/reports' ? json(200, { types: [{ type: 'synthese', label: 'Synthèse' }, { type: 'mensuel', label: 'Mensuel' }] })
+      : u === '/api/reports/synthese' ? json(200, SYNTHESE) : undefined), '/rapports?type=sanitaire');
+    await screen.findAllByRole('row');
+    expect(urls.some((u) => u.startsWith('/api/reports/sanitaire'))).toBe(false);
+    expect(screen.getByRole('tab', { name: 'Synthèse' })).toHaveAttribute('aria-selected', 'true');
+    const panel = screen.getByRole('tabpanel');
+    expect(document.getElementById(panel.getAttribute('aria-labelledby')!)).toBe(screen.getByRole('tab', { name: 'Synthèse' }));
+  });
+});
+
 describe('Reports: synthèse', () => {
   it("renders the API's title and the 12 reference rows in order, then the three activity cards", async () => {
     mount(synthesisOnly(SYNTHESE));

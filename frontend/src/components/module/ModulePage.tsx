@@ -83,7 +83,7 @@ function ModuleView<T extends { id: string }>({
   const reason = typeof readOnlyProp === 'string' && readOnlyProp !== '' ? readOnlyProp : undefined;
   const embedded = layout !== 'page';
   const scope = config.scope || scopeProp ? { ...config.scope, ...scopeProp } : undefined;
-  const { can, farmId, reload } = useAuth();
+  const { can, farmId, reload, status } = useAuth();
   const queryClient = useQueryClient();
   const tabBase = useId();
 
@@ -98,13 +98,18 @@ function ModuleView<T extends { id: string }>({
     ? { params: shareDef.params, values: sharedValues!, set: setFilter, error: sharedError }
     : null;
   const [tab, setTab] = useState('main');
+  // A page may be opened through another module's read right (its `config` tabs): without read on the page's own
+  // module the main tab is dropped and the first tab the role may see is the default.
+  const extraTabs = (config.tabs ?? []).filter((t) => !('config' in t) || can(t.config.slug, 'read'));
+  const mainReadable = embedded || status !== 'authenticated' || can(config.slug, 'read');
+  const activeTab = extraTabs.find((t) => t.key === tab) ?? (mainReadable ? undefined : extraTabs[0]);
   const [editing, setEditing] = useState<T | 'new' | null>(null);
   const [deleting, setDeleting] = useState<T | null>(null);
   const [acting, setActing] = useState<{ action: RowAction<T>; row: T } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [qrOf, setQrOf] = useState<{ id: string; kind: QrKind } | null>(null);
   const [labels, setLabels] = useState<LabelRow[] | null>(null);
-  const onMain = tab === 'main';
+  const onMain = !activeTab;
 
   useEffect(() => {
     if (!notice || notice.tone === 'error') return;
@@ -351,9 +356,7 @@ function ModuleView<T extends { id: string }>({
     );
   }
 
-  const extraTabs = (config.tabs ?? []).filter((t) => !('config' in t) || can(t.config.slug, 'read'));
-  const activeTab = extraTabs.find((t) => t.key === tab);
-  const allTabs = [{ key: 'main', label: config.tabLabel ?? config.title }, ...extraTabs];
+  const allTabs = [...(mainReadable ? [{ key: 'main', label: config.tabLabel ?? config.title }] : []), ...extraTabs];
   const activeKey = activeTab ? activeTab.key : 'main';
   const pageContent = (
     <>

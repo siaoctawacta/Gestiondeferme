@@ -1,6 +1,7 @@
-import { CircleCheck, Image, Play, RotateCcw } from 'lucide-react';
+import { CircleCheck, Image, ImagePlus, ImageOff, Play, RotateCcw } from 'lucide-react';
 import { useRef } from 'react';
 import { ActionDialog } from '../components/module/ActionDialog';
+import { ConfirmDialog } from '../components/module/ConfirmDialog';
 import type { RowAction } from '../components/module/types';
 import { api, ApiError } from '../lib/api';
 import { todayIso } from '../lib/format';
@@ -16,7 +17,7 @@ const PHOTO_REFUSED = 'Photo invalide : JPEG, PNG ou WebP de 5 Mo au plus';
  */
 function CompleteDialog({ row, onClose, onDone }: { row: TaskRow; onClose: () => void; onDone: () => void }) {
   const completed = useRef(false);
-  const next = nextDueDate(row.dueDate, row.recurrence);
+  const next = nextDueDate(row.dueDate, row.recurrence, row.recurrenceDay);
   return (
     <ActionDialog
       title={`Terminer — ${row.title}`}
@@ -44,6 +45,39 @@ function CompleteDialog({ row, onClose, onDone }: { row: TaskRow; onClose: () =>
       }}
       onClose={() => (completed.current ? onDone() : onClose())}
       onDone={onDone}
+    />
+  );
+}
+
+/** Replaces the proof photo of a task that has one (the old file goes server side). */
+function ReplaceProofDialog({ row, onClose, onDone }: { row: TaskRow; onClose: () => void; onDone: () => void }) {
+  return (
+    <ActionDialog
+      title={`Remplacer la photo — ${row.title}`}
+      fields={[{ name: 'photo', label: 'Photo (preuve)', type: 'file', accept: 'image/jpeg,image/png,image/webp', required: true }]}
+      validate={(v) => (v.photo instanceof File && v.photo.size > MAX_PHOTO_BYTES ? PHOTO_REFUSED : null)}
+      onSubmit={async (body) => {
+        const form = new FormData();
+        form.append('file', (body as { photo: File }).photo);
+        await api.post(`/tasks/${row.id}/proof`, form);
+      }}
+      onClose={onClose}
+      onDone={onDone}
+    />
+  );
+}
+
+/** Removes the proof photo after a confirmation (`DELETE /tasks/:id/proof`: the same rights as the upload). */
+function RemoveProofDialog({ row, onClose, onDone }: { row: TaskRow; onClose: () => void; onDone: () => void }) {
+  return (
+    <ConfirmDialog
+      title="Supprimer la preuve"
+      message={`Supprimer la photo de preuve de « ${row.title} » ? Cette action est irréversible.`}
+      onClose={onClose}
+      onConfirm={async () => {
+        await api.del(`/tasks/${row.id}/proof`);
+        onDone();
+      }}
     />
   );
 }
@@ -91,5 +125,15 @@ export const TASK_ACTIONS: RowAction<TaskRow>[] = [
     key: 'proof', label: 'Voir la preuve', icon: Image, permission: 'read',
     visible: (t) => t.hasProof,
     run: (t) => showProof(t),
+  },
+  {
+    key: 'proofReplace', label: 'Remplacer la photo', icon: ImagePlus, permission: 'update',
+    visible: (t, ctx) => t.hasProof && mineOrManager(t, ctx),
+    dialog: ReplaceProofDialog,
+  },
+  {
+    key: 'proofRemove', label: 'Supprimer la preuve', icon: ImageOff, permission: 'update',
+    visible: (t, ctx) => t.hasProof && mineOrManager(t, ctx),
+    dialog: RemoveProofDialog,
   },
 ];

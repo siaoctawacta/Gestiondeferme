@@ -11,6 +11,8 @@ export interface NavItem {
   label: string;
   to: string;
   icon: LucideIcon;
+  /** Other modules whose read right also shows the item (the page then offers only the tabs the role may read). */
+  also?: ModuleKey[];
 }
 export interface NavGroup {
   group: string | null;
@@ -64,7 +66,7 @@ export const NAV: NavGroup[] = [
   {
     group: 'OPÉRATIONS',
     items: [
-      m('taches', 'Tâches & personnel', ClipboardList),
+      { ...m('taches', 'Tâches & personnel', ClipboardList), also: ['personnel'] },
       m('equipements', 'Équipements', Wrench),
     ],
   },
@@ -80,6 +82,6 @@ export const MODULE_LABEL: ReadonlyMap<string, string> = new Map(
 export function visibleNav(permissions: Permissions): NavGroup[] {
   return NAV.map((g) => ({
     ...g,
-    items: g.items.filter((i) => permissions[i.slug]?.includes('read')),
+    items: g.items.filter((i) => [i.slug, ...(i.also ?? [])].some((k) => permissions[k]?.includes('read'))),
   })).filter((g) => g.items.length > 0);
 }

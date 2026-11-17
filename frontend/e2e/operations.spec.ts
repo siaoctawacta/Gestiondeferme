@@ -222,6 +222,8 @@ describe('opérations : personnel, tâches, équipements, rapports, QR et alerte
     assert.equal(await page.getByRole('button', { name: 'Modifier' }).count(), 0);
     await page.getByLabel('Toutes les tâches').selectOption({ label: 'Mes tâches' });
     await mainShows(page, /Pesée hebdomadaire/);
+    // Wait for the filtered list itself (the other user's row leaves) before asserting its absence.
+    await rowOf(page, new RegExp(YAWA_TASK)).waitFor({ state: 'detached' });
     assert.equal(await page.getByText(YAWA_TASK).count(), 0, 'only Kodjo’s tasks under « Mes tâches »');
     // Everything again: Yawa's task shows, with no Démarrer for this agent.
     await page.getByLabel('Toutes les tâches').selectOption({ label: 'Toutes les tâches' });
@@ -276,6 +278,7 @@ describe('opérations : personnel, tâches, équipements, rapports, QR et alerte
     // The late-task alert is gone now that the weekly task is completed (its next occurrence is due in six days).
     await page.goto(`${WEB_URL}/alertes`);
     await page.getByRole('heading', { name: 'Alertes & notifications' }).waitFor();
+    await mainShows(page, /alertes? ouvertes?/);
     assert.equal(await page.getByText('Tâche en retard').count(), 0);
     await page.context().close();
   });
@@ -352,7 +355,7 @@ describe('opérations : personnel, tâches, équipements, rapports, QR et alerte
     assert.match(flat(await intervention.innerText()), /Corrective Remplacement du moteur .*30 000 FCFA/);
     await page.goto(`${WEB_URL}/alertes`);
     await page.getByRole('heading', { name: 'Alertes & notifications' }).waitFor();
-    await page.waitForLoadState('networkidle');
+    await mainShows(page, /alertes? ouvertes?/);
     assert.equal(await page.getByText('Équipement en panne').count(), 0, 'the breakdown alert is gone');
     await page.context().close();
   });
@@ -484,7 +487,7 @@ describe('opérations : personnel, tâches, équipements, rapports, QR et alerte
   });
 
   it('Alertes : « Masquer l’alerte » baisse la pastille, « Afficher les alertes masquées (1) » la rend, « Réafficher » la remet', async () => {
-    // Two open alerts to work with: the equipment is broken again, and Yawa's task is late.
+    // An open alert to work with: the equipment is broken again (a new breakdown gives a new alert).
     await call(`/equipment/${equipmentId}/breakdowns`, 'POST', { date: day(0), description: 'Courroie cassée' });
     const page = await asRole(emails.director);
     await page.goto(`${WEB_URL}/alertes`);
@@ -539,12 +542,16 @@ describe('opérations : personnel, tâches, équipements, rapports, QR et alerte
     await page.context().close();
   });
 
-  it('Rôles : le Comptable ne voit pas les tâches ; le Magasinier avance les siennes mais ne crée rien ; aucun coût sans finance:read', async () => {
+  it('Rôles : le Comptable ouvre « Tâches & personnel » sur Employés (sans Tâches) ; le Magasinier avance les siennes mais ne crée rien ; aucun coût sans finance:read', async () => {
     const accountant = await asRole(emails.accountant);
-    assert.equal(await accountant.locator('aside').getByRole('link', { name: /Tâches/ }).count(), 0, 'no tasks menu for the accountant');
-    await accountant.goto(`${WEB_URL}/m/taches`);
-    await accountant.getByText('Accès non autorisé').waitFor();
-    // The accountant reads the staff (personnel:read) through the API, with salaries.
+    // The accountant has personnel:read but no taches: the page opens on Employés, with the salaries, without Tâches.
+    await accountant.locator('aside').getByRole('link', { name: /Tâches & personnel/ }).click();
+    await accountant.getByRole('tab', { name: 'Employés' }).waitFor();
+    assert.equal(await accountant.getByRole('tab', { name: 'Tâches' }).count(), 0, 'no Tâches tab for the accountant');
+    assert.deepEqual(await accountant.getByRole('tab').allInnerTexts(), ['Employés', 'Présences']);
+    await accountant.getByRole('columnheader', { name: 'SALAIRE MENSUEL' }).waitFor();
+    assert.equal(await accountant.getByRole('button', { name: 'Ajouter' }).count(), 0, 'read-only for the accountant');
+    // The same salaries through the API.
     const acc = await call<{ items: { monthlySalary: number | null }[] }>('/employees');
     assert.deepEqual(acc.items.map((e) => e.monthlySalary).sort(), [120000, 150000]);
     await accountant.context().close();

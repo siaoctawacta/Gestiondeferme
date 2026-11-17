@@ -78,8 +78,9 @@ export interface LabelRow {
 }
 
 /**
- * The labels of the rows on screen, asked of the API (`POST /qr/labels`, one call per kind: a list that mixes kinds,
- * the herd of lots and animals, asks twice) and returned in the rows' order. A row the API leaves out does not show.
+ * The labels of the rows on screen (the first `QR_LABEL_MAX` of them: the API's limit per call), asked of the API
+ * (`POST /qr/labels`, one call per kind: the herd of lots and animals mixes two kinds and asks twice) and returned in the
+ * rows' order. A row the API leaves out (missing or not readable) does not show.
  */
 export function useQrLabels(rows: LabelRow[]) {
   const wanted = rows.slice(0, QR_LABEL_MAX);

@@ -46,9 +46,10 @@ export function MessageCard({ title, children }: { title: string; children: Reac
   );
 }
 
-export function RequirePermission({ module, children }: { module: ModuleKey; children: ReactNode }) {
+/** Needs read on `module`, or on any of `also` (a page whose tabs belong to several modules). */
+export function RequirePermission({ module, also = [], children }: { module: ModuleKey; also?: ModuleKey[]; children: ReactNode }) {
   const { can } = useAuth();
-  if (!can(module, 'read')) {
+  if (![module, ...also].some((k) => can(k, 'read'))) {
     return <MessageCard title="Accès non autorisé">Votre rôle ne permet pas d&apos;accéder à cette page.</MessageCard>;
   }
   return children;

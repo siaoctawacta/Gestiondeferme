@@ -37,7 +37,11 @@ export const QR_LABEL_MAX = 60;
 /** The SVG text as an image source: the browser draws it as a picture, so nothing in it can run. */
 export const svgDataUrl = (svg: string): string => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 
-/** The in-app QR path (`/q/lot/abc`) of a scanned or pasted value, or `null` when it is not an AgriPilot QR of this site. */
+/**
+ * The in-app QR path (`/q/lot/abc`) of a scanned or pasted value, or `null` when it is not a QR link. The origin does not
+ * matter (the label may carry the API host or another deployment's address): only the path `/q/{kind}/{id}` with a known
+ * kind is kept, and the app opens it on its own origin, where the API checks the access.
+ */
 export function qrPathOf(value: string, origin: string = window.location.origin): string | null {
   const text = value.trim();
   if (!text) return null;
@@ -47,6 +51,7 @@ export function qrPathOf(value: string, origin: string = window.location.origin)
   } catch {
     return null;
   }
-  if (url.origin !== origin || !url.pathname.startsWith('/q/')) return null;
-  return `${url.pathname}${url.search}`;
+  const [empty, q, kind, id, ...rest] = url.pathname.split('/');
+  if (empty !== '' || q !== 'q' || !isQrKind(kind) || !id || rest.length > 0) return null;
+  return `/q/${kind}/${id}`;
 }

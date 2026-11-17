@@ -18,8 +18,12 @@ import { isReportType, reportParams, type ReportDto, type ReportSelection, type 
 export default function Reports() {
   const [search, setSearch] = useSearchParams();
   const rawType = search.get('type');
+  const types = useFarmQuery<ReportTypesDto>(['reports', 'types'], () => api.get<ReportTypesDto>('/reports'));
+  // A type the role does not have (a stale link) falls back to the first one it has, once the list is known.
+  const wanted = isReportType(rawType) ? rawType : 'synthese';
+  const allowed = types.data?.types ?? [];
   const selection: ReportSelection = {
-    type: isReportType(rawType) ? rawType : 'synthese',
+    type: allowed.length > 0 && !allowed.some((t) => t.type === wanted) ? allowed[0].type : wanted,
     date: search.get('date') ?? undefined,
     from: search.get('from') ?? undefined,
     to: search.get('to') ?? undefined,
@@ -30,8 +34,7 @@ export default function Reports() {
   const [downloading, setDownloading] = useState(false);
   const idBase = useId();
 
-  const types = useFarmQuery<ReportTypesDto>(['reports', 'types'], () => api.get<ReportTypesDto>('/reports'));
-  const report = useFarmQuery<ReportDto>(['reports', selection.type, params], () => api.get<ReportDto>(`/reports/${selection.type}`, params), { enabled: !rangeError });
+  const report = useFarmQuery<ReportDto>(['reports', selection.type, params], () => api.get<ReportDto>(`/reports/${selection.type}`, params), { enabled: !rangeError && !types.isPending });
 
   const choose = (next: ReportSelection) => {
     const q: Record<string, string> = { type: next.type };
