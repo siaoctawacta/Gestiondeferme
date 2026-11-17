@@ -178,18 +178,20 @@ export function saveBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
-/** The filename of a `Content-Disposition: attachment; filename="…"` header, when the server announces one. */
+/** The filename of a `Content-Disposition: attachment; filename="…"` header, without any path part; null when none. */
 function announcedFilename(res: Response): string | null {
   const header = res.headers.get('content-disposition') ?? '';
-  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header)?.[1];
-  if (encoded) {
+  let name = /filename\*\s*=\s*utf-8'[^']*'([^;]+)/i.exec(header)?.[1];
+  if (name) {
     try {
-      return decodeURIComponent(encoded);
+      name = decodeURIComponent(name);
     } catch {
-      /* fall through to the plain filename */
+      name = undefined;
     }
   }
-  return /filename="?([^";]+)"?/i.exec(header)?.[1] ?? null;
+  name ??= /filename\s*=\s*"?([^";]+)"?/i.exec(header)?.[1];
+  const base = name?.split(/[\\/]/).pop()?.trim();
+  return base || null;
 }
 
 export const api = {

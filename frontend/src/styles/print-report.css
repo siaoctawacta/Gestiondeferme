@@ -12,7 +12,7 @@
   .report-section > h2 {
     break-after: avoid;
   }
-  .report-section:has(> .grid) {
+  .report-section-short {
     break-inside: avoid;
   }
 }

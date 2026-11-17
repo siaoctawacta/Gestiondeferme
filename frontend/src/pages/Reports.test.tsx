@@ -116,7 +116,8 @@ const everything = (u: string) =>
 describe('Reports: synthèse', () => {
   it("renders the API's title and the 12 reference rows in order, then the three activity cards", async () => {
     mount(synthesisOnly(SYNTHESE));
-    expect((await screen.findAllByText('Synthèse au 14/11/2026')).length).toBe(2); // subtitle and print header
+    expect(await screen.findByText('Synthèse au 14/11/2026', { selector: '.print\\:hidden p' })).toBeInTheDocument();
+    expect(screen.getByText('Synthèse au 14/11/2026', { selector: 'header p, header h2' })).toBeInTheDocument();
     const rows = await screen.findAllByRole('row');
     expect(rows).toHaveLength(13);
     expect(rows.slice(1).map((r) => within(r).getAllByRole('cell')[0].textContent)).toEqual([
@@ -133,6 +134,10 @@ describe('Reports: synthèse', () => {
     expect(screen.getByText('−1 135 000 FCFA')).toBeInTheDocument();
     expect(screen.getByText('Recettes 2 050 000 FCFA · Dépenses 1 140 000 FCFA')).toBeInTheDocument();
     expect(screen.queryByRole('heading', { level: 2 })).not.toBeInTheDocument();
+    expect(screen.queryByRole('region')).not.toBeInTheDocument(); // no title, no accessible name
+    // On paper the page header is hidden: only the print header carries the title.
+    expect(screen.getByRole('heading', { level: 1, name: 'Rapports' }).closest('.print\\:hidden')).not.toBeNull();
+    expect(screen.getByText('Généré le', { exact: false }).closest('header')).toHaveClass('print:block');
   });
 
   it('renders no money row and no activity card when the API sends none', async () => {
@@ -198,11 +203,15 @@ describe('Reports: periodic types', () => {
     expect(await screen.findByRole('heading', { name: 'Production avicole' })).toBeInTheDocument();
     expect(screen.getByRole('heading', { name: 'Finance' })).toBeInTheDocument();
     expect(urls).toContain('/api/reports/mensuel?date=2026-10-01');
-    expect(screen.getAllByText('Rapport mensuel — octobre 2026')).toHaveLength(2); // subtitle and print header
+    expect(screen.getAllByText('Rapport mensuel — octobre 2026')).toHaveLength(2);
     for (const h of ['CATÉGORIE', 'TYPE', 'MONTANT']) expect(screen.getByRole('columnheader', { name: h })).toBeInTheDocument();
     expect(screen.getByText('Recette')).toBeInTheDocument();
     expect(screen.getAllByText('3 970 000 FCFA', { selector: 'td' })).toHaveLength(2); // the row and the table
-    expect(screen.getAllByText('—').length).toBeGreaterThan(0); // the null margin rate
+    expect(within(screen.getByText('Taux de marge').closest('tr')!).getByText('—')).toBeInTheDocument();
+    const tab = screen.getByRole('tab', { name: 'Mensuel' });
+    const panel = screen.getByRole('tabpanel');
+    expect(tab.getAttribute('aria-controls')).toBe(panel.id);
+    expect(panel.getAttribute('aria-labelledby')).toBe(tab.id);
   });
 
   it('puts the chosen period of a sanitaire report in the request and caps inputs at today', async () => {
@@ -216,5 +225,87 @@ describe('Reports: periodic types', () => {
     fireEvent.change(from, { target: { value: '2026-10-01' } });
     fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-10-31' } });
     await waitFor(() => expect(urls).toContain('/api/reports/sanitaire?from=2026-10-01&to=2026-10-31'));
+  });
+});
+
+const today = new Date().toISOString().slice(0, 10);
+
+describe('Reports: inputs', () => {
+  it('caps every date input at today', async () => {
+    mount(everything);
+    await screen.findAllByRole('row');
+    await userEvent.click(screen.getByRole('tab', { name: 'Quotidien' }));
+    expect(await screen.findByLabelText('Jour')).toHaveAttribute('max', today);
+    await userEvent.click(screen.getByRole('tab', { name: 'Mensuel' }));
+    expect(await screen.findByLabelText('Mois')).toHaveAttribute('max', today.slice(0, 7));
+  });
+
+  it('lets the year be typed over the current one', async () => {
+    mount(everything, '/rapports?type=annuel');
+    const year = await screen.findByLabelText('Année');
+    await userEvent.clear(year);
+    await userEvent.type(year, '2025');
+    await waitFor(() => expect(urls).toContain('/api/reports/annuel?date=2025-01-01'));
+    expect(year).toHaveValue(2025);
+  });
+
+  it('refuses a start after the end without a request and says so under the fields', async () => {
+    mount(everything, '/rapports?type=sanitaire&from=2026-10-01&to=2026-10-31');
+    await screen.findByLabelText('Du');
+    const before = urls.filter((u) => u.includes('/reports/sanitaire')).length;
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-11-05' } });
+    expect(await screen.findByText('La date de début est après la date de fin')).toBeInTheDocument();
+    expect(urls.filter((u) => u.includes('/reports/sanitaire'))).toHaveLength(before);
+    expect(screen.queryByRole('button', { name: 'Réessayer' })).not.toBeInTheDocument();
+  });
+});
+
+describe('Reports: errors and files', () => {
+  it('shows a 403 of a listed type without a retry button', async () => {
+    mount((u) => (u === '/api/reports' ? json(200, ALL_TYPES)
+      : u === '/api/reports/synthese' ? json(200, SYNTHESE)
+        : u.startsWith('/api/reports/mensuel') ? json(403, { message: "Ce rapport n'est pas accessible à votre rôle" }) : undefined));
+    await screen.findAllByRole('row');
+    await userEvent.click(screen.getByRole('tab', { name: 'Mensuel' }));
+    expect(await screen.findByText("Ce rapport n'est pas accessible à votre rôle")).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Réessayer' })).not.toBeInTheDocument();
+  });
+
+  it('disables the file buttons while a download runs, and clears its error when the type changes', async () => {
+    let release: (r: Response) => void = () => {};
+    let calls = 0;
+    mount((u) => {
+      if (u === '/api/reports/synthese?format=csv') {
+        calls += 1;
+        return calls === 1 ? (new Promise<Response>((r) => { release = r; }) as unknown as Response) : undefined;
+      }
+      return everything(u);
+    });
+    await screen.findAllByRole('row');
+    const csv = screen.getByRole('button', { name: 'CSV' });
+    await userEvent.click(csv);
+    expect(csv).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Excel' })).toBeDisabled();
+    release(json(500, { message: 'Export impossible' }));
+    expect(await screen.findByText('Export impossible')).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('tab', { name: 'Mensuel' }));
+    expect(screen.queryByText('Export impossible')).not.toBeInTheDocument();
+  });
+
+  it('writes negative amounts of a table with the project minus and right-aligns an empty numeric cell', async () => {
+    const report = {
+      ...MENSUEL,
+      sections: [{
+        key: 't', title: 'Rentabilité',
+        table: {
+          columns: [{ key: 'lot', header: 'LOT' }, { key: 'margin', header: 'MARGE', unit: 'FCFA' }],
+          rows: [{ lot: 'LC-1', margin: -105000 }, { lot: 'LC-2', margin: 500 }, { lot: 'LC-3', margin: null }],
+        },
+      }],
+    };
+    mount((u) => (u === '/api/reports' ? json(200, ALL_TYPES) : u === '/api/reports/synthese' ? json(200, report) : undefined));
+    expect(await screen.findByText('−105 000 FCFA')).toHaveClass('text-right');
+    const empty = within(screen.getByText('LC-3').closest('tr')!).getByText('—');
+    expect(empty).toHaveClass('text-right');
   });
 });

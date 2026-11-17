@@ -174,6 +174,21 @@ describe('api client: files', () => {
     fetchMock.mockResolvedValueOnce(json(404, { message: 'Introuvable' }));
     await expect(api.blob('/tasks/t2/proof')).rejects.toMatchObject({ status: 404, message: 'Introuvable' });
   });
+  it('keeps only the base name of an announced filename and reads a case-insensitive RFC 5987 one', async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const names: string[] = [];
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    const append = vi.spyOn(document.body, 'appendChild').mockImplementation((n) => { names.push((n as HTMLAnchorElement).download); return n; });
+    const file = (cd: string) => Object.assign(new Response(null, { status: 200, headers: { 'content-disposition': cd } }), { blob: async () => new Blob(['x']) });
+    for (const cd of ['attachment; filename="../../etc/rapport.csv"', "attachment; filename*=utf-8'fr'rapport%20%C3%A9t%C3%A9.csv", 'attachment; filename="C:\\tmp\\r.xlsx"']) {
+      fetchMock.mockResolvedValueOnce(file(cd));
+      await api.download('/reports/synthese', undefined, 'fallback.csv');
+    }
+    expect(names).toEqual(['rapport.csv', 'rapport été.csv', 'r.xlsx']);
+    click.mockRestore();
+    append.mockRestore();
+  });
   it('downloads with the filename the server announces, the given one when it announces none', async () => {
     const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
     const names: string[] = [];

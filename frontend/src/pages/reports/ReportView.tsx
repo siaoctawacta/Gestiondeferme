@@ -1,10 +1,10 @@
 import { Card } from '../../components/ui/Card';
 import { Table, TD, TH, THead, TR } from '../../components/ui/Table';
-import { formatDateTime, formatDecimal, formatNumber, formatPct, formatMoney, orDash, signedMoney } from '../../lib/format';
+import { formatDateFr, formatDateTime, formatDecimal, formatNumber, formatPct, orDash, signedMoney } from '../../lib/format';
 import { ActivityCards } from '../../modules/financeShared';
 import { useLegal } from '../print/SheetFrame';
 import '../../styles/print-report.css';
-import type { ReportDto, ReportUnit } from './reportTypes';
+import type { ReportDto, ReportTable, ReportUnit } from './reportTypes';
 
 /** A report value by unit; `—` when the API has none. */
 export function formatReportValue(value: number | null, unit: ReportUnit | undefined): string {
@@ -21,7 +21,12 @@ export function formatReportValue(value: number | null, unit: ReportUnit | undef
 function cell(value: string | number | null | undefined, unit: ReportUnit | undefined): string {
   if (value === null || value === undefined || value === '') return '—';
   if (typeof value === 'string') return value;
-  return unit === 'FCFA' ? formatMoney(value) : formatReportValue(value, unit);
+  return formatReportValue(value, unit);
+}
+
+/** The columns holding numbers (a unit, or a number in some row): right-aligned, empty cells included. */
+function numericColumns(t: ReportTable): Set<string> {
+  return new Set(t.columns.filter((c) => c.unit || t.rows.some((r) => typeof r[c.key] === 'number')).map((c) => c.key));
 }
 
 /** Header printed on paper only: legal name, report title, generation time. */
@@ -31,7 +36,7 @@ function PrintHeader({ report }: { report: ReportDto }) {
     <header className="report-print-header hidden border-b border-border pb-3 print:block">
       <p className="text-lg font-bold">{legal?.name || report.farmName}</p>
       <p className="text-xl font-bold">{report.title}</p>
-      <p className="text-sm">Généré le {formatDateTime(report.generatedAt).replace(' ', ' à ')}</p>
+      <p className="text-sm">Généré le {formatDateFr(report.generatedAt)} à {formatDateTime(report.generatedAt).slice(formatDateFr(report.generatedAt).length).trim()}</p>
     </header>
   );
 }
@@ -43,7 +48,7 @@ export function ReportView({ report }: { report: ReportDto }) {
     <div className="report space-y-6">
       <PrintHeader report={report} />
       {report.sections.map((s) => (
-        <section key={s.key} aria-label={s.title} className="report-section space-y-4">
+        <section key={s.key} aria-label={titled ? s.title : undefined} className={`report-section space-y-4 ${s.table ? '' : 'report-section-short'}`}>
           {titled && <h2 className="text-xl font-bold">{s.title}</h2>}
           {s.rows && (
             <Card className="overflow-hidden">
@@ -70,18 +75,21 @@ export function ReportView({ report }: { report: ReportDto }) {
             <Card className="overflow-hidden">
               <Table>
                 <THead>
-                  <TR>{s.table.columns.map((c) => <TH key={c.key} className="px-5">{c.header}</TH>)}</TR>
+                  <TR>{s.table.columns.map((c) => <TH key={c.key} className={`px-5 ${numericColumns(s.table!).has(c.key) ? 'text-right' : ''}`}>{c.header}</TH>)}</TR>
                 </THead>
                 <tbody>
-                  {s.table.rows.map((row, i) => (
+                  {s.table.rows.map((row, i) => {
+                    const numeric = numericColumns(s.table!);
+                    return (
                     <TR key={i}>
                       {s.table!.columns.map((c) => (
-                        <TD key={c.key} className={`px-5 ${typeof row[c.key] === 'number' ? 'text-right' : ''}`}>
+                        <TD key={c.key} className={`px-5 ${numeric.has(c.key) ? 'text-right' : ''}`}>
                           {cell(row[c.key], c.unit)}
                         </TD>
                       ))}
                     </TR>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </Table>
             </Card>
