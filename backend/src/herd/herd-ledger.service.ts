@@ -537,44 +537,80 @@ export class HerdLedgerService implements OccupationSource {
     return { before: batch, after };
   }
 
+  /**
+   * The ONE live-count computation: for each (batch, day) request, the
+   * initial count when the batch had entered by that day plus the signed
+   * events dated up to it (a day of `undefined` = every event). Two queries
+   * whatever the requests.
+   */
+  private async countsAt(
+    requests: { batchId: string; at?: Date }[],
+    client: Tx,
+  ): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    if (requests.length === 0) return result;
+    const ids = [...new Set(requests.map((r) => r.batchId))];
+    const open = requests.some((r) => !r.at);
+    const last = Math.max(...requests.map((r) => r.at?.getTime() ?? 0));
+    const [batches, sums] = await Promise.all([
+      client.animalBatch.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, initialCount: true, entryDate: true },
+      }),
+      client.batchEvent.groupBy({
+        by: ['batchId', 'date', 'type'],
+        where: {
+          batchId: { in: ids },
+          ...(open ? {} : { date: { lte: new Date(last) } }),
+        },
+        _sum: { quantity: true },
+      }),
+    ]);
+    const batch = new Map(batches.map((b) => [b.id, b]));
+    const events = new Map<string, { time: number; delta: number }[]>();
+    for (const s of sums) {
+      const list = events.get(s.batchId) ?? [];
+      list.push({
+        time: s.date.getTime(),
+        delta: EVENT_SIGN[s.type] * (s._sum.quantity ?? 0),
+      });
+      events.set(s.batchId, list);
+    }
+    for (const { batchId, at } of requests) {
+      const key = `${batchId}:${at?.getTime() ?? ''}`;
+      if (result.has(key)) continue;
+      const b = batch.get(batchId);
+      if (!b || (at && b.entryDate.getTime() > at.getTime())) {
+        result.set(key, 0);
+        continue;
+      }
+      result.set(
+        key,
+        (events.get(batchId) ?? []).reduce(
+          (n, e) => (!at || e.time <= at.getTime() ? n + e.delta : n),
+          b.initialCount,
+        ),
+      );
+    }
+    return result;
+  }
+
   /** initialCount + events up to `at` (all of them by default); 0 before the entry date. */
   async liveCounts(
     batchIds: string[],
     at?: Date,
     client: Tx = this.prisma,
   ): Promise<Map<string, number>> {
-    const result = new Map(batchIds.map((id) => [id, 0]));
-    if (batchIds.length === 0) return result;
-    const [batches, sums] = await Promise.all([
-      client.animalBatch.findMany({
-        where: { id: { in: batchIds } },
-        select: { id: true, initialCount: true, entryDate: true },
-      }),
-      client.batchEvent.groupBy({
-        by: ['batchId', 'type'],
-        where: {
-          batchId: { in: batchIds },
-          ...(at ? { date: { lte: at } } : {}),
-        },
-        _sum: { quantity: true },
-      }),
-    ]);
-    const entered = new Set<string>();
-    for (const b of batches) {
-      if (!at || b.entryDate.getTime() <= at.getTime()) {
-        result.set(b.id, b.initialCount);
-        entered.add(b.id);
-      }
-    }
-    for (const s of sums) {
-      if (!entered.has(s.batchId)) continue;
-      result.set(
-        s.batchId,
-        (result.get(s.batchId) ?? 0) +
-          EVENT_SIGN[s.type] * (s._sum.quantity ?? 0),
-      );
-    }
-    return result;
+    const counts = await this.countsAt(
+      batchIds.map((batchId) => ({ batchId, at })),
+      client,
+    );
+    return new Map(
+      batchIds.map((id) => [
+        id,
+        counts.get(`${id}:${at?.getTime() ?? ''}`) ?? 0,
+      ]),
+    );
   }
 
   /**
@@ -650,51 +686,13 @@ export class HerdLedgerService implements OccupationSource {
    * number of pairs. The answer for a pair is exactly `liveCounts([batchId],
    * date)`; it is keyed `${batchId}:${date.getTime()}`.
    */
-  async liveCountsOnDays(
+  liveCountsOnDays(
     pairs: { batchId: string; date: Date }[],
   ): Promise<Map<string, number>> {
-    const result = new Map<string, number>();
-    if (pairs.length === 0) return result;
-    const ids = [...new Set(pairs.map((p) => p.batchId))];
-    const last = Math.max(...pairs.map((p) => p.date.getTime()));
-    const [batches, sums] = await Promise.all([
-      this.prisma.animalBatch.findMany({
-        where: { id: { in: ids } },
-        select: { id: true, initialCount: true, entryDate: true },
-      }),
-      this.prisma.batchEvent.groupBy({
-        by: ['batchId', 'date', 'type'],
-        where: { batchId: { in: ids }, date: { lte: new Date(last) } },
-        _sum: { quantity: true },
-      }),
-    ]);
-    const batch = new Map(batches.map((b) => [b.id, b]));
-    const events = new Map<string, { time: number; delta: number }[]>();
-    for (const s of sums) {
-      const list = events.get(s.batchId) ?? [];
-      list.push({
-        time: s.date.getTime(),
-        delta: EVENT_SIGN[s.type] * (s._sum.quantity ?? 0),
-      });
-      events.set(s.batchId, list);
-    }
-    for (const { batchId, date } of pairs) {
-      const key = `${batchId}:${date.getTime()}`;
-      const b = batch.get(batchId);
-      if (result.has(key)) continue;
-      if (!b || b.entryDate.getTime() > date.getTime()) {
-        result.set(key, 0);
-        continue;
-      }
-      result.set(
-        key,
-        (events.get(batchId) ?? []).reduce(
-          (n, e) => (e.time <= date.getTime() ? n + e.delta : n),
-          b.initialCount,
-        ),
-      );
-    }
-    return result;
+    return this.countsAt(
+      pairs.map((p) => ({ batchId: p.batchId, at: p.date })),
+      this.prisma,
+    );
   }
 
   /**
@@ -729,6 +727,45 @@ export class HerdLedgerService implements OccupationSource {
       if (totals) totals[s.type] = s._sum.quantity ?? 0;
     }
     return result;
+  }
+
+  /**
+   * What happened to each lot between two days (both inclusive): `entries`
+   * (its opening count when it entered in the period, plus `ENTREE`
+   * deliveries), `deaths`, `sales` and `culls`. One query (`eventTotals`).
+   */
+  async flows(
+    lots: { id: string; entryDate: Date; initialCount: number }[],
+    from: Date,
+    to: Date,
+  ): Promise<
+    Map<
+      string,
+      { entries: number; deaths: number; sales: number; culls: number }
+    >
+  > {
+    const totals = await this.eventTotals(
+      lots.map((l) => l.id),
+      from,
+      to,
+    );
+    return new Map(
+      lots.map((l) => {
+        const t = totals.get(l.id);
+        const entered =
+          l.entryDate.getTime() >= from.getTime() &&
+          l.entryDate.getTime() <= to.getTime();
+        return [
+          l.id,
+          {
+            entries: (entered ? l.initialCount : 0) + (t?.ENTREE ?? 0),
+            deaths: t?.MORTALITE ?? 0,
+            sales: t?.VENTE ?? 0,
+            culls: t?.REFORME ?? 0,
+          },
+        ];
+      }),
+    );
   }
 
   /** Live animals of the `EN_COURS` batches housed in each building. */

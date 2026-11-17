@@ -21,7 +21,13 @@ export interface ReportCard {
 
 export interface ReportTable {
   /** Column keys are unique within the table. */
-  columns: { key: string; header: string; unit?: ReportUnit }[];
+  /** `date`: the cells are `dd/mm/yyyy` texts; the Excel file writes them as real dates. */
+  columns: {
+    key: string;
+    header: string;
+    unit?: ReportUnit;
+    date?: boolean;
+  }[];
   rows: Record<string, string | number | null>[];
 }
 

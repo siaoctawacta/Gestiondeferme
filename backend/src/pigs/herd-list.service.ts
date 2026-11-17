@@ -111,40 +111,13 @@ export class HerdListService {
   /**
    * Pigs housed in `farmIds` (the "cheptel porcin" total): the live animals plus
    * the live count of the pig lots. Without `at` it is today's headcount (open
-   * lots only). With `at`, the headcount at the end of that day: animals born by
-   * then (an unknown birth date counts as born) and not yet gone (`exitDate`
-   * after `at`), and the pig lots open that day at the count they had.
+   * lots only). With `at`, the headcount at the end of that day (`animalsHoused`
+   * and the pig lots open that day at the count they had).
    */
   async totalPigs(farmIds: string[], at?: Date): Promise<number> {
     const farmId = { in: farmIds };
     const [animals, lots] = await Promise.all([
-      at
-        ? this.prisma.animal.count({
-            where: {
-              farmId,
-              AND: [
-                { OR: [{ birthDate: null }, { birthDate: { lte: at } }] },
-                {
-                  OR: [
-                    { exitDate: null, status: { in: LIVE_STATUSES } },
-                    { exitDate: { gt: at } },
-                  ],
-                },
-              ],
-            },
-          })
-        : this.prisma.animal
-            .groupBy({
-              by: ['status'],
-              where: { farmId },
-              _count: { _all: true },
-            })
-            .then((groups) =>
-              groups.reduce(
-                (n, g) => n + animalHeadcount(g.status) * g._count._all,
-                0,
-              ),
-            ),
+      this.animalsHoused(farmIds, at),
       this.prisma.animalBatch.findMany({
         where: {
           farmId,
@@ -167,6 +140,51 @@ export class HerdListService {
       at,
     );
     return animals + lots.reduce((n, l) => n + (alive.get(l.id) ?? 0), 0);
+  }
+
+  /**
+   * Animals housed (`animalHeadcount`: still on the farm by status) on the
+   * farms, today or at the end of `at`. For a past day an animal counts when
+   * it had entered by then (its birth date, or, with none known, the day it
+   * was registered: the model has no purchase date) and had not left yet
+   * (`exitDate` after `at`; one with no exit date is judged by its status). Limit:
+   * an animal bought after `at` whose birth date is known and earlier counts
+   * from its birth.
+   */
+  private async animalsHoused(farmIds: string[], at?: Date): Promise<number> {
+    const farmId = { in: farmIds };
+    if (!at) {
+      const groups = await this.prisma.animal.groupBy({
+        by: ['status'],
+        where: { farmId },
+        _count: { _all: true },
+      });
+      return groups.reduce(
+        (n, g) => n + animalHeadcount(g.status) * g._count._all,
+        0,
+      );
+    }
+    const entered = {
+      farmId,
+      OR: [
+        { birthDate: { lte: at } },
+        { birthDate: null, createdAt: { lt: addDays(at, 1) } },
+      ],
+    };
+    const [stayed, left] = await Promise.all([
+      this.prisma.animal.groupBy({
+        by: ['status'],
+        where: { ...entered, exitDate: null },
+        _count: { _all: true },
+      }),
+      this.prisma.animal.count({
+        where: { ...entered, exitDate: { gt: at } },
+      }),
+    ]);
+    return (
+      left +
+      stayed.reduce((n, g) => n + animalHeadcount(g.status) * g._count._all, 0)
+    );
   }
 
   /** The animals (not the lots) that left the herd between two days (both inclusive), by reason. One query. */

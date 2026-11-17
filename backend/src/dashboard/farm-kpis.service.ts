@@ -16,7 +16,7 @@ type LatestDays = { farmId: string; _max: { date: Date | null } }[];
  * The production figures of the farms in view: the dashboard shows them and
  * the synthèse report reads the same functions, so they are one definition.
  * Every « last day » is each farm's own latest recorded day, taken from its
- * period figures (`EggProductionService` / `FeedService.periodFigures`), never
+ * day figures (`EggProductionService.periodFiguresOnDays` / `FeedService.dayFigures`), never
  * recomputed here.
  */
 @Injectable()
@@ -80,13 +80,10 @@ export class FarmKpisService {
       _max: { date: true },
     });
     const latest = this.latest(rows);
-    const days = await Promise.all(
-      latest.map((l) => this.eggs.periodFigures([l.farmId], l.date, l.date)),
+    const days = await this.eggs.periodFiguresOnDays(
+      latest.map((l) => ({ farmId: l.farmId, date: l.date })),
     );
-    return {
-      eggs: days.reduce((n, d) => n + d.collected, 0),
-      hens: days.reduce((n, d) => n + d.henDays, 0),
-    };
+    return { eggs: days.collected, hens: days.henDays };
   }
 
   async eggSeries(farmIds: string[]): Promise<EggPointDto[]> {
@@ -110,10 +107,7 @@ export class FarmKpisService {
       _max: { date: true },
     });
     const latest = this.latest(rows);
-    const days = await Promise.all(
-      latest.map((l) => this.feed.periodFigures([l.farmId], l.date, l.date)),
-    );
-    return days.reduce((n, d) => n + d.feedKg, 0);
+    return (await this.feed.dayFigures(latest, [])).feedKg;
   }
 
   /** Sum over the farms of each one's latest day with any water record. */
@@ -124,9 +118,6 @@ export class FarmKpisService {
       _max: { date: true },
     });
     const latest = this.latest(rows);
-    const days = await Promise.all(
-      latest.map((l) => this.feed.periodFigures([l.farmId], l.date, l.date)),
-    );
-    return days.reduce((n, d) => n + d.waterL, 0);
+    return (await this.feed.dayFigures([], latest)).waterL;
   }
 }

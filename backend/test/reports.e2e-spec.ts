@@ -58,6 +58,7 @@ describe('Reports (e2e)', () => {
   let lot3: string;
   let chair: string;
   let userId: string;
+  let productId: string;
 
   beforeAll(async () => {
     app = await createTestApp();
@@ -195,6 +196,7 @@ describe('Reports (e2e)', () => {
         unitCost: 300,
       },
     });
+    productId = product.id;
     const feed = (batchId: string, date: string, kg: number) =>
       prisma.feedDistribution.create({
         data: {
@@ -265,6 +267,7 @@ describe('Reports (e2e)', () => {
           sex: tag.startsWith('VR') ? 'M' : 'F',
           buildingId: world.pigBld,
           status,
+          birthDate: D('2025-01-01'),
           ...over,
         },
       });
@@ -451,6 +454,13 @@ describe('Reports (e2e)', () => {
     await act('VACCINATION', '2026-10-20', { batchId: lot1 });
     await act('VACCINATION', '2026-10-31', { batchId: lot2 });
     await act('VACCINATION', '2026-11-05', { batchId: lot1 });
+    // planned for 28/10, completed from the plan on 05/11: late at the end of October, not of 05/11
+    await act(
+      'VACCINATION',
+      '2026-10-28',
+      { batchId: lot2 },
+      { ...done('2026-11-05'), enteredDone: false },
+    );
     await prisma.quarantine.createMany({
       data: [
         {
@@ -839,7 +849,7 @@ describe('Reports (e2e)', () => {
         ['vaccinations', 'Vaccinations réalisées', 2],
         ['treatments', 'Traitements réalisés', 2],
         ['disinfections', 'Désinfections réalisées', 1],
-        ['overdue', 'Actes en retard (au 31/10/2026)', 2],
+        ['overdue', 'Actes en retard (au 31/10/2026)', 3],
         ['quarantines', 'Quarantaines en cours', 1],
         ['incidents', 'Incidents', 2],
         ['biosecurity', 'Contrôles de biosécurité', 3],
@@ -1110,8 +1120,8 @@ describe('Reports (e2e)', () => {
         title: "Délais d'attente en cours",
         table: {
           columns: [
-            { key: 'target', header: 'LOT / ANIMAL' },
-            { key: 'until', header: "JUSQU'AU" },
+            { key: 'target', header: 'CIBLE' },
+            { key: 'until', header: "JUSQU'AU", date: true },
           ],
           rows: [{ target: 'LC-0001', until: '04/11/2026' }],
         },
@@ -1122,7 +1132,7 @@ describe('Reports (e2e)', () => {
         { key: 'code', header: 'LOT' },
         { key: 'type', header: 'TYPE' },
         { key: 'deaths', header: 'MORTS (PÉRIODE)' },
-        { key: 'rate', header: 'TAUX DE MORTALITÉ', unit: '%' },
+        { key: 'rate', header: 'MORTALITÉ CUMULÉE', unit: '%' },
       ]);
       const byCode = Object.fromEntries(
         mortality.table!.rows.map((x) => [x.code as string, x]),
@@ -1226,14 +1236,14 @@ describe('Reports (e2e)', () => {
       expect(table.columns.map((c) => [c.key, c.header, c.unit])).toEqual([
         ['code', 'LOT', undefined],
         ['type', 'TYPE', undefined],
-        ['age', 'ÂGE (J)', undefined],
-        ['alive', 'EFFECTIF', undefined],
-        ['deaths', 'MORTS', undefined],
-        ['mortality', 'MORTALITÉ', '%'],
-        ['lastWeight', 'DERNIER POIDS (G)', undefined],
-        ['gmd', 'GMD (G/J)', undefined],
-        ['ic', 'IC', undefined],
-        ['laying', 'TAUX DE PONTE', '%'],
+        ['age', "ÂGE (J) DEPUIS L'ENTRÉE", undefined],
+        ['alive', 'EFFECTIF (AU 31/10/2026)', undefined],
+        ['deaths', "MORTS DEPUIS L'ENTRÉE", undefined],
+        ['mortality', "MORTALITÉ DEPUIS L'ENTRÉE", '%'],
+        ['lastWeight', 'DERNIER POIDS CONNU (G)', undefined],
+        ['gmd', "GMD (G/J) DEPUIS L'ENTRÉE", undefined],
+        ['ic', "IC DEPUIS L'ENTRÉE", undefined],
+        ['laying', 'TAUX DE PONTE (PÉRIODE)', '%'],
       ]);
       const row = table.rows.find((x) => x.code === 'LC-2026-14')!;
       const detail = (
@@ -1454,7 +1464,7 @@ describe('Reports (e2e)', () => {
       expect(lines).toContain("Finance;Chiffre d'affaires;3970000;FCFA");
       expect(lines).toContain('Activité Général;Marge;-1135000;FCFA');
       expect(lines).toContain('Finance');
-      expect(lines).toContain('CATÉGORIE;TYPE;MONTANT');
+      expect(lines).toContain('CATÉGORIE;TYPE;MONTANT (FCFA)');
       expect(lines.indexOf('')).toBeGreaterThan(0);
     });
 
@@ -1565,9 +1575,43 @@ describe('Reports (e2e)', () => {
         where: { farmId: world.farmId },
       });
       for (let i = 0; i < 27; i++) {
-        const id = await mkLot(`LX-${i}`, 100, '2026-10-03');
+        const id = await mkLot(
+          `LX-${i}`,
+          100,
+          '2026-10-03',
+          i % 3 === 0
+            ? {
+                species: 'PORCIN',
+                type: 'ENGRAISSEMENT',
+                buildingId: world.pigBld,
+              }
+            : {},
+        );
         await event(id, '2026-10-12', 'MORTALITE', 1);
         await eggs(id, '2026-10-21', 50);
+        await prisma.feedDistribution.create({
+          data: {
+            farmId: world.farmId,
+            batchId: id,
+            feedProductId: productId,
+            date: D('2026-10-15'),
+            quantityKg: 10,
+            unitCost: 300,
+            cost: 3000,
+          },
+        });
+        await prisma.healthAct.create({
+          data: {
+            farmId: world.farmId,
+            type: 'VACCINATION',
+            date: D('2026-10-14'),
+            batchId: id,
+            createdById: userId,
+            status: 'REALISE',
+            doneDate: D('2026-10-14'),
+            withdrawalDays: 30,
+          },
+        });
         await prisma.weighing.createMany({
           data: [
             {
@@ -1685,6 +1729,71 @@ describe('Reports (e2e)', () => {
         })
         .expect(403);
       expect(await batchCode(b.id)).toBe('LB-1');
+    });
+  });
+
+  /* ------------------------------------------------------ the state at the end day */
+
+  describe('state at the end day', () => {
+    it('counts an act planned for 28/10 and done on 05/11 late in October, not at 05/11', async () => {
+      const late = async (to: string) =>
+        figure(
+          await report('sanitaire', { from: '2026-10-01', to }),
+          'sante',
+          'overdue',
+        );
+      expect(await late('2026-10-31')).toBe(3); // 20/10, 28/10 (done since) and 31/10
+      expect(await late('2026-10-28')).toBe(2); // 20/10 and 28/10: late at the end of its day
+      expect(await late('2026-11-05')).toBe(3); // 20/10, 31/10 and 05/11 still planned; 28/10 was done that day
+    });
+
+    it('does not look at the lot current status for a past period', async () => {
+      const closed = await mkLot('LC-CLOSED', 10, '2026-09-01', {
+        status: 'CLOTURE',
+        closedAt: new Date('2026-11-10T10:00:00Z'),
+      });
+      const act = await prisma.healthAct.create({
+        data: {
+          farmId: world.farmId,
+          type: 'VACCINATION',
+          date: D('2026-10-27'),
+          batchId: closed,
+          createdById: userId,
+        },
+      });
+      const late = async (to: string) =>
+        figure(
+          await report('sanitaire', { from: '2026-10-01', to }),
+          'sante',
+          'overdue',
+        );
+      expect(await late('2026-10-31')).toBe(4);
+      // today the lot is closed: the health list does not call the act late
+      const today = new Date().toISOString().slice(0, 10);
+      expect(await late(today)).toBe(3);
+      await prisma.healthAct.delete({ where: { id: act.id } });
+      await prisma.animalBatch.delete({ where: { id: closed } });
+    });
+
+    it('does not count an animal registered after the day in a past headcount', async () => {
+      const at = async (day: string) =>
+        figure(await report('quotidien', { date: day }), 'porcine', 'pigs');
+      const before = (await at('2026-10-31')) as number;
+      const animal = await prisma.animal.create({
+        data: {
+          farmId: world.farmId,
+          tag: 'TR-NEW',
+          category: 'TRUIE',
+          sex: 'F',
+          buildingId: world.pigBld,
+        },
+      });
+      expect(await at('2026-10-31')).toBe(before); // no birth date: counted from its registration day (today)
+      const today = new Date().toISOString().slice(0, 10);
+      expect(
+        figure(await report('quotidien', { date: today }), 'porcine', 'pigs'),
+      ).toBe(before + 1 + 0);
+      await prisma.animal.delete({ where: { id: animal.id } });
     });
   });
 });

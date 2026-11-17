@@ -87,6 +87,18 @@ const noEggs = (): EggPeriodFigures => ({
   henDays: 0,
 });
 
+const sumFigures = (
+  byBatch: Map<string, EggPeriodFigures>,
+): EggPeriodFigures => {
+  const total = noEggs();
+  for (const f of byBatch.values()) {
+    for (const key of Object.keys(total) as (keyof EggPeriodFigures)[]) {
+      total[key] += f[key];
+    }
+  }
+  return total;
+};
+
 const SORTABLE = ['date', 'collected'];
 export const NO_EGGS = "Ce lot ne produit pas d'œufs";
 const OVER =
@@ -113,14 +125,39 @@ export class EggProductionService implements BatchHistorySource {
    * and days; `periodFigures` is the sum of these, and `layingRate(collected,
    * henDays)` the one laying-rate computation of the dashboard and the reports.
    */
-  async periodFiguresByBatch(
+  periodFiguresByBatch(
     farmIds: string[],
     from: Date,
     to: Date,
   ): Promise<Map<string, EggPeriodFigures>> {
+    return this.figuresWhere({
+      farmId: { in: farmIds },
+      date: { gte: from, lte: to },
+    });
+  }
+
+  /**
+   * The totals of given (farm, day) pairs (each farm's own latest day for the
+   * dashboard): the same figures through the same queries whatever the number
+   * of pairs, so the dashboard's query count does not grow with the farms.
+   */
+  async periodFiguresOnDays(
+    pairs: { farmId: string; date: Date }[],
+  ): Promise<EggPeriodFigures> {
+    if (pairs.length === 0) return noEggs();
+    return sumFigures(
+      await this.figuresWhere({
+        OR: pairs.map((p) => ({ farmId: p.farmId, date: p.date })),
+      }),
+    );
+  }
+
+  private async figuresWhere(
+    where: Prisma.EggProductionWhereInput,
+  ): Promise<Map<string, EggPeriodFigures>> {
     const rows = await this.prisma.eggProduction.groupBy({
       by: ['batchId', 'date'],
-      where: { farmId: { in: farmIds }, date: { gte: from, lte: to } },
+      where,
       _sum: {
         collected: true,
         broken: true,
@@ -157,15 +194,7 @@ export class EggProductionService implements BatchHistorySource {
     from: Date,
     to: Date,
   ): Promise<EggPeriodFigures> {
-    const total = noEggs();
-    for (const f of (
-      await this.periodFiguresByBatch(farmIds, from, to)
-    ).values()) {
-      for (const key of Object.keys(total) as (keyof EggPeriodFigures)[]) {
-        total[key] += f[key];
-      }
-    }
-    return total;
+    return sumFigures(await this.periodFiguresByBatch(farmIds, from, to));
   }
 
   /** Earliest egg record of the lot: moving the lot's entry date past it is refused. */

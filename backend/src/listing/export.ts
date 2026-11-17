@@ -8,7 +8,8 @@ export type ExportColumn<T> = {
 
 export type ExportFormat = 'csv' | 'xlsx';
 
-const FORMULA_TRIGGER = /^[=+\-@]/;
+/** A spreadsheet reads a cell as a formula from its first non-blank character: `=`, `+`, `-`, `@`; a leading tab or CR is a known injection vector too. */
+const FORMULA_TRIGGER = /^(?:[\t\r]|\s*[=+\-@])/;
 
 /** One CSV cell: a number with the decimal comma of the French spreadsheets, a text quoted when it needs it and neutralised when it could be a formula. */
 export function csvCell(value: string | number | null): string {

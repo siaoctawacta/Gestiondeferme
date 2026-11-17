@@ -69,7 +69,7 @@ describe('reportCsv', () => {
           'Activité Général;Marge;-1135000;FCFA',
           '',
           'Finance',
-          'CATÉGORIE;MONTANT',
+          'CATÉGORIE;MONTANT (FCFA)',
           "'=Ventes;3970000",
           '"Aliment; ""gros""";12,5',
           '',
@@ -116,12 +116,38 @@ describe('reportXlsx', () => {
       '%',
     ]);
     const table = wb.getWorksheet('Finance')!;
-    expect(table.getRow(1).values).toEqual([undefined, 'CATÉGORIE', 'MONTANT']);
+    expect(table.getRow(1).values).toEqual([
+      undefined,
+      'CATÉGORIE',
+      'MONTANT (FCFA)',
+    ]);
     expect(table.getRow(3).values).toEqual([
       undefined,
       'Aliment; "gros"',
       12.5,
     ]);
+  });
+
+  it('writes a date column as real dates', async () => {
+    const wb = new Workbook();
+    await wb.xlsx.load(
+      (await reportXlsx({
+        ...report,
+        sections: [
+          {
+            key: 'd',
+            title: 'Délais',
+            table: {
+              columns: [{ key: 'until', header: "JUSQU'AU", date: true }],
+              rows: [{ until: '04/11/2026' }],
+            },
+          },
+        ],
+      })) as unknown as ArrayBuffer,
+    );
+    const cell = wb.getWorksheet('Délais')!.getCell('A2');
+    expect(cell.value).toEqual(new Date(Date.UTC(2026, 10, 4)));
+    expect(cell.numFmt).toBe('dd/mm/yyyy');
   });
 
   it('cuts sheet names to 31 characters, without the characters Excel refuses, and keeps them unique', async () => {

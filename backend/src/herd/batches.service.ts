@@ -24,6 +24,7 @@ import { mortalityRate } from '../indicators/indicators';
 import { nextBatchCode } from './batch-code';
 import { BatchHistoryRegistry } from './batch-history';
 import {
+  addDays,
   assertNotFuture,
   BEFORE_ENTRY,
   daysBetween,
@@ -79,6 +80,10 @@ export interface BatchItem {
   motherAnimalId: string | null;
   notes: string | null;
 }
+
+/** Still open at the end of `day` (a lot closed that day is not). */
+export const lotOpenAt = (lot: { closedAt: Date | null }, day: Date): boolean =>
+  lot.closedAt === null || lot.closedAt.getTime() >= addDays(day, 1).getTime();
 
 export const TYPE_LABEL: Record<BatchType, string> = {
   CHAIR: 'Chair',
@@ -244,6 +249,31 @@ export class BatchesService {
     });
     if (!batch) throw new NotFoundException(BATCH_NOT_FOUND);
     return batch;
+  }
+
+  /**
+   * The lots of the farms open at some point of the period (entered by its
+   * end, still open or closed on or after its start), by code: one query. The
+   * reports list them; `lotOpenAt` says which are still open on a day.
+   */
+  periodLots(farmIds: string[], from: Date, to: Date) {
+    return this.prisma.animalBatch.findMany({
+      where: {
+        farmId: { in: farmIds },
+        entryDate: { lte: to },
+        OR: [{ status: 'EN_COURS' }, { closedAt: { gte: from } }],
+      },
+      select: {
+        id: true,
+        code: true,
+        species: true,
+        type: true,
+        entryDate: true,
+        closedAt: true,
+        initialCount: true,
+      },
+      orderBy: [{ code: 'asc' }, { id: 'asc' }],
+    });
   }
 
   /** The batches of the caller's farms among `ids` (an id outside them is simply absent), in the order of `ids`: a fixed number of queries. */

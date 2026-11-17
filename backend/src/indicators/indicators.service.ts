@@ -65,7 +65,9 @@ export class IndicatorsService implements OnModuleInit {
     ]);
     const byLot = new Map<string, typeof weighings>();
     for (const w of weighings) {
-      byLot.set(w.batchId, [...(byLot.get(w.batchId) ?? []), w]);
+      const own = byLot.get(w.batchId);
+      if (own) own.push(w);
+      else byLot.set(w.batchId, [w]);
     }
     for (const batch of lots) {
       const own = byLot.get(batch.id) ?? [];

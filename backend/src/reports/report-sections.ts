@@ -1,7 +1,7 @@
 import type { RequestContext } from '../access/decorators';
 import { can, type ModuleKey } from '../access/permissions';
 import type { Role } from '../access/roles';
-import { addDays, formatDay } from '../common/days';
+import { formatDay } from '../common/days';
 import type { DashboardService } from '../dashboard/dashboard.service';
 import type { FarmKpisService } from '../dashboard/farm-kpis.service';
 import type { EggProductionService } from '../eggs/egg-production.service';
@@ -12,7 +12,11 @@ import type { FeedService } from '../feed/feed.service';
 import type { Species } from '../generated/prisma/enums';
 import type { BreedingService } from '../breeding/breeding.service';
 import type { HealthReport } from '../health/health-report';
-import { TYPE_LABEL, type BatchesService } from '../herd/batches.service';
+import {
+  lotOpenAt,
+  TYPE_LABEL,
+  type BatchesService,
+} from '../herd/batches.service';
 import type { HerdLedgerService } from '../herd/herd-ledger.service';
 import { layingRate } from '../indicators/indicators';
 import type { IndicatorsService } from '../indicators/indicators.service';
@@ -75,41 +79,17 @@ const readsAny =
 
 /* ------------------------------------------------------------------ shared */
 
-interface PeriodLot {
-  id: string;
-  code: string;
-  species: Species;
-  type: keyof typeof TYPE_LABEL;
-  entryDate: Date;
-  closedAt: Date | null;
-  initialCount: number;
-}
+type PeriodLot = Awaited<ReturnType<BatchesService['periodLots']>>[number];
 
-/** The lots open at some point of the period (entered by its end, still open or closed after its start). One query. */
+/** The lots open at some point of the period (`BatchesService.periodLots`), loaded once per report. */
 const periodLots = (env: SectionEnv): Promise<PeriodLot[]> =>
   env.once('lots', () =>
-    env.readers.prisma.animalBatch.findMany({
-      where: {
-        farmId: { in: env.ctx.farmIds },
-        entryDate: { lte: env.period.to },
-        OR: [{ status: 'EN_COURS' }, { closedAt: { gte: env.period.from } }],
-      },
-      select: {
-        id: true,
-        code: true,
-        species: true,
-        type: true,
-        entryDate: true,
-        closedAt: true,
-        initialCount: true,
-      },
-      orderBy: [{ code: 'asc' }, { id: 'asc' }],
-    }),
+    env.readers.batches.periodLots(
+      env.ctx.farmIds,
+      env.period.from,
+      env.period.to,
+    ),
   );
-
-/** Still open at the end of `day`. */
-const openAt = (lot: PeriodLot, day: Date): boolean =>
-  lot.closedAt === null || lot.closedAt.getTime() >= addDays(day, 1).getTime();
 
 /** The species of lots the role may read. */
 const speciesRead = (role: Role): Species[] => [
@@ -135,28 +115,23 @@ const avicole: SectionDef = {
     const { readers: r, ctx, period } = env;
     const { from, to } = period;
     const lots = (await periodLots(env)).filter((l) => l.species === 'AVICOLE');
-    const open = lots.filter((l) => openAt(l, to));
-    const [alive, totals, eggs] = await Promise.all([
+    const open = lots.filter((l) => lotOpenAt(l, to));
+    const [alive, flows, eggs] = await Promise.all([
       r.ledger.liveCounts(
         open.map((l) => l.id),
         to,
       ),
-      r.ledger.eventTotals(
-        lots.map((l) => l.id),
-        from,
-        to,
-      ),
+      r.ledger.flows(lots, from, to),
       r.eggs.periodFigures(ctx.farmIds, from, to),
     ]);
-    const sum = (pick: (t: Record<string, number>) => number) =>
-      [...totals.values()].reduce((n, t) => n + pick(t), 0);
-    const entered = lots
-      .filter(
-        (l) =>
-          l.entryDate.getTime() >= from.getTime() &&
-          l.entryDate.getTime() <= to.getTime(),
-      )
-      .reduce((n, l) => n + l.initialCount, 0);
+    const sum = (
+      pick: (f: {
+        entries: number;
+        deaths: number;
+        sales: number;
+        culls: number;
+      }) => number,
+    ) => [...flows.values()].reduce((n, f) => n + pick(f), 0);
     const at = `(au ${frenchDay(to)})`;
     return {
       key: 'avicole',
@@ -168,21 +143,25 @@ const avicole: SectionDef = {
           `Volailles vivantes ${at}`,
           [...alive.values()].reduce((a, b) => a + b, 0),
         ),
-        row('entries', 'Entrées', entered + sum((t) => t.ENTREE)),
+        row(
+          'entries',
+          'Entrées',
+          sum((f) => f.entries),
+        ),
         row(
           'deaths',
           'Morts',
-          sum((t) => t.MORTALITE),
+          sum((f) => f.deaths),
         ),
         row(
           'sales',
           'Ventes',
-          sum((t) => t.VENTE),
+          sum((f) => f.sales),
         ),
         row(
           'culls',
           'Réformes',
-          sum((t) => t.REFORME),
+          sum((f) => f.culls),
         ),
         row('collected', 'Œufs collectés', eggs.collected),
         row('marketable', 'Œufs commercialisables', eggs.marketable),
@@ -220,25 +199,21 @@ const porcine: SectionDef = {
     const { readers: r, ctx, period } = env;
     const { from, to } = period;
     const lots = (await periodLots(env)).filter((l) => l.species === 'PORCIN');
-    const [pigs, totals, exits, reproduction] = await Promise.all([
+    const [pigs, flows, exits, reproduction] = await Promise.all([
       r.herd.totalPigs(ctx.farmIds, to),
-      r.ledger.eventTotals(
-        lots.map((l) => l.id),
-        from,
-        to,
-      ),
+      r.ledger.flows(lots, from, to),
       r.herd.animalExits(ctx.farmIds, from, to),
       reproductionRows(env),
     ]);
-    const sum = (pick: (t: Record<string, number>) => number) =>
-      [...totals.values()].reduce((n, t) => n + pick(t), 0);
+    const sum = (pick: (f: { deaths: number; sales: number }) => number) =>
+      [...flows.values()].reduce((n, f) => n + pick(f), 0);
     return {
       key: 'porcine',
       title: 'Production porcine',
       rows: [
         row('pigs', `Porcs (au ${frenchDay(to)})`, pigs),
-        row('deaths', 'Morts', sum((t) => t.MORTALITE) + exits.dead),
-        row('sales', 'Ventes', sum((t) => t.VENTE) + exits.sold),
+        row('deaths', 'Morts', sum((f) => f.deaths) + exits.dead),
+        row('sales', 'Ventes', sum((f) => f.sales) + exits.sold),
         ...reproduction,
       ],
     };
@@ -479,8 +454,8 @@ const delais: SectionDef = {
       title: "Délais d'attente en cours",
       table: {
         columns: [
-          { key: 'target', header: 'LOT / ANIMAL' },
-          { key: 'until', header: "JUSQU'AU" },
+          { key: 'target', header: 'CIBLE' },
+          { key: 'until', header: "JUSQU'AU", date: true },
         ],
         rows: withdrawals.map((w) => ({
           target: w.target,
@@ -503,7 +478,7 @@ const mortalite: SectionDef = {
     const ids = lots.map((l) => l.id);
     const [items, totals] = await Promise.all([
       r.batches.getMany(ctx, ids),
-      r.ledger.eventTotals(ids, period.from, period.to),
+      r.ledger.flows(lots, period.from, period.to),
     ]);
     const byId = new Map(items.map((i) => [i.id, i]));
     return {
@@ -514,12 +489,12 @@ const mortalite: SectionDef = {
           { key: 'code', header: 'LOT' },
           { key: 'type', header: 'TYPE' },
           { key: 'deaths', header: 'MORTS (PÉRIODE)' },
-          { key: 'rate', header: 'TAUX DE MORTALITÉ', unit: '%' },
+          { key: 'rate', header: 'MORTALITÉ CUMULÉE', unit: '%' },
         ],
         rows: lots.map((l) => ({
           code: l.code,
           type: TYPE_LABEL[l.type],
-          deaths: totals.get(l.id)?.MORTALITE ?? 0,
+          deaths: totals.get(l.id)?.deaths ?? 0,
           rate: byId.get(l.id)?.mortalityRate ?? null,
         })),
       },
@@ -551,14 +526,14 @@ const performances: SectionDef = {
         columns: [
           { key: 'code', header: 'LOT' },
           { key: 'type', header: 'TYPE' },
-          { key: 'age', header: 'ÂGE (J)' },
-          { key: 'alive', header: 'EFFECTIF' },
-          { key: 'deaths', header: 'MORTS' },
-          { key: 'mortality', header: 'MORTALITÉ', unit: '%' },
-          { key: 'lastWeight', header: 'DERNIER POIDS (G)' },
-          { key: 'gmd', header: 'GMD (G/J)' },
-          { key: 'ic', header: 'IC' },
-          { key: 'laying', header: 'TAUX DE PONTE', unit: '%' },
+          { key: 'age', header: "ÂGE (J) DEPUIS L'ENTRÉE" },
+          { key: 'alive', header: `EFFECTIF (AU ${frenchDay(period.to)})` },
+          { key: 'deaths', header: "MORTS DEPUIS L'ENTRÉE" },
+          { key: 'mortality', header: "MORTALITÉ DEPUIS L'ENTRÉE", unit: '%' },
+          { key: 'lastWeight', header: 'DERNIER POIDS CONNU (G)' },
+          { key: 'gmd', header: "GMD (G/J) DEPUIS L'ENTRÉE" },
+          { key: 'ic', header: "IC DEPUIS L'ENTRÉE" },
+          { key: 'laying', header: 'TAUX DE PONTE (PÉRIODE)', unit: '%' },
         ],
         rows: lots.map((l) => {
           const p = performance.get(l.id);

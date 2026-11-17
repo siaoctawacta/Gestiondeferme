@@ -69,6 +69,39 @@ export class FeedService
     };
   }
 
+  /**
+   * The feed (kg) of given (farm, day) pairs and the water (L) of others: the
+   * dashboard's « last recorded day » of each farm, which differs between feed
+   * and water. One aggregate per kind asked (none for an empty list), whatever
+   * the number of farms.
+   */
+  async dayFigures(
+    feedDays: { farmId: string; date: Date }[],
+    waterDays: { farmId: string; date: Date }[],
+  ): Promise<{ feedKg: number; waterL: number }> {
+    const on = (days: { farmId: string; date: Date }[]) => ({
+      OR: days.map((d) => ({ farmId: d.farmId, date: d.date })),
+    });
+    const [feed, water] = await Promise.all([
+      feedDays.length
+        ? this.prisma.feedDistribution.aggregate({
+            where: on(feedDays),
+            _sum: { quantityKg: true },
+          })
+        : null,
+      waterDays.length
+        ? this.prisma.waterConsumption.aggregate({
+            where: on(waterDays),
+            _sum: { liters: true },
+          })
+        : null,
+    ]);
+    return {
+      feedKg: Number(feed?._sum.quantityKg ?? 0),
+      waterL: Number(water?._sum.liters ?? 0),
+    };
+  }
+
   /** Earliest feed or water record of the lot: moving the lot's entry date past it is refused. */
   async earliestDate(
     tx: Prisma.TransactionClient,

@@ -475,6 +475,23 @@ describe('Dashboard (e2e)', () => {
       expect(body.tasks).toEqual({ done: 0, pending: 0 });
     });
 
+    it('runs the same number of queries whether one farm or several have records, under all', async () => {
+      await seedReference();
+      const count = (farm: string) =>
+        countQueries(app, async () => {
+          await dashboard(farm);
+        });
+      const one = await count('all'); // both farms in view, only farm A has data
+      const bldB = await buildingOfFarmB();
+      const lotB = await lot(farmB, bldB, 'LB-0001', 500);
+      await eggs(lotB, 2, 300, farmB);
+      await feed(lotB, 3, 200, farmB);
+      await water(lotB, 4, 900, farmB);
+      expect((await dashboard('all')).kpis.eggsLastDay).toBe(2480 + 300);
+      expect((await dashboard('all')).feedDistributedKg).toBe(1800 + 200);
+      expect(await count('all')).toBe(one);
+    });
+
     it('raises the mortality and farrowing alerts, URGENT first', async () => {
       await seedReference();
       const body = await dashboard(farmA);

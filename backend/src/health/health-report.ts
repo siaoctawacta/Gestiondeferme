@@ -1,5 +1,6 @@
 import { Injectable } from '@nestjs/common';
-import { addDays } from '../common/days';
+import { addDays, today } from '../common/days';
+import { Prisma } from '../generated/prisma/client';
 import type { HealthActType } from '../generated/prisma/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -29,12 +30,16 @@ export class HealthReport {
   constructor(private readonly prisma: PrismaService) {}
 
   /**
-   * What the health records say between two days (both inclusive). The late
-   * acts are the health list's `EN_RETARD` (`overdueActWhere`) judged at the end
-   * of `to`, like the tasks' (an act planned on `to` is late at the end of
-   * it); an act planned then and done since is not counted (the list only knows
-   * its present state). A quarantine is under way at the end of `to` when it
-   * started by then and is still open or was lifted after it.
+   * What the health records say between two days (both inclusive). An act is
+   * late at the end of `to` like a task (Q44): planned on or before `to` and,
+   * at that moment, not done: still planned now, or done after `to` having been
+   * completed from a plan (`enteredDone` false: an act entered as done was
+   * never planned). For a period ending today the still-planned ones are the
+   * health list's `EN_RETARD` (`overdueActWhere`: open lot or animal only); for
+   * a past period the target's CURRENT status is not looked at (a lot closed
+   * after `to` still counted). Cancelled acts carry no cancellation date, so
+   * they are never counted. A quarantine is under way at the end of `to` when
+   * it started by then and is still open or was lifted after it.
    */
   async periodFigures(
     farmIds: string[],
@@ -51,7 +56,20 @@ export class HealthReport {
           _count: { _all: true },
         }),
         this.prisma.healthAct.count({
-          where: { farmId, ...overdueActWhere(addDays(to, 1)) },
+          where: {
+            farmId,
+            date: { lte: to },
+            OR: [
+              to.getTime() >= today().getTime()
+                ? overdueActWhere(addDays(to, 1))
+                : { status: 'PLANIFIE' },
+              {
+                status: 'REALISE',
+                enteredDone: false,
+                doneDate: { gt: to },
+              },
+            ],
+          },
         }),
         this.prisma.quarantine.count({
           where: {
@@ -88,21 +106,24 @@ export class HealthReport {
     farmIds: string[],
     day: Date,
   ): Promise<{ target: string; until: Date }[]> {
+    // The window (done day to done day + treatment + withdrawal days, as
+    // `withdrawalPeriod`) is tested in SQL, so only the acts under withdrawal that
+    // day are loaded.
+    const hits = await this.prisma.$queryRaw<{ id: string }[]>(Prisma.sql`
+      SELECT "id" FROM "HealthAct"
+      WHERE "farmId" IN (${Prisma.join(farmIds)})
+        AND "status" = 'REALISE' AND "withdrawalDays" IS NOT NULL
+        AND "doneDate" <= ${day}::date
+        AND "doneDate" + (COALESCE("durationDays", 0) + "withdrawalDays") * INTERVAL '1 day' >= ${day}::date`);
+    if (hits.length === 0) return [];
     const acts = await this.prisma.healthAct.findMany({
-      where: {
-        farmId: { in: farmIds },
-        status: 'REALISE',
-        withdrawalDays: { not: null },
-        doneDate: { lte: day },
-      },
+      where: { id: { in: hits.map((h) => h.id) } },
       include: actInclude,
     });
     return acts
       .flatMap((act) => {
         const until = withdrawalEnd(act);
-        return until && until.getTime() >= day.getTime()
-          ? [{ target: targetLabel(act), until }]
-          : [];
+        return until ? [{ target: targetLabel(act), until }] : [];
       })
       .sort(
         (a, b) =>

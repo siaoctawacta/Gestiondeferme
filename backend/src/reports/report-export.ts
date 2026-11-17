@@ -30,6 +30,10 @@ function indicatorLines(sections: ReportSection[]): Cell[][] {
   return lines;
 }
 
+/** A column header with its unit: `MONTANT (FCFA)`. */
+const headerOf = (c: { header: string; unit?: string }): string =>
+  c.unit ? `${c.header} (${c.unit})` : c.header;
+
 const tablesOf = (report: ReportDto) =>
   report.sections.flatMap((s) =>
     s.table ? [{ title: s.title, table: s.table }] : [],
@@ -53,12 +57,18 @@ export function reportCsv(report: ReportDto): string {
   for (const line of indicatorLines(report.sections)) out += csvLine(line);
   for (const { title, table } of tablesOf(report)) {
     out += '\r\n' + csvLine([title]);
-    out += csvLine(table.columns.map((c) => c.header));
+    out += csvLine(table.columns.map(headerOf));
     for (const row of table.rows) {
       out += csvLine(table.columns.map((c) => row[c.key] ?? null));
     }
   }
   return '﻿' + out;
+}
+
+/** `22/10/2026` → that day at 00:00 UTC (the text stays when it is not a date). */
+function fromFrench(text: string): Date | string {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(text);
+  return m ? new Date(Date.UTC(+m[3], +m[2] - 1, +m[1])) : text;
 }
 
 /** An Excel sheet name: 31 characters at most, none of `: \ / ? * [ ]`, unique in the workbook. */
@@ -82,9 +92,17 @@ export async function reportXlsx(report: ReportDto): Promise<Buffer> {
   for (const line of indicatorLines(report.sections)) main.addRow(line);
   for (const { title, table } of tablesOf(report)) {
     const ws = wb.addWorksheet(sheetName(title, taken));
-    ws.addRow(table.columns.map((c) => c.header)).font = { bold: true };
+    ws.addRow(table.columns.map(headerOf)).font = { bold: true };
     for (const row of table.rows) {
-      ws.addRow(table.columns.map((c) => row[c.key] ?? null));
+      const added = ws.addRow(
+        table.columns.map((c) => {
+          const v = row[c.key] ?? null;
+          return c.date && typeof v === 'string' ? fromFrench(v) : v;
+        }),
+      );
+      table.columns.forEach((c, i) => {
+        if (c.date) added.getCell(i + 1).numFmt = 'dd/mm/yyyy';
+      });
     }
   }
   return Buffer.from(await wb.xlsx.writeBuffer());

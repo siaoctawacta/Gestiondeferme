@@ -57,6 +57,15 @@ describe('csvCell', () => {
     expect(csvCell('1.5')).toBe('1.5');
     expect(csvCell('-x')).toBe("'-x");
   });
+
+  it('neutralises a formula behind blanks, a leading tab or CR, and leaves numbers alone', () => {
+    expect(csvCell('  =1+1')).toBe("'  =1+1");
+    expect(csvCell(' @SUM(A1)')).toBe("' @SUM(A1)");
+    expect(csvCell('\t+1')).toBe("'\t+1");
+    expect(csvCell('\r=1')).toBe('"\'\r=1"');
+    expect(csvCell('ok = fine')).toBe('ok = fine');
+    expect(csvCell(-5)).toBe('-5');
+  });
 });
 
 describe('toXlsx', () => {
