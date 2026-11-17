@@ -7,17 +7,19 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Ctx, RequireDaily, RequirePermission } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
-import { paginate } from '../listing/paginate';
+import type { Response } from 'express';
+import { sendList } from '../listing/list-helpers';
 import {
   BiosecurityQueryDto,
   CreateBiosecurityDto,
   UpdateBiosecurityDto,
 } from './dto/biosecurity.dto';
-import { BiosecurityService } from './biosecurity.service';
+import { BIOSECURITY_COLUMNS, BiosecurityService } from './biosecurity.service';
 
 /** Daily entries of the `sante` module: `create` writes, edits and deletes. */
 @ApiTags('biosecurity-logs')
@@ -27,9 +29,13 @@ export class BiosecurityController {
 
   @Get()
   @RequirePermission('sante', 'read')
-  list(@Ctx() ctx: RequestContext, @Query() q: BiosecurityQueryDto) {
+  async list(
+    @Ctx() ctx: RequestContext,
+    @Query() q: BiosecurityQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
     const { find, count } = this.records.listArgs(ctx, q);
-    return paginate(q, find, count);
+    await sendList(res, q, 'biosecurite', BIOSECURITY_COLUMNS, find, count);
   }
 
   @Post()

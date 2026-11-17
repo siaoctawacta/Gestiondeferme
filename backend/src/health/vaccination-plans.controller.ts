@@ -7,6 +7,7 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import {
@@ -16,14 +17,18 @@ import {
   RequirePermission,
 } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
-import { paginate } from '../listing/paginate';
+import type { Response } from 'express';
+import { sendList } from '../listing/list-helpers';
 import {
   ApplyPlanDto,
   CreatePlanDto,
   PlanQueryDto,
   UpdatePlanDto,
 } from './dto/vaccination-plan.dto';
-import { VaccinationPlansService } from './vaccination-plans.service';
+import {
+  PLAN_COLUMNS,
+  VaccinationPlansService,
+} from './vaccination-plans.service';
 
 /**
  * Plans are organisation master data (`update` on `sante`, whatever the verb),
@@ -38,9 +43,13 @@ export class VaccinationPlansController {
   @Get()
   @NoFarm()
   @RequirePermission('sante', 'read')
-  list(@Ctx() ctx: RequestContext, @Query() q: PlanQueryDto) {
+  async list(
+    @Ctx() ctx: RequestContext,
+    @Query() q: PlanQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
     const { find, count } = this.plans.listArgs(ctx, q);
-    return paginate(q, find, count);
+    await sendList(res, q, 'plans-vaccinaux', PLAN_COLUMNS, find, count);
   }
 
   @Post()

@@ -32,7 +32,7 @@ import {
   UpdateHeatDto,
   WeaningDto,
 } from './dto/breeding.dto';
-import { HeatsService } from './heats.service';
+import { HEAT_COLUMNS, HeatsService } from './heats.service';
 
 @ApiTags('breeding')
 @Controller('breeding')
@@ -127,12 +127,14 @@ export class AnimalReproductionController {
 
   @Get('heats')
   @RequirePermission('reproduction', 'read')
-  listHeats(
+  async listHeats(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
     @Query() q: ListQueryDto,
-  ) {
-    return this.heats.list(ctx, id, q);
+    @Res() res: Response,
+  ): Promise<void> {
+    const { find, count } = await this.heats.listArgs(ctx, id);
+    await sendList(res, q, 'chaleurs', HEAT_COLUMNS, find, count);
   }
 
   @Post('heats')

@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { AccessModule } from './access/access.module';
 import { AdminModule } from './admin/admin.module';
+import { BuildingOverviewModule } from './admin/buildings/building-overview.module';
 import { AuditModule } from './audit/audit.module';
 import { AuthModule } from './auth/auth.module';
 import { BreedingModule } from './breeding/breeding.module';
@@ -17,6 +18,7 @@ import { IndicatorsModule } from './indicators/indicators.module';
 import { PersonnelModule } from './personnel/personnel.module';
 import { PigsModule } from './pigs/pigs.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { QrModule } from './qr/qr.module';
 import { PurchasesModule } from './purchases/purchases.module';
 import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
@@ -49,6 +51,8 @@ import { TasksModule } from './tasks/tasks.module';
     TasksModule,
     EquipmentModule,
     ReportsModule,
+    QrModule,
+    BuildingOverviewModule,
   ],
   controllers: [HealthController],
 })

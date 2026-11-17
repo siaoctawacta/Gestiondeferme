@@ -9,7 +9,7 @@ import {
 import type { RequestContext } from '../access/decorators';
 import { formatDay, formatDayOrNull, requireDay } from '../common/days';
 import type { Prisma } from '../generated/prisma/client';
-import { paginate } from '../listing/paginate';
+import type { ExportColumn } from '../listing/export';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   MANUAL_REASONS,
@@ -58,6 +58,32 @@ export interface MovementItem {
   manual: boolean;
 }
 
+const TYPE_LABEL: Record<string, string> = {
+  ENTREE: 'Entrée',
+  SORTIE: 'Sortie',
+  AJUSTEMENT: 'Ajustement',
+};
+const REASON_LABEL: Record<string, string> = {
+  ACHAT: 'Achat',
+  CONSOMMATION: 'Consommation',
+  TRAITEMENT: 'Traitement',
+  INVENTAIRE: 'Inventaire',
+  PERTE: 'Perte',
+  VENTE: 'Vente',
+  RETOUR: 'Retour client',
+  AUTRE: 'Autre',
+};
+
+export const MOVEMENT_COLUMNS: ExportColumn<MovementItem>[] = [
+  { header: 'Date', value: (m) => m.date },
+  { header: 'Article', value: (m) => m.itemName },
+  { header: 'Type', value: (m) => TYPE_LABEL[m.type] ?? m.type },
+  { header: 'Quantité', value: (m) => m.quantity },
+  { header: 'Coût unitaire', value: (m) => m.unitCost },
+  { header: 'Motif', value: (m) => REASON_LABEL[m.reason] ?? m.reason },
+  { header: 'N° de lot', value: (m) => m.lotNumber },
+];
+
 export const FROM_ELSEWHERE =
   "Ce mouvement provient d'une autre opération ; corrigez l'opération d'origine";
 const BAD_REASON = 'Motif invalide pour ce type de mouvement';
@@ -94,7 +120,7 @@ export class StockMovementsService {
     private readonly ledger: StockLedgerService,
   ) {}
 
-  list(ctx: RequestContext, q: MovementQueryDto) {
+  listArgs(ctx: RequestContext, q: MovementQueryDto) {
     const from = q.from ? requireDay(q.from) : undefined;
     const to = q.to ? requireDay(q.to) : undefined;
     const where: Prisma.StockMovementWhereInput = {
@@ -104,9 +130,8 @@ export class StockMovementsService {
       ...(q.type ? { type: q.type } : {}),
       ...(from || to ? { date: { gte: from, lte: to } } : {}),
     };
-    return paginate(
-      q,
-      async (range) =>
+    return {
+      find: async (range: { skip?: number; take: number }) =>
         movementItems(
           await this.prisma.stockMovement.findMany({
             where,
@@ -117,8 +142,8 @@ export class StockMovementsService {
             ...range,
           }),
         ),
-      () => this.prisma.stockMovement.count({ where }),
-    );
+      count: () => this.prisma.stockMovement.count({ where }),
+    };
   }
 
   private async items(

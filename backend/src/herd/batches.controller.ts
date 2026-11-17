@@ -20,6 +20,7 @@ import { formatDayOrNull } from '../common/days';
 import { sendList } from '../listing/list-helpers';
 import { ListQueryDto } from '../listing/list-query.dto';
 import { BatchPerformanceRegistry } from './batch-performance';
+import { EVENT_COLUMNS } from './batch-event-item';
 import { BatchEventsService } from './batch-events.service';
 import { BATCH_COLUMNS, BatchesService } from './batches.service';
 import {
@@ -174,9 +175,11 @@ export class BatchesController {
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
     @Query() q: ListQueryDto,
-  ) {
+    @Res() res: Response,
+  ): Promise<void> {
     await this.guard(ctx, id, 'read');
-    return this.events.list(ctx, id, q);
+    const { find, count } = await this.events.listArgs(ctx, id);
+    await sendList(res, q, 'mouvements-lot', EVENT_COLUMNS, find, count);
   }
 
   @Post(':id/events')

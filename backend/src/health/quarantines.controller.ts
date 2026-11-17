@@ -8,18 +8,20 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Ctx, RequireDaily, RequirePermission } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
-import { paginate } from '../listing/paginate';
+import type { Response } from 'express';
+import { sendList } from '../listing/list-helpers';
 import {
   CreateQuarantineDto,
   LiftQuarantineDto,
   QuarantineQueryDto,
   UpdateQuarantineDto,
 } from './dto/quarantine.dto';
-import { QuarantinesService } from './quarantines.service';
+import { QUARANTINE_COLUMNS, QuarantinesService } from './quarantines.service';
 
 /** Daily entries of the `sante` module: `create` writes, edits and deletes. */
 @ApiTags('quarantines')
@@ -29,9 +31,23 @@ export class QuarantinesController {
 
   @Get()
   @RequirePermission('sante', 'read')
-  list(@Ctx() ctx: RequestContext, @Query() q: QuarantineQueryDto) {
-    const { find, count } = this.records.listArgs(ctx, q);
-    return paginate(q, find, count);
+  async list(
+    @Ctx() ctx: RequestContext,
+    @Query() q: QuarantineQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { find, count, statusCounts } = this.records.listArgs(ctx, q);
+    await sendList(
+      res,
+      q,
+      'quarantaines',
+      QUARANTINE_COLUMNS,
+      find,
+      count,
+      async () => ({
+        statusCounts: await statusCounts(),
+      }),
+    );
   }
 
   @Post()

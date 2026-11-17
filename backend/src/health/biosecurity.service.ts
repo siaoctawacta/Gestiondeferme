@@ -5,6 +5,7 @@ import { assertNotFuture, formatDay, requireDay } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
 import type { BiosecurityType } from '../generated/prisma/enums';
+import type { ExportColumn } from '../listing/export';
 import { containsInsensitive } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -35,6 +36,22 @@ export interface BiosecurityLogItem {
 
 const NOT_FOUND = 'Relevé de biosécurité introuvable';
 const SORTABLE = ['date', 'type', 'createdAt'];
+
+const TYPE_LABEL: Record<BiosecurityType, string> = {
+  NETTOYAGE: 'Nettoyage',
+  DESINFECTION: 'Désinfection',
+  PEDILUVE: 'Pédiluve',
+  VISITEUR: 'Visiteur',
+};
+
+export const BIOSECURITY_COLUMNS: ExportColumn<BiosecurityLogItem>[] = [
+  { header: 'Date', value: (l) => l.date },
+  { header: 'Type', value: (l) => TYPE_LABEL[l.type] },
+  { header: 'Bâtiment', value: (l) => l.buildingName },
+  { header: 'Produit', value: (l) => l.productName },
+  { header: 'Visiteur', value: (l) => l.visitorName },
+  { header: 'Note', value: (l) => l.note },
+];
 
 const toItem = (r: Row): BiosecurityLogItem => ({
   id: r.id,

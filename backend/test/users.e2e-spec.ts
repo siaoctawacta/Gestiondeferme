@@ -739,6 +739,7 @@ describe('Users and settings (e2e)', () => {
         .set(admin.headers)
         .expect(200);
       expect(res.body).toEqual({
+        alertAckDays: 7,
         currency: 'FCFA',
         mortalityDailyPct: 0.5,
         mortalityCumulPct: 3,

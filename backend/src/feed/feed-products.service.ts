@@ -14,7 +14,7 @@ import { lockRow } from '../common/lock-row';
 import { StockItemsService } from '../stock/stock-items.service';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
-import { paginate } from '../listing/paginate';
+import type { ExportColumn } from '../listing/export';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   CreateFeedProductDto,
@@ -44,6 +44,18 @@ const LINK_LOCKED =
 const STOCK_NAME_TAKEN = 'Un article de stock porte déjà ce nom';
 const SORTABLE = ['name', 'unitCost'];
 
+const KIND_LABEL: Record<string, string> = {
+  MATIERE_PREMIERE: 'Matière première',
+  ALIMENT_COMPLET: 'Aliment complet',
+};
+
+export const FEED_PRODUCT_COLUMNS: ExportColumn<FeedProductItem>[] = [
+  { header: 'Nom', value: (p) => p.name },
+  { header: 'Type', value: (p) => KIND_LABEL[p.kind] ?? p.kind },
+  { header: 'Coût unitaire', value: (p) => p.unitCost },
+  { header: 'Actif', value: (p) => (p.active ? 'Actif' : 'Inactif') },
+];
+
 const toItem = (p: FeedProduct): FeedProductItem => ({
   id: p.id,
   name: p.name,
@@ -63,7 +75,7 @@ export class FeedProductsService {
     private readonly stockItems: StockItemsService,
   ) {}
 
-  list(ctx: RequestContext, q: FeedProductQueryDto) {
+  listArgs(ctx: RequestContext, q: FeedProductQueryDto) {
     const where: Prisma.FeedProductWhereInput = {
       organizationId: ctx.user.organizationId,
       ...(q.kind ? { kind: q.kind } : {}),
@@ -71,9 +83,8 @@ export class FeedProductsService {
       ...(q.search ? { name: containsInsensitive(q.search) } : {}),
     };
     const order = orderBy(q, SORTABLE, { name: 'asc' });
-    return paginate(
-      q,
-      async (range) =>
+    return {
+      find: async (range: { skip?: number; take: number }) =>
         (
           await this.prisma.feedProduct.findMany({
             where,
@@ -81,8 +92,8 @@ export class FeedProductsService {
             ...range,
           })
         ).map(toItem),
-      () => this.prisma.feedProduct.count({ where }),
-    );
+      count: () => this.prisma.feedProduct.count({ where }),
+    };
   }
 
   private async find(

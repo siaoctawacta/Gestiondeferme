@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { HerdModule } from '../herd/herd.module';
 import { StockModule } from '../stock/stock.module';
+import { AlertAcksService } from './alerts/alert-acks.service';
 import { AlertsRegistry } from './alerts/alerts-registry';
 import { HealthAlertsService } from './alerts/health-alerts.service';
 import { ProductionAlertsService } from './alerts/production-alerts.service';
@@ -17,11 +18,17 @@ import { LotCostRegistry } from './lot-cost';
   providers: [
     LotCostRegistry,
     AlertsRegistry,
+    AlertAcksService,
     IndicatorsService,
     ProductionAlertsService,
     StockAlertsService,
     HealthAlertsService,
   ],
-  exports: [LotCostRegistry, AlertsRegistry, IndicatorsService],
+  exports: [
+    LotCostRegistry,
+    AlertsRegistry,
+    AlertAcksService,
+    IndicatorsService,
+  ],
 })
 export class IndicatorsModule {}

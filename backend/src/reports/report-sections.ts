@@ -389,7 +389,7 @@ const indicateurs: SectionDef = {
       r.kpis.kpis(ctx.farmIds),
       r.kpis.feedDistributedKg(ctx.farmIds),
       r.kpis.waterConsumedL(ctx.farmIds),
-      r.dashboard.alerts(ctx),
+      r.dashboard.openAlerts(ctx),
       withMoney ? money(env) : Promise.resolve(null),
     ]);
     return {
@@ -421,7 +421,7 @@ const indicateurs: SectionDef = {
               ),
             ]
           : []),
-        row('alerts', 'Alertes ouvertes', alerts.total),
+        row('alerts', 'Alertes ouvertes', alerts.length),
       ],
     };
   },

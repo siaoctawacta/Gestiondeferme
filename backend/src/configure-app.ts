@@ -23,10 +23,35 @@ export function apiDocsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
   return env.NODE_ENV !== 'production' || env.ENABLE_API_DOCS === 'true';
 }
 
+/** The address the QR codes encode (`{APP_URL}/q/{kind}/{id}`). */
+export function appUrl(env: NodeJS.ProcessEnv = process.env): string {
+  const raw = env.APP_URL?.trim() || env.WEB_ORIGIN?.trim() || '';
+  const invalid = () =>
+    new Error(
+      'APP_URL must be the absolute http(s) address of the web app, without a path (e.g. https://app.example.com)',
+    );
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw invalid();
+  }
+  if (
+    (url.protocol !== 'http:' && url.protocol !== 'https:') ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  ) {
+    throw invalid();
+  }
+  return url.origin;
+}
+
 /** Shared by main.ts and the e2e test app so both behave identically. */
 export function configureApp(app: INestApplication): void {
   assertJwtSecret(process.env.JWT_SECRET);
   assertEncryptionKey();
+  appUrl();
   const webOrigin = process.env.WEB_ORIGIN;
   if (!webOrigin) {
     throw new Error('WEB_ORIGIN must be set (CORS never allows any origin)');

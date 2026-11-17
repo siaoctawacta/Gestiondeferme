@@ -114,6 +114,7 @@ describe('Alert visibility and litter mortality (e2e)', () => {
       expect(kinds(avicole)).toEqual(['consumption', 'mortality']);
       for (const role of ['COMPTABLE', 'MAGASINIER'] as const) {
         expect(await alerts(await world.actor(role))).toEqual({
+          acknowledgedCount: 0,
           total: 0,
           items: [],
         });

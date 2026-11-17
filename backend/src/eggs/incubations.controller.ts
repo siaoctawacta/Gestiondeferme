@@ -8,11 +8,13 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Ctx, RequirePermission, RequireMaster } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
-import { paginate } from '../listing/paginate';
+import type { Response } from 'express';
+import { sendList } from '../listing/list-helpers';
 import {
   CandlingDto,
   CreateIncubationDto,
@@ -21,7 +23,7 @@ import {
   IncubationListQueryDto,
   UpdateIncubationDto,
 } from './dto/incubation.dto';
-import { IncubationsService } from './incubations.service';
+import { INCUBATION_COLUMNS, IncubationsService } from './incubations.service';
 
 @ApiTags('incubations')
 @Controller('incubations')
@@ -30,10 +32,23 @@ export class IncubationsController {
 
   @Get()
   @RequirePermission('ponte', 'read')
-  async list(@Ctx() ctx: RequestContext, @Query() q: IncubationListQueryDto) {
+  async list(
+    @Ctx() ctx: RequestContext,
+    @Query() q: IncubationListQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
     const { find, count } = this.incubations.listArgs(ctx, q);
-    const page = await paginate(q, find, count);
-    return { ...page, statusCounts: await this.incubations.statusCounts(ctx) };
+    await sendList(
+      res,
+      q,
+      'incubations',
+      INCUBATION_COLUMNS,
+      find,
+      count,
+      async () => ({
+        statusCounts: await this.incubations.statusCounts(ctx),
+      }),
+    );
   }
 
   @Post()

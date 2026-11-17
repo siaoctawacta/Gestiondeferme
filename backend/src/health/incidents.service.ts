@@ -18,6 +18,7 @@ import type {
   IncidentSeverity,
   IncidentStatus,
 } from '../generated/prisma/enums';
+import type { ExportColumn } from '../listing/export';
 import { containsInsensitive } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -53,6 +54,24 @@ const NOT_FOUND = 'Incident introuvable';
 const CLOSED = 'Cet incident est clos';
 const STATUSES: IncidentStatus[] = ['OUVERT', 'CLOS'];
 const SORTABLE = ['date', 'severity', 'status', 'createdAt'];
+
+const SEVERITY_LABEL: Record<IncidentSeverity, string> = {
+  FAIBLE: 'Faible',
+  MOYENNE: 'Moyenne',
+  GRAVE: 'Grave',
+};
+const STATUS_LABEL: Record<IncidentStatus, string> = {
+  OUVERT: 'Ouvert',
+  CLOS: 'Clos',
+};
+
+export const INCIDENT_COLUMNS: ExportColumn<IncidentItem>[] = [
+  { header: 'Date', value: (i) => i.date },
+  { header: 'Titre', value: (i) => i.title },
+  { header: 'Gravité', value: (i) => SEVERITY_LABEL[i.severity] },
+  { header: 'Cible', value: (i) => i.target },
+  { header: 'Statut', value: (i) => STATUS_LABEL[i.status] },
+];
 
 const toItem = (r: Row): IncidentItem => ({
   id: r.id,
@@ -95,9 +114,8 @@ export class IncidentsService {
     }
     const from = q.from ? requireDay(q.from) : undefined;
     const to = q.to ? requireDay(q.to) : undefined;
-    const where: Prisma.HealthIncidentWhereInput = {
+    const filters: Prisma.HealthIncidentWhereInput = {
       ...this.scope(ctx),
-      ...(q.status ? { status: q.status as IncidentStatus } : {}),
       ...(q.severity ? { severity: q.severity } : {}),
       ...(q.batchId ? { batchId: q.batchId } : {}),
       ...(q.buildingId ? { buildingId: q.buildingId } : {}),
@@ -113,8 +131,22 @@ export class IncidentsService {
           }
         : {}),
     };
+    const where: Prisma.HealthIncidentWhereInput = q.status
+      ? { AND: [filters, { status: q.status as IncidentStatus }] }
+      : filters;
     const order = orderBy(q, SORTABLE, { date: 'desc' });
     return {
+      /** Per-status totals over every filter but the status. */
+      statusCounts: async (): Promise<Record<IncidentStatus, number>> => {
+        const groups = await this.prisma.healthIncident.groupBy({
+          by: ['status'],
+          where: filters,
+          _count: { _all: true },
+        });
+        const counts: Record<IncidentStatus, number> = { OUVERT: 0, CLOS: 0 };
+        for (const g of groups) counts[g.status] = g._count._all;
+        return counts;
+      },
       find: async (range: { skip?: number; take: number }) =>
         (
           await this.prisma.healthIncident.findMany({

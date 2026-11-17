@@ -10,8 +10,7 @@ import type { Heat } from '../generated/prisma/client';
 import { assertNotFuture, formatDay, requireDay } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import { EXITED } from '../common/messages';
-import type { ListQueryDto } from '../listing/list-query.dto';
-import { paginate } from '../listing/paginate';
+import type { ExportColumn } from '../listing/export';
 import { PrismaService } from '../prisma/prisma.service';
 import type { CreateHeatDto, UpdateHeatDto } from './dto/breeding.dto';
 
@@ -21,6 +20,11 @@ export interface HeatItem {
   date: string;
   note: string | null;
 }
+
+export const HEAT_COLUMNS: ExportColumn<HeatItem>[] = [
+  { header: 'Date', value: (h) => h.date },
+  { header: 'Note', value: (h) => h.note },
+];
 
 const toItem = (h: Heat): HeatItem => ({
   id: h.id,
@@ -48,12 +52,11 @@ export class HeatsService {
     return animal;
   }
 
-  async list(ctx: RequestContext, animalId: string, q: ListQueryDto) {
+  async listArgs(ctx: RequestContext, animalId: string) {
     await this.animal(ctx, animalId);
     const where = { animalId, farmId: { in: ctx.farmIds } };
-    return paginate(
-      q,
-      async (range) =>
+    return {
+      find: async (range: { skip?: number; take: number }) =>
         (
           await this.prisma.heat.findMany({
             where,
@@ -61,8 +64,8 @@ export class HeatsService {
             ...range,
           })
         ).map(toItem),
-      () => this.prisma.heat.count({ where }),
-    );
+      count: () => this.prisma.heat.count({ where }),
+    };
   }
 
   create(

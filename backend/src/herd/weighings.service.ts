@@ -2,8 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { Prisma, Weighing } from '../generated/prisma/client';
-import type { ListQueryDto } from '../listing/list-query.dto';
-import { paginate } from '../listing/paginate';
+import type { ExportColumn } from '../listing/export';
 import { PrismaService } from '../prisma/prisma.service';
 import { BatchesService } from './batches.service';
 import {
@@ -25,6 +24,12 @@ export interface WeighingItem {
   note: string | null;
 }
 
+export const WEIGHING_COLUMNS: ExportColumn<WeighingItem>[] = [
+  { header: 'Date', value: (w) => w.date },
+  { header: 'Échantillon', value: (w) => w.sampleSize },
+  { header: 'Poids moyen (g)', value: (w) => w.averageWeightG },
+];
+
 const toItem = (w: Weighing): WeighingItem => ({
   id: w.id,
   batchId: w.batchId,
@@ -43,15 +48,14 @@ export class WeighingsService {
     private readonly audit: AuditService,
   ) {}
 
-  async list(ctx: RequestContext, batchId: string, q: ListQueryDto) {
+  async listArgs(ctx: RequestContext, batchId: string) {
     await this.batches.speciesOf(ctx, batchId);
     const where: Prisma.WeighingWhereInput = {
       batchId,
       farmId: { in: ctx.farmIds },
     };
-    return paginate(
-      q,
-      async (range) =>
+    return {
+      find: async (range: { skip?: number; take: number }) =>
         (
           await this.prisma.weighing.findMany({
             where,
@@ -59,8 +63,8 @@ export class WeighingsService {
             ...range,
           })
         ).map(toItem),
-      () => this.prisma.weighing.count({ where }),
-    );
+      count: () => this.prisma.weighing.count({ where }),
+    };
   }
 
   create(

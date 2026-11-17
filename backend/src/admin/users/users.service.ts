@@ -301,6 +301,8 @@ export class UsersService implements AuditableService {
         await tx.refreshToken.deleteMany({ where: { userId: id } });
         await tx.passwordReset.deleteMany({ where: { userId: id } });
         await tx.userFarm.deleteMany({ where: { userId: id } });
+        // Masked alerts are a display preference of the user: they go with him.
+        await tx.alertAck.deleteMany({ where: { userId: id } });
         await tx.user.delete({ where: { id } });
       }),
     );

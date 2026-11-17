@@ -7,8 +7,6 @@ import {
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
-import type { ListQueryDto } from '../listing/list-query.dto';
-import { paginate } from '../listing/paginate';
 import { PrismaService } from '../prisma/prisma.service';
 import { BatchEventItem, toEventItem } from './batch-event-item';
 import { BatchesService, BatchItem } from './batches.service';
@@ -35,15 +33,14 @@ export class BatchEventsService {
     private readonly audit: AuditService,
   ) {}
 
-  async list(ctx: RequestContext, batchId: string, q: ListQueryDto) {
+  async listArgs(ctx: RequestContext, batchId: string) {
     await this.batches.speciesOf(ctx, batchId);
     const where: Prisma.BatchEventWhereInput = {
       batchId,
       farmId: { in: ctx.farmIds },
     };
-    return paginate(
-      q,
-      async (range) =>
+    return {
+      find: async (range: { skip?: number; take: number }) =>
         (
           await this.prisma.batchEvent.findMany({
             where,
@@ -51,8 +48,8 @@ export class BatchEventsService {
             ...range,
           })
         ).map(toEventItem),
-      () => this.prisma.batchEvent.count({ where }),
-    );
+      count: () => this.prisma.batchEvent.count({ where }),
+    };
   }
 
   create(

@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import {
   Ctx,
   NoFarm,
@@ -16,12 +18,16 @@ import {
   RequireMaster,
 } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
+import { sendList } from '../listing/list-helpers';
 import {
   CreateFeedFormulaDto,
   FeedFormulaQueryDto,
   UpdateFeedFormulaDto,
 } from './dto/feed-formula.dto';
-import { FeedFormulasService } from './feed-formulas.service';
+import {
+  FEED_FORMULA_COLUMNS,
+  FeedFormulasService,
+} from './feed-formulas.service';
 
 /** Formulas are shared by every farm of the organisation. */
 @ApiTags('feed-formulas')
@@ -32,8 +38,13 @@ export class FeedFormulasController {
 
   @Get()
   @RequirePermission('alimentation', 'read')
-  list(@Ctx() ctx: RequestContext, @Query() q: FeedFormulaQueryDto) {
-    return this.formulas.list(ctx, q);
+  async list(
+    @Ctx() ctx: RequestContext,
+    @Query() q: FeedFormulaQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { find, count } = this.formulas.listArgs(ctx, q);
+    await sendList(res, q, 'formules', FEED_FORMULA_COLUMNS, find, count);
   }
 
   @Post()

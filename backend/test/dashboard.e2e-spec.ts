@@ -136,7 +136,7 @@ describe('Dashboard (e2e)', () => {
       .get('/api/alerts')
       .set(headersFor(farmA))
       .expect(200);
-    expect(res.body).toEqual({ total: 0, items: [] });
+    expect(res.body).toEqual({ total: 0, acknowledgedCount: 0, items: [] });
   });
 
   it('requires authentication', async () => {
@@ -511,7 +511,7 @@ describe('Dashboard (e2e)', () => {
         .get('/api/alerts')
         .set(headersFor(farmA))
         .expect(200);
-      expect(res.body).toEqual(body.alerts);
+      expect(res.body).toEqual({ ...body.alerts, acknowledgedCount: 0 });
     });
 
     it('follows the mortalityCumulPct setting', async () => {

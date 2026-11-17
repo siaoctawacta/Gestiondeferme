@@ -128,6 +128,10 @@ const SETTINGS: Record<string, SettingDefinition> = {
     default: 0,
     parse: nonNegativeInteger("Le délai d'alerte de maintenance", 365),
   },
+  alertAckDays: {
+    default: 7,
+    parse: positiveInteger('Le délai de masquage des alertes', 365),
+  },
   gestationDays: {
     default: 114,
     parse: positiveInteger('La durée de gestation'),

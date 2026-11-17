@@ -7,7 +7,7 @@ import { formatDay, requireDay } from '../common/days';
 import { DUPLICATE } from '../common/messages';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
-import { paginate } from '../listing/paginate';
+import type { ExportColumn } from '../listing/export';
 import { PrismaService } from '../prisma/prisma.service';
 import type { FeedListQueryDto } from './dto/feed-distribution.dto';
 import type { CreateWaterDto, UpdateWaterDto } from './dto/water.dto';
@@ -34,6 +34,12 @@ export interface WaterItem {
 const NOT_FOUND = 'Enregistrement introuvable';
 const SORTABLE = ['date', 'liters'];
 
+export const WATER_COLUMNS: ExportColumn<WaterItem>[] = [
+  { header: 'Date', value: (w) => w.date },
+  { header: 'Lot / bâtiment', value: (w) => w.target },
+  { header: 'Eau (L)', value: (w) => w.liters },
+];
+
 const toItem = (r: Row): WaterItem => ({
   id: r.id,
   date: formatDay(r.date),
@@ -52,7 +58,7 @@ export class WaterService {
     private readonly targets: FeedTargets,
   ) {}
 
-  list(ctx: RequestContext, q: FeedListQueryDto) {
+  listArgs(ctx: RequestContext, q: FeedListQueryDto) {
     const from = q.from ? requireDay(q.from) : undefined;
     const to = q.to ? requireDay(q.to) : undefined;
     const where: Prisma.WaterConsumptionWhereInput = {
@@ -71,9 +77,8 @@ export class WaterService {
         : {}),
     };
     const order = orderBy(q, SORTABLE, { date: 'desc' });
-    return paginate(
-      q,
-      async (range) =>
+    return {
+      find: async (range: { skip?: number; take: number }) =>
         (
           await this.prisma.waterConsumption.findMany({
             where,
@@ -89,8 +94,8 @@ export class WaterService {
             ...range,
           })
         ).map(toItem),
-      () => this.prisma.waterConsumption.count({ where }),
-    );
+      count: () => this.prisma.waterConsumption.count({ where }),
+    };
   }
 
   private log(

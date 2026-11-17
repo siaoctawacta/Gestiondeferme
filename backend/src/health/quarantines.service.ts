@@ -17,6 +17,7 @@ import {
 import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
 import type { QuarantineStatus } from '../generated/prisma/enums';
+import type { ExportColumn } from '../listing/export';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -56,6 +57,19 @@ const OPEN = 'Une quarantaine est déjà en cours';
 const STATUSES: QuarantineStatus[] = ['EN_COURS', 'LEVEE'];
 const SORTABLE = ['startDate', 'endDate', 'status', 'createdAt'];
 
+const STATUS_LABEL: Record<QuarantineStatus, string> = {
+  EN_COURS: 'En cours',
+  LEVEE: 'Levée',
+};
+
+export const QUARANTINE_COLUMNS: ExportColumn<QuarantineItem>[] = [
+  { header: 'Début', value: (q) => q.startDate },
+  { header: 'Lot / animal', value: (q) => q.target },
+  { header: 'Motif', value: (q) => q.reason },
+  { header: 'Fin', value: (q) => q.endDate },
+  { header: 'Statut', value: (q) => STATUS_LABEL[q.status] },
+];
+
 const toItem = (r: Row): QuarantineItem => ({
   id: r.id,
   target: r.batch?.code ?? r.animal?.tag ?? '',
@@ -94,9 +108,8 @@ export class QuarantinesService {
     }
     const from = q.from ? requireDay(q.from) : undefined;
     const to = q.to ? requireDay(q.to) : undefined;
-    const where: Prisma.QuarantineWhereInput = {
+    const filters: Prisma.QuarantineWhereInput = {
       ...this.scope(ctx),
-      ...(q.status ? { status: q.status as QuarantineStatus } : {}),
       ...(q.batchId ? { batchId: q.batchId } : {}),
       ...(q.animalId ? { animalId: q.animalId } : {}),
       ...(from || to ? { startDate: { gte: from, lte: to } } : {}),
@@ -110,8 +123,25 @@ export class QuarantinesService {
           }
         : {}),
     };
+    const where: Prisma.QuarantineWhereInput = q.status
+      ? { AND: [filters, { status: q.status as QuarantineStatus }] }
+      : filters;
     const order = orderBy(q, SORTABLE, { startDate: 'desc' });
     return {
+      /** Per-status totals over every filter but the status. */
+      statusCounts: async (): Promise<Record<QuarantineStatus, number>> => {
+        const groups = await this.prisma.quarantine.groupBy({
+          by: ['status'],
+          where: filters,
+          _count: { _all: true },
+        });
+        const counts: Record<QuarantineStatus, number> = {
+          EN_COURS: 0,
+          LEVEE: 0,
+        };
+        for (const g of groups) counts[g.status] = g._count._all;
+        return counts;
+      },
       find: async (range: { skip?: number; take: number }) =>
         (
           await this.prisma.quarantine.findMany({

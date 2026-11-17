@@ -203,12 +203,12 @@ model Farm {
 }
 
 model Site {
-  id        String     @id @default(cuid())
+  id        String      @id @default(cuid())
   farmId    String
-  farm      Farm       @relation(fields: [farmId], references: [id])
+  farm      Farm        @relation(fields: [farmId], references: [id])
   name      String
-  createdAt DateTime   @default(now())
-  updatedAt DateTime   @updatedAt
+  createdAt DateTime    @default(now())
+  updatedAt DateTime    @updatedAt
   buildings Building[]
   equipment Equipment[]
 
@@ -291,6 +291,7 @@ model User {
   purchasesValidated   Purchase[]         @relation("PurchaseValidatedBy")
   purchasesOrdered     Purchase[]         @relation("PurchaseOrderedBy")
   employee             Employee[]
+  alertAcks            AlertAck[]
   attendancesEntered   Attendance[]
   tasksCreated         Task[]             @relation("TaskCreatedBy")
   tasksCompleted       Task[]             @relation("TaskCompletedBy")
@@ -977,17 +978,17 @@ enum PaymentMethod {
 /// Organisation master data (not farm-scoped).
 /// READ BY "FinanceLedgerView" (see the header): changing a column it reads means dropping the view, migrating, recreating it.
 model Supplier {
-  id             String       @id @default(cuid())
+  id             String        @id @default(cuid())
   organizationId String
-  organization   Organization @relation(fields: [organizationId], references: [id], onDelete: Restrict)
+  organization   Organization  @relation(fields: [organizationId], references: [id], onDelete: Restrict)
   name           String
   products       String?
   phone          String?
   email          String?
   address        String?
-  active         Boolean      @default(true)
-  createdAt      DateTime     @default(now())
-  updatedAt      DateTime     @updatedAt
+  active         Boolean       @default(true)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
   purchases      Purchase[]
   maintenances   Maintenance[]
 
@@ -1878,4 +1879,22 @@ model Breakdown {
   @@index([farmId])
   @@index([equipmentId])
   @@index([reportedById])
+}
+
+enum AlertLevel {
+  A_VOIR
+  URGENT
+}
+
+/// A user's « Masquer l'alerte »: a display preference of ONE user (never hides the alert for anyone else), no audit. `key` is the alert's stable key; `level` the level it had when hidden (it shows again when it gets worse or after `alertAckDays`).
+model AlertAck {
+  id             String     @id @default(cuid())
+  userId         String
+  user           User       @relation(fields: [userId], references: [id], onDelete: Restrict)
+  key            String
+  level          AlertLevel
+  acknowledgedAt DateTime   @default(now()) @db.Timestamptz(3)
+
+  @@unique([userId, key])
+  @@index([userId])
 }

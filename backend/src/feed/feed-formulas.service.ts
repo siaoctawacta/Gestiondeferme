@@ -12,7 +12,7 @@ import type { AuditAction } from '../generated/prisma/enums';
 import { lockRow } from '../common/lock-row';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
-import { paginate } from '../listing/paginate';
+import type { ExportColumn } from '../listing/export';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
   CreateFeedFormulaDto,
@@ -51,6 +51,17 @@ export const FORMULA_USED =
   'Cette formule a déjà des distributions : créez une nouvelle formule';
 const SORTABLE = ['name', 'stage'];
 
+export const FEED_FORMULA_COLUMNS: ExportColumn<FeedFormulaItem>[] = [
+  { header: 'Nom', value: (f) => f.name },
+  {
+    header: 'Espèce',
+    value: (f) => (f.species === 'AVICOLE' ? 'Avicole' : 'Porcin'),
+  },
+  { header: 'Stade', value: (f) => f.stage },
+  { header: 'Coût / kg', value: (f) => f.costPerKg },
+  { header: 'Actif', value: (f) => (f.active ? 'Actif' : 'Inactif') },
+];
+
 const toItem = (f: Row): FeedFormulaItem => ({
   id: f.id,
   name: f.name,
@@ -78,7 +89,7 @@ export class FeedFormulasService {
     private readonly audit: AuditService,
   ) {}
 
-  list(ctx: RequestContext, q: FeedFormulaQueryDto) {
+  listArgs(ctx: RequestContext, q: FeedFormulaQueryDto) {
     const where: Prisma.FeedFormulaWhereInput = {
       organizationId: ctx.user.organizationId,
       ...(q.species ? { species: q.species } : {}),
@@ -86,9 +97,8 @@ export class FeedFormulasService {
       ...(q.search ? { name: containsInsensitive(q.search) } : {}),
     };
     const order = orderBy(q, SORTABLE, { name: 'asc' });
-    return paginate(
-      q,
-      async (range) =>
+    return {
+      find: async (range: { skip?: number; take: number }) =>
         (
           await this.prisma.feedFormula.findMany({
             where,
@@ -97,8 +107,8 @@ export class FeedFormulasService {
             ...range,
           })
         ).map(toItem),
-      () => this.prisma.feedFormula.count({ where }),
-    );
+      count: () => this.prisma.feedFormula.count({ where }),
+    };
   }
 
   private async find(

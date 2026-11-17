@@ -7,13 +7,16 @@ import {
   Post,
   Put,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { Ctx, RequireDaily, RequirePermission } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
+import { sendList } from '../listing/list-helpers';
 import { ListQueryDto } from '../listing/list-query.dto';
 import { CreateInventoryDto, SaveInventoryLinesDto } from './dto/inventory.dto';
-import { InventoriesService } from './inventories.service';
+import { INVENTORY_COLUMNS, InventoriesService } from './inventories.service';
 
 @ApiTags('inventories')
 @Controller('inventories')
@@ -22,8 +25,13 @@ export class InventoriesController {
 
   @Get()
   @RequirePermission('stocks', 'read')
-  list(@Ctx() ctx: RequestContext, @Query() q: ListQueryDto) {
-    return this.inventories.list(ctx, q);
+  async list(
+    @Ctx() ctx: RequestContext,
+    @Query() q: ListQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { find, count } = this.inventories.listArgs(ctx, q);
+    await sendList(res, q, 'inventaires', INVENTORY_COLUMNS, find, count);
   }
 
   @Get(':id')

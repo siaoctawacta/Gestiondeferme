@@ -1,4 +1,11 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
+import {
+  IsIn,
+  IsNotEmpty,
+  IsOptional,
+  IsString,
+  MaxLength,
+} from 'class-validator';
 
 /** The activity of a figure, as the finance enum (the screens label it: Avicole, Porcin, Général). */
 export const ACTIVITIES = ['AVICOLE', 'PORCIN', 'GENERAL'] as const;
@@ -54,11 +61,43 @@ export class AlertItemDto {
     description: 'Every module the role must read to see the alert',
   })
   modules!: string[];
+  @ApiPropertyOptional({
+    description:
+      'Only with `?acknowledged=include`: this user masked the alert and it is still hidden (not expired, level not worse)',
+  })
+  acknowledged?: boolean;
+}
+
+export class AlertsQueryDto {
+  @ApiPropertyOptional({ enum: ['include'] })
+  @IsOptional()
+  @IsIn(['include'], { message: 'Paramètre acknowledged invalide' })
+  acknowledged?: 'include';
+}
+
+export class AlertKeyDto {
+  @ApiProperty()
+  @IsString({ message: "La clé de l'alerte est requise" })
+  @IsNotEmpty({ message: "La clé de l'alerte est requise" })
+  @MaxLength(200, { message: "La clé de l'alerte est invalide" })
+  key!: string;
 }
 
 export class AlertsDto {
-  @ApiProperty() total!: number;
+  @ApiProperty({
+    description: 'Alerts this user sees open: the masked ones are not counted',
+  })
+  total!: number;
+  @ApiPropertyOptional({
+    description: 'How many open alerts this user masked (`GET /alerts` only)',
+  })
+  acknowledgedCount?: number;
   @ApiProperty({ type: [AlertItemDto] }) items!: AlertItemDto[];
+}
+
+export class AlertAckDto {
+  @ApiProperty() key!: string;
+  @ApiProperty() acknowledged!: boolean;
 }
 
 export class UpcomingTaskDto {

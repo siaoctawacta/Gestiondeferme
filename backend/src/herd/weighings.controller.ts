@@ -7,16 +7,19 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { AccessService } from '../access/access.service';
 import { AnyAuthenticated, Ctx } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
+import { sendList } from '../listing/list-helpers';
 import { ListQueryDto } from '../listing/list-query.dto';
 import { BatchesService } from './batches.service';
 import { CreateWeighingDto, UpdateWeighingDto } from './dto/weighing.dto';
 import { speciesModule } from './species';
-import { WeighingsService } from './weighings.service';
+import { WEIGHING_COLUMNS, WeighingsService } from './weighings.service';
 
 @ApiTags('batches')
 @Controller('batches/:id/weighings')
@@ -41,9 +44,11 @@ export class WeighingsController {
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
     @Query() q: ListQueryDto,
-  ) {
+    @Res() res: Response,
+  ): Promise<void> {
     await this.guard(ctx, id, 'read');
-    return this.weighings.list(ctx, id, q);
+    const { find, count } = await this.weighings.listArgs(ctx, id);
+    await sendList(res, q, 'pesees-lot', WEIGHING_COLUMNS, find, count);
   }
 
   @Post()

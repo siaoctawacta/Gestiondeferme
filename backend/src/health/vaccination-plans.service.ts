@@ -10,7 +10,9 @@ import { addDays, formatDay, today } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
 import type { BatchType, Species } from '../generated/prisma/enums';
+import { TYPE_LABEL } from '../herd/batches.service';
 import { TYPES_BY_SPECIES } from '../herd/species';
+import type { ExportColumn } from '../listing/export';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -72,6 +74,16 @@ const toItem = (p: PlanRow): VaccinationPlanItem => ({
     dose: i.dose,
   })),
 });
+
+export const PLAN_COLUMNS: ExportColumn<VaccinationPlanItem>[] = [
+  { header: 'Nom', value: (p) => p.name },
+  {
+    header: 'Espèce',
+    value: (p) => (p.species === 'AVICOLE' ? 'Avicole' : 'Porcin'),
+  },
+  { header: 'Type de lot', value: (p) => (p.type ? TYPE_LABEL[p.type] : null) },
+  { header: 'Étapes', value: (p) => p.items.length },
+];
 
 const blank = <T>(value: T | null | undefined): T | null =>
   value === undefined || value === '' ? null : value;

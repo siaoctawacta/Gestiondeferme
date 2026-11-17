@@ -8,8 +8,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import {
   Ctx,
   RequireDaily,
@@ -21,7 +23,8 @@ import { formatDayOrNull } from '../common/days';
 import { WithdrawalRegistry } from '../herd/withdrawal';
 import { ListQueryDto } from '../listing/list-query.dto';
 import { paginate } from '../listing/paginate';
-import { AnimalsService } from './animals.service';
+import { sendList } from '../listing/list-helpers';
+import { ANIMAL_WEIGHING_COLUMNS, AnimalsService } from './animals.service';
 import {
   AnimalListQueryDto,
   CreateAnimalDto,
@@ -95,12 +98,21 @@ export class AnimalsController {
 
   @Get(':id/weighings')
   @RequirePermission('porcs', 'read')
-  listWeighings(
+  async listWeighings(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
     @Query() q: ListQueryDto,
-  ) {
-    return this.animals.listWeighings(ctx, id, q);
+    @Res() res: Response,
+  ): Promise<void> {
+    const { find, count } = await this.animals.listWeighingsArgs(ctx, id);
+    await sendList(
+      res,
+      q,
+      'pesees-animal',
+      ANIMAL_WEIGHING_COLUMNS,
+      find,
+      count,
+    );
   }
 
   @Post(':id/weighings')

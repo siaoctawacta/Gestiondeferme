@@ -8,17 +8,19 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { Ctx, RequireDaily, RequirePermission } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
-import { paginate } from '../listing/paginate';
+import type { Response } from 'express';
+import { sendList } from '../listing/list-helpers';
 import {
   CreateIncidentDto,
   IncidentQueryDto,
   UpdateIncidentDto,
 } from './dto/incident.dto';
-import { IncidentsService } from './incidents.service';
+import { INCIDENT_COLUMNS, IncidentsService } from './incidents.service';
 
 /** Daily entries of the `sante` module: `create` writes, edits and deletes. */
 @ApiTags('incidents')
@@ -28,9 +30,23 @@ export class IncidentsController {
 
   @Get()
   @RequirePermission('sante', 'read')
-  list(@Ctx() ctx: RequestContext, @Query() q: IncidentQueryDto) {
-    const { find, count } = this.records.listArgs(ctx, q);
-    return paginate(q, find, count);
+  async list(
+    @Ctx() ctx: RequestContext,
+    @Query() q: IncidentQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { find, count, statusCounts } = this.records.listArgs(ctx, q);
+    await sendList(
+      res,
+      q,
+      'incidents',
+      INCIDENT_COLUMNS,
+      find,
+      count,
+      async () => ({
+        statusCounts: await statusCounts(),
+      }),
+    );
   }
 
   @Post()

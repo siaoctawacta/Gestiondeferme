@@ -26,6 +26,7 @@ import {
 import { lockRow } from '../common/lock-row';
 import { nextNumberedCode } from '../common/next-code';
 import { fertilityRate, hatchRate } from '../indicators/indicators';
+import type { ExportColumn } from '../listing/export';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
@@ -97,6 +98,24 @@ function toItem(r: RowWithSource): IncubationItem {
     note: r.note,
   };
 }
+
+const STATUS_LABEL: Record<IncubationStatus, string> = {
+  EN_COURS: 'En cours',
+  ECLOSE: 'Éclos',
+  ECHEC: 'Échec',
+};
+
+export const INCUBATION_COLUMNS: ExportColumn<IncubationItem>[] = [
+  { header: 'Code', value: (i) => i.code },
+  { header: 'Couveuse', value: (i) => i.incubator },
+  { header: 'Début', value: (i) => i.startDate },
+  { header: 'Œufs incubés', value: (i) => i.eggsSet },
+  { header: 'Fertiles', value: (i) => i.fertileEggs },
+  { header: 'Éclosion prévue', value: (i) => i.expectedHatchDate },
+  { header: 'Poussins', value: (i) => i.chicksHatched },
+  { header: "Taux d'éclosion", value: (i) => i.hatchRate },
+  { header: 'Statut', value: (i) => STATUS_LABEL[i.status] },
+];
 
 const expectedHatch = (start: Date) => addDays(start, INCUBATION_DAYS);
 

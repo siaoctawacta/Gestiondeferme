@@ -25,8 +25,8 @@ import { HerdLedgerService } from '../herd/herd-ledger.service';
 import { assertBuildingFits } from '../herd/species';
 import { OccupationRegistry, OccupationSource } from '../herd/occupation';
 import { containsInsensitive, orConflict } from '../listing/list-helpers';
-import { ListQueryDto, orderBy } from '../listing/list-query.dto';
-import { paginate } from '../listing/paginate';
+import type { ExportColumn } from '../listing/export';
+import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { nextAnimalTag } from './animal-tag';
 import type {
@@ -105,6 +105,11 @@ export interface AnimalWeighingItem {
 }
 
 const SORTABLE = ['tag', 'birthDate', 'status', 'createdAt'];
+
+export const ANIMAL_WEIGHING_COLUMNS: ExportColumn<AnimalWeighingItem>[] = [
+  { header: 'Date', value: (w) => w.date },
+  { header: 'Poids (kg)', value: (w) => w.weightKg },
+];
 
 const toWeighingItem = (w: {
   id: string;
@@ -719,15 +724,14 @@ export class AnimalsService implements OccupationSource {
     );
   }
 
-  async listWeighings(ctx: RequestContext, id: string, q: ListQueryDto) {
+  async listWeighingsArgs(ctx: RequestContext, id: string) {
     await this.assertVisible(ctx, id);
     const where: Prisma.AnimalWeighingWhereInput = {
       animalId: id,
       farmId: { in: ctx.farmIds },
     };
-    return paginate(
-      q,
-      async (range) =>
+    return {
+      find: async (range: { skip?: number; take: number }) =>
         (
           await this.prisma.animalWeighing.findMany({
             where,
@@ -735,8 +739,8 @@ export class AnimalsService implements OccupationSource {
             ...range,
           })
         ).map(toWeighingItem),
-      () => this.prisma.animalWeighing.count({ where }),
-    );
+      count: () => this.prisma.animalWeighing.count({ where }),
+    };
   }
 
   createWeighing(

@@ -7,16 +7,22 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { Ctx, RequireDaily, RequirePermission } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
+import { sendList } from '../listing/list-helpers';
 import {
   CreateMovementDto,
   MovementQueryDto,
   UpdateMovementDto,
 } from './dto/stock-movement.dto';
-import { StockMovementsService } from './stock-movements.service';
+import {
+  MOVEMENT_COLUMNS,
+  StockMovementsService,
+} from './stock-movements.service';
 
 /**
  * Listed before `StockOverviewController` in the module: `GET /stock/movements`
@@ -29,8 +35,13 @@ export class StockMovementsController {
 
   @Get()
   @RequirePermission('stocks', 'read')
-  list(@Ctx() ctx: RequestContext, @Query() q: MovementQueryDto) {
-    return this.movements.list(ctx, q);
+  async list(
+    @Ctx() ctx: RequestContext,
+    @Query() q: MovementQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { find, count } = this.movements.listArgs(ctx, q);
+    await sendList(res, q, 'mouvements-stock', MOVEMENT_COLUMNS, find, count);
   }
 
   @Post()

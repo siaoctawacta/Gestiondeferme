@@ -12,7 +12,7 @@ import { lockRow } from '../common/lock-row';
 import { Prisma } from '../generated/prisma/client';
 import type { InventoryStatus } from '../generated/prisma/enums';
 import { orConflict } from '../listing/list-helpers';
-import { paginate } from '../listing/paginate';
+import type { ExportColumn } from '../listing/export';
 import type { ListQueryDto } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import type {
@@ -61,6 +61,18 @@ export interface InventoryLine {
   difference: number | null;
 }
 
+const STATUS_LABEL: Record<InventoryStatus, string> = {
+  BROUILLON: 'Brouillon',
+  VALIDEE: 'Validée',
+};
+
+export const INVENTORY_COLUMNS: ExportColumn<InventoryItem>[] = [
+  { header: 'Date', value: (i) => i.date },
+  { header: 'Statut', value: (i) => STATUS_LABEL[i.status] },
+  { header: 'Lignes comptées', value: (i) => i.lineCount },
+  { header: 'Note', value: (i) => i.note },
+];
+
 const toItem = (s: Session): InventoryItem => ({
   id: s.id,
   farmId: s.farmId,
@@ -95,7 +107,7 @@ export class InventoriesService {
     private readonly audit: AuditService,
   ) {}
 
-  list(ctx: RequestContext, q: ListQueryDto) {
+  listArgs(ctx: RequestContext, q: ListQueryDto) {
     if (q.status && q.status !== 'BROUILLON' && q.status !== 'VALIDEE') {
       throw new BadRequestException("Le statut de l'inventaire est invalide");
     }
@@ -103,9 +115,8 @@ export class InventoriesService {
       farmId: { in: ctx.farmIds },
       ...(q.status ? { status: q.status as InventoryStatus } : {}),
     };
-    return paginate(
-      q,
-      async (range) =>
+    return {
+      find: async (range: { skip?: number; take: number }) =>
         (
           await this.prisma.inventorySession.findMany({
             where,
@@ -114,8 +125,8 @@ export class InventoriesService {
             ...range,
           })
         ).map((s) => ({ ...toItem(s), lines: [] })),
-      () => this.prisma.inventorySession.count({ where }),
-    );
+      count: () => this.prisma.inventorySession.count({ where }),
+    };
   }
 
   private async find(

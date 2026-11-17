@@ -7,13 +7,16 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import { Ctx, RequirePermission, RequireDaily } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
+import { sendList } from '../listing/list-helpers';
 import { FeedListQueryDto } from './dto/feed-distribution.dto';
 import { CreateWaterDto, UpdateWaterDto } from './dto/water.dto';
-import { WaterService } from './water.service';
+import { WATER_COLUMNS, WaterService } from './water.service';
 
 @ApiTags('water')
 @Controller('water')
@@ -22,8 +25,13 @@ export class WaterController {
 
   @Get()
   @RequirePermission('alimentation', 'read')
-  list(@Ctx() ctx: RequestContext, @Query() q: FeedListQueryDto) {
-    return this.water.list(ctx, q);
+  async list(
+    @Ctx() ctx: RequestContext,
+    @Query() q: FeedListQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { find, count } = this.water.listArgs(ctx, q);
+    await sendList(res, q, 'eau', WATER_COLUMNS, find, count);
   }
 
   @Post()

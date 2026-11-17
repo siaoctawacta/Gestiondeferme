@@ -1,4 +1,4 @@
-import { apiDocsEnabled, assertJwtSecret } from './configure-app';
+import { apiDocsEnabled, appUrl, assertJwtSecret } from './configure-app';
 import { assertEncryptionKey } from './auth/crypto';
 
 describe('boot secret validation', () => {
@@ -44,5 +44,31 @@ describe('apiDocsEnabled', () => {
     expect(
       apiDocsEnabled({ NODE_ENV: 'production', ENABLE_API_DOCS: 'true' }),
     ).toBe(true);
+  });
+});
+
+describe('appUrl', () => {
+  it('is APP_URL, else the web origin, without a trailing slash', () => {
+    expect(appUrl({ APP_URL: 'https://app.example.com/' })).toBe(
+      'https://app.example.com',
+    );
+    expect(
+      appUrl({ APP_URL: 'https://app.example.com', WEB_ORIGIN: 'http://x' }),
+    ).toBe('https://app.example.com');
+    expect(appUrl({ WEB_ORIGIN: 'http://localhost:5173' })).toBe(
+      'http://localhost:5173',
+    );
+    expect(appUrl({ APP_URL: '', WEB_ORIGIN: 'http://localhost:5173/' })).toBe(
+      'http://localhost:5173',
+    );
+  });
+
+  it('refuses an address that is not http(s) or carries a path', () => {
+    expect(() => appUrl({ APP_URL: 'ftp://x.example.com' })).toThrow(/APP_URL/);
+    expect(() => appUrl({ APP_URL: 'not a url' })).toThrow(/APP_URL/);
+    expect(() => appUrl({ APP_URL: 'https://x.example.com/app' })).toThrow(
+      /APP_URL/,
+    );
+    expect(() => appUrl({})).toThrow(/APP_URL/);
   });
 });

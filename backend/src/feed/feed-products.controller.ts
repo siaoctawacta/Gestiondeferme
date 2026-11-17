@@ -7,8 +7,10 @@ import {
   Patch,
   Post,
   Query,
+  Res,
 } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
+import type { Response } from 'express';
 import {
   Ctx,
   NoFarm,
@@ -16,12 +18,16 @@ import {
   RequireMaster,
 } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
+import { sendList } from '../listing/list-helpers';
 import {
   CreateFeedProductDto,
   FeedProductQueryDto,
   UpdateFeedProductDto,
 } from './dto/feed-product.dto';
-import { FeedProductsService } from './feed-products.service';
+import {
+  FEED_PRODUCT_COLUMNS,
+  FeedProductsService,
+} from './feed-products.service';
 
 /** Products are shared by every farm of the organisation. */
 @ApiTags('feed-products')
@@ -32,8 +38,13 @@ export class FeedProductsController {
 
   @Get()
   @RequirePermission('alimentation', 'read')
-  list(@Ctx() ctx: RequestContext, @Query() q: FeedProductQueryDto) {
-    return this.products.list(ctx, q);
+  async list(
+    @Ctx() ctx: RequestContext,
+    @Query() q: FeedProductQueryDto,
+    @Res() res: Response,
+  ): Promise<void> {
+    const { find, count } = this.products.listArgs(ctx, q);
+    await sendList(res, q, 'aliments', FEED_PRODUCT_COLUMNS, find, count);
   }
 
   @Post()
