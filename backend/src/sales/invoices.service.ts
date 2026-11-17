@@ -50,8 +50,8 @@ import {
   type InvoiceDetail,
   type InvoiceFull,
   type InvoiceMoney,
-  type QuoteFull,
-} from './sale-view';
+} from './invoice-view';
+import type { QuoteFull } from './quote-view';
 import { invoiceStatusOf, quoteStatusBeforeConversion } from './sale-workflow';
 
 type Tx = Prisma.TransactionClient;

@@ -4,6 +4,21 @@ import type { ModuleKey } from '../../access/permissions';
 export const ALERT_LEVEL_ORDER = ['URGENT', 'A_VOIR'] as const;
 export type AlertLevel = (typeof ALERT_LEVEL_ORDER)[number];
 
+/**
+ * The place of a module's rules among the others, whatever the order the
+ * modules were initialised in (the reference alerts screen lists the stock
+ * alerts before the mortality ones).
+ */
+export const ALERT_RANK = {
+  STOCK: 10,
+  PRODUCTION: 20,
+  HEALTH: 30,
+  TASKS: 40,
+  EQUIPMENT: 50,
+  SALES: 60,
+} as const;
+export type AlertRank = (typeof ALERT_RANK)[keyof typeof ALERT_RANK];
+
 /** At least one module: an alert nobody can be said to read is shown to no one. */
 export type AlertModules = [ModuleKey, ...ModuleKey[]];
 

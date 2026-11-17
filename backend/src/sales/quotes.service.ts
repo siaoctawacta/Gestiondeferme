@@ -34,7 +34,7 @@ import {
   type QuoteDetail,
   type QuoteFull,
   type QuoteRow,
-} from './sale-view';
+} from './quote-view';
 import {
   expiredQuoteWhere,
   QUOTE_STATUS_LIST,

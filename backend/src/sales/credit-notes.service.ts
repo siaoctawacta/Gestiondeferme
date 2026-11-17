@@ -40,7 +40,7 @@ import {
   standingOf,
   type InvoiceDetail,
   type InvoiceMoney,
-} from './sale-view';
+} from './invoice-view';
 
 const NOT_FOUND = 'Avoir introuvable';
 const INVALID_LINE = 'Ligne de facture invalide';
@@ -87,6 +87,14 @@ export class CreditNotesService {
     const where: Prisma.CreditNoteWhereInput = {
       farmId: { in: ctx.farmIds },
       ...(q.customerId ? { invoice: { customerId: q.customerId } } : {}),
+      ...(q.from || q.to
+        ? {
+            date: {
+              ...(q.from ? { gte: requireDay(q.from) } : {}),
+              ...(q.to ? { lte: requireDay(q.to) } : {}),
+            },
+          }
+        : {}),
       ...(q.search
         ? {
             OR: [

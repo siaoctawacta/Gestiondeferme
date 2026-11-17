@@ -11,6 +11,8 @@ import { SaleEggOutflows } from './egg-outflows';
 import { InvoiceReads } from './invoice-reads.service';
 import { InvoicesController } from './invoices.controller';
 import { InvoicesService } from './invoices.service';
+import { PaymentsJournal } from './payments-journal';
+import { PaymentsJournalController } from './payments-journal.controller';
 import { PaymentsService } from './payments.service';
 import { QuotesController } from './quotes.controller';
 import { QuotesService } from './quotes.service';
@@ -30,10 +32,11 @@ import { SellablesService } from './sellables.service';
     PigsModule,
     StockModule,
   ],
-  // SellablesController first: `GET /sales/sellables` must not be taken for `GET /sales/:id`.
+  // SellablesController and PaymentsJournalController first: `GET /sales/sellables` and `GET /sales/payments` must not be taken for `GET /sales/:id`.
   controllers: [
     QuotesController,
     SellablesController,
+    PaymentsJournalController,
     InvoicesController,
     CreditNotesController,
   ],
@@ -42,6 +45,7 @@ import { SellablesService } from './sellables.service';
     InvoiceReads,
     InvoicesService,
     PaymentsService,
+    PaymentsJournal,
     CreditNotesService,
     ReceivableAlertsService,
     SaleEffects,

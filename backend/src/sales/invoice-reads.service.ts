@@ -21,7 +21,7 @@ import {
   type InvoiceFull,
   type InvoiceMoney,
   type InvoiceRow,
-} from './sale-view';
+} from './invoice-view';
 import { INVOICE_STATUS_LIST, type InvoiceStatusValue } from './sale-workflow';
 
 type Tx = Prisma.TransactionClient;

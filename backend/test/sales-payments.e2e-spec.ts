@@ -1,6 +1,10 @@
 import { INestApplication } from '@nestjs/common';
+import { Decimal } from '@prisma/client/runtime/client';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { receivablesOf, receivablesTotal } from '../src/sales/receivables';
+import { OPEN_STATUSES } from '../src/sales/sale-workflow';
 import { daysAgo, Headers, Id, Msg, World } from './fixtures';
+import { countQueries } from './query-counter';
 import { createFarm, createTestApp, createUser, tokenFor } from './setup';
 
 interface Payment {
@@ -95,6 +99,23 @@ describe('Client payments and receivables (e2e)', () => {
       })
     ).id;
     lotId = (await world.lot(director, { initialCount: 400 })).id;
+  });
+
+  /** Property: whatever a test built, the aggregate is Σ of the per-invoice figures (every filter, every farm). */
+  afterEach(async () => {
+    const farmIds = (await prisma.farm.findMany({ select: { id: true } })).map(
+      (f) => f.id,
+    );
+    for (const opts of [
+      {},
+      { statuses: OPEN_STATUSES },
+      { statuses: OPEN_STATUSES, dueBefore: new Date() },
+    ]) {
+      const per = await receivablesOf(prisma, farmIds, opts);
+      const sum = per.reduce((n, r) => n.add(r.due), new Decimal(0));
+      const total = await receivablesTotal(prisma, farmIds, opts);
+      expect(total.toFixed(2)).toBe(sum.toFixed(2));
+    }
   });
 
   afterAll(async () => {
@@ -893,6 +914,221 @@ describe('Client payments and receivables (e2e)', () => {
         [b.id, 1000],
         [a.id, 35000],
       ]);
+    });
+  });
+
+  describe('receivables aggregate and payments journal', () => {
+    interface JournalRow {
+      id: string;
+      number: string;
+      date: string;
+      kind: string;
+      method: string;
+      amount: number;
+      reference: string | null;
+      invoiceId: string;
+      invoiceNumber: string;
+      customerId: string;
+      customerName: string;
+    }
+    interface Journal extends Page<JournalRow> {
+      totals: { received: number; refunded: number; net: number };
+    }
+    const journal = async (q: Record<string, string> = {}, h = accountant) =>
+      (await http().get('/api/sales/payments').query(q).set(h).expect(200))
+        .body as Journal;
+
+    /** FA-0309 (600 000 of 1 000 000 in cash) and FA-0310 (1 050 000 paid, 105 000 credited and refunded). */
+    async function fixture() {
+      const a = await fa0309();
+      await encash(a.id, 600000, { method: 'ESPECES', reference: 'Caisse 1' });
+      const b = await issued({ lines: [lotLine()] });
+      await encash(b.id, 1050000, { method: 'VIREMENT' });
+      await http()
+        .post(`/api/sales/${b.id}/credit-notes`)
+        .set(accountant)
+        .send({
+          date: daysAgo(1),
+          reason: 'Retour',
+          withReturn: false,
+          lines: [{ lineId: (await get(b.id)).lines[0].id, quantity: 30 }],
+        })
+        .expect(201);
+      await pay(
+        b.id,
+        {
+          date: daysAgo(0),
+          amount: 105000,
+          method: 'MOBILE_MONEY',
+          kind: 'REMBOURSEMENT',
+        },
+        accountant,
+      );
+      return { a, b };
+    }
+
+    it('receivablesTotal is ONE query and equals Σ of the per-invoice dues (400 000 on the fixture)', async () => {
+      await fixture();
+      await issued({ lines: [lotLine({ quantity: 1 })] });
+      const draft = await world.post<Detail>(seller, '/sales', body());
+      expect(draft.status).toBe('BROUILLON');
+      const cancelled = await issued({ lines: [lotLine({ quantity: 2 })] });
+      await http()
+        .post(`/api/sales/${cancelled.id}/cancel`)
+        .set(accountant)
+        .send({ reason: 'Erreur' })
+        .expect(201);
+      const farmIds = [world.farmId];
+      const per = await receivablesOf(prisma, farmIds);
+      const sum = per.reduce((n, r) => n.add(r.due), new Decimal(0));
+      expect(sum.toNumber()).toBe(400000 + 3500);
+      expect((await receivablesTotal(prisma, farmIds)).toNumber()).toBe(403500);
+      expect(
+        (
+          await receivablesTotal(prisma, farmIds, { statuses: ['PARTIELLE'] })
+        ).toNumber(),
+      ).toBe(400000);
+      expect((await receivablesTotal(prisma, [])).toNumber()).toBe(0);
+      expect(
+        await countQueries(app, async () => {
+          await receivablesTotal(app.get(PrismaService), farmIds);
+        }),
+      ).toBe(1);
+    });
+
+    it('the summary spends one query on receivables, whatever the invoices', async () => {
+      await fixture();
+      const summary = await http()
+        .get('/api/finance/summary')
+        .set(accountant)
+        .expect(200);
+      expect((summary.body as { receivables: number }).receivables).toBe(
+        400000,
+      );
+      const queries = await countQueries(app, async () => {
+        await http().get('/api/finance/summary').set(accountant).expect(200);
+      });
+      // the view's grouped read + the one receivables aggregate + the request's own 2 (user, farm scope)
+      expect(queries).toBe(4);
+    });
+
+    it('lists the payments of the fixture with their invoice and customer, newest first, totals over the filter', async () => {
+      const { a, b } = await fixture();
+      const all = await journal();
+      expect(all.total).toBe(3);
+      expect(all.totals).toEqual({
+        received: 1650000,
+        refunded: 105000,
+        net: 1545000,
+      });
+      const rc1 = all.items.find((r) => r.number === 'RC-0001');
+      expect(rc1).toEqual({
+        id: expect.any(String) as string,
+        number: 'RC-0001',
+        date: daysAgo(1),
+        kind: 'ENCAISSEMENT',
+        method: 'ESPECES',
+        amount: 600000,
+        reference: 'Caisse 1',
+        invoiceId: a.id,
+        invoiceNumber: a.number,
+        customerId,
+        customerName: MARCHE,
+      });
+      expect(all.items[0]).toMatchObject({
+        kind: 'REMBOURSEMENT',
+        invoiceId: b.id,
+        date: daysAgo(0),
+      });
+      const refunds = await journal({ kind: 'REMBOURSEMENT' });
+      expect(refunds.items.map((r) => r.amount)).toEqual([105000]);
+      expect(refunds.totals).toEqual({
+        received: 0,
+        refunded: 105000,
+        net: -105000,
+      });
+      expect((await journal({ method: 'VIREMENT' })).total).toBe(1);
+      expect((await journal({ customerId: 'nobody' })).total).toBe(0);
+      expect((await journal({ search: 'rc-0002' })).total).toBe(1);
+      expect((await journal({ search: a.number as string })).total).toBe(1);
+      expect((await journal({ search: 'marché' })).total).toBe(3);
+      const today = await journal({ from: daysAgo(0), to: daysAgo(0) });
+      expect(today.items.map((r) => r.kind)).toEqual(['REMBOURSEMENT']);
+      expect(today.totals.net).toBe(-105000);
+      const sorted = await journal({ sort: 'amount:asc' });
+      expect(sorted.items.map((r) => r.amount)).toEqual([
+        105000, 600000, 1050000,
+      ]);
+      expect(
+        (await journal({ sort: 'number:desc' })).items.map((r) => r.number),
+      ).toEqual(['RC-0003', 'RC-0002', 'RC-0001']);
+      expect((await journal({ pageSize: '1' })).totals.received).toBe(1650000);
+      for (const q of [{ sort: 'method:asc' }, { kind: 'X' }, { from: 'hier' }])
+        await http()
+          .get('/api/sales/payments')
+          .query(q)
+          .set(accountant)
+          .expect(400);
+    });
+
+    it('exports the journal as CSV with its header', async () => {
+      await fixture();
+      const res = await http()
+        .get('/api/sales/payments')
+        .query({ format: 'csv', sort: 'number:asc' })
+        .set(accountant)
+        .expect(200);
+      const lines = res.text
+        .replace(/^\uFEFF/, '')
+        .trim()
+        .split(/\r?\n/);
+      expect(lines[0]).toBe('Date;N° reçu;Type;Mode;Facture;Client;Montant');
+      expect(lines).toHaveLength(4);
+      expect(lines[1]).toBe(
+        `${daysAgo(1)};RC-0001;Encaissement;Espèces;FA-0001;${MARCHE};600000`,
+      );
+      expect(lines[3]).toContain(';Remboursement;Mobile money;');
+    });
+
+    it('is a ventes read: COMPTABLE, COMMERCIAL, DIRECTEUR read it, MAGASINIER is refused; another farm is never listed', async () => {
+      await fixture();
+      await journal({}, seller);
+      await journal({}, director);
+      await journal({}, owner);
+      await http().get('/api/sales/payments').set(keeper).expect(403);
+      const farmB = (await createFarm(world.orgId, 'Ferme B')).id;
+      const user = await createUser({
+        organizationId: world.orgId,
+        role: 'SUPER_ADMIN',
+        farmIds: [world.farmId, farmB],
+      });
+      const auth = `Bearer ${await tokenFor(user.id)}`;
+      const onB = { Authorization: auth, 'X-Farm-Id': farmB };
+      const onAll = { Authorization: auth, 'X-Farm-Id': 'all' };
+      const other = await journal({}, onB);
+      expect(other.total).toBe(0);
+      expect(other.totals).toEqual({ received: 0, refunded: 0, net: 0 });
+      expect((await journal({}, onAll)).total).toBe(3);
+    });
+
+    it('the invoice CSV carries Payé, Échéance and Statut', async () => {
+      const a = await fa0309();
+      await encash(a.id, 600000);
+      const res = await http()
+        .get('/api/sales')
+        .query({ format: 'csv' })
+        .set(seller)
+        .expect(200);
+      const lines = res.text
+        .replace(/^\uFEFF/, '')
+        .trim()
+        .split(/\r?\n/);
+      expect(lines[0]).toBe(
+        'Date;N° facture;Client;Produit;Quantité;Total;Payé;Reste dû;Échéance;Statut',
+      );
+      expect(lines[1]).toBe(
+        `${daysAgo(2)};FA-0001;${MARCHE};Œufs (plateau);400;1000000;600000;400000;${daysAgo(1)};Partielle`,
+      );
     });
   });
 });

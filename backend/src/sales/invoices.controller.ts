@@ -26,7 +26,7 @@ import { CreateClientPaymentDto } from './dto/payment.dto';
 import { InvoiceReads } from './invoice-reads.service';
 import { PaymentsService } from './payments.service';
 import { InvoicesService } from './invoices.service';
-import { INVOICE_COLUMNS } from './sale-view';
+import { INVOICE_COLUMNS } from './invoice-view';
 
 /**
  * Permissions on `ventes`: a draft is a daily entry (`create`: create, edit,

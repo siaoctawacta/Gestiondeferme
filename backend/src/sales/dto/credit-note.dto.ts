@@ -29,6 +29,16 @@ export class CreditNoteQueryDto extends ListQueryDto {
   @IsOptional()
   @IsString({ message: 'Le client est invalide' })
   customerId?: string;
+
+  @ApiPropertyOptional({ example: '2026-11-01' })
+  @IsOptional()
+  @IsDay()
+  from?: string;
+
+  @ApiPropertyOptional({ example: '2026-11-30' })
+  @IsOptional()
+  @IsDay()
+  to?: string;
 }
 
 /**

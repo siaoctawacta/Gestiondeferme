@@ -77,7 +77,7 @@ const NEED_FEED = 'Indiquez un aliment ou une formule';
 const NOT_FOUND = 'Distribution introuvable';
 export const WATER_ROW =
   "La consommation d'eau du jour est portée par la première distribution";
-const SORTABLE = ['date', 'quantityKg', 'cost'];
+const SORTABLE = ['date', 'quantityKg'];
 
 @Injectable()
 export class FeedDistributionsService {

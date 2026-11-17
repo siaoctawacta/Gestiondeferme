@@ -16,7 +16,7 @@ import type { RequestContext } from '../access/decorators';
 import { sendList } from '../listing/list-helpers';
 import { CreateQuoteDto, QuoteQueryDto, UpdateQuoteDto } from './dto/quote.dto';
 import { QuotesService } from './quotes.service';
-import { QUOTE_COLUMNS } from './sale-view';
+import { QUOTE_COLUMNS } from './quote-view';
 
 /**
  * Permissions on `ventes`: a quote is a daily entry (`create`: create, edit,

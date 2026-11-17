@@ -4,6 +4,7 @@ import { formatDay } from '../../common/days';
 import { PrismaService } from '../../prisma/prisma.service';
 import { StockLedgerService } from '../../stock/stock-ledger.service';
 import { AlertsRegistry } from './alerts-registry';
+import { ALERT_RANK } from './alert.types';
 import {
   stockAlertRules,
   type ExpiringBatch,
@@ -30,7 +31,7 @@ export class StockAlertsService implements StockAlertData, OnModuleInit {
 
   onModuleInit(): void {
     for (const rule of stockAlertRules(this, () => this.now()))
-      this.registry.register(rule);
+      this.registry.register(rule, ALERT_RANK.STOCK);
   }
 
   /** Every active article with a minimum in the request's farms, with its quantity there (none yet is 0). */

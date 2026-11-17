@@ -210,6 +210,89 @@ describe('Lock order (held locks, real pool)', () => {
     }, 60000);
   });
 
+  describe('breeding: creating a record takes the sow and the boar in ascending id order', () => {
+    /** A sow and a boar whose ids run in the wanted order (ids are time-ordered: the animal made first has the lower id). */
+    async function pair(sowFirst: boolean) {
+      const make = (boar: boolean) =>
+        boar ? world.animal(pigs, { category: 'VERRAT' }) : world.animal(pigs);
+      const first = await make(!sowFirst);
+      const second = await make(sowFirst);
+      return sowFirst
+        ? { sow: first, boar: second }
+        : { sow: second, boar: first };
+    }
+    const create = (sowId: string, boarId: string) =>
+      world
+        .http()
+        .post('/api/breeding')
+        .set(pigs)
+        .send({
+          sowId,
+          method: 'SAILLIE',
+          boarId,
+          serviceDate: daysAgo(10),
+        })
+        .then((r) => r);
+
+    it.each([
+      ['the sow has the lower id', true],
+      ['the boar has the lower id', false],
+    ])(
+      'waits on the lower-id animal WITHOUT holding the higher one (%s)',
+      async (_name, sowFirst) => {
+        const { sow, boar } = await pair(sowFirst);
+        const [low, high] = sowFirst ? [sow.id, boar.id] : [boar.id, sow.id];
+        expect(low < high).toBe(true);
+        const res = await whileWaiting(
+          hold('Animal', low),
+          () => create(sow.id, boar.id),
+          async () => {
+            expect(await isFree('Animal', high)).toBe(true);
+          },
+        );
+        expect(res.status).toBe(201);
+      },
+      60000,
+    );
+
+    it('a sale issuing the sow and the boar races 20 creations of the same pair: no deadlock, no 500', async () => {
+      for (const sowFirst of [true, false]) {
+        for (let i = 0; i < 10; i++) {
+          const { sow, boar } = await pair(sowFirst);
+          const sale = world
+            .http()
+            .post('/api/sales/issued')
+            .set(accountant)
+            .send({
+              customerId,
+              date: daysAgo(5),
+              lines: [
+                {
+                  kind: 'ANIMAL',
+                  animalId: sow.id,
+                  quantity: 1,
+                  unitPrice: 90000,
+                },
+                {
+                  kind: 'ANIMAL',
+                  animalId: boar.id,
+                  quantity: 1,
+                  unitPrice: 120000,
+                },
+              ],
+            });
+          const [made, sold] = await Promise.all([
+            create(sow.id, boar.id),
+            sale,
+          ]);
+          // whichever wins, the other is refused cleanly (never a deadlock or a 500)
+          expect([201, 400, 409]).toContain(made.status);
+          expect([201, 400, 409]).toContain(sold.status);
+        }
+      }
+    }, 120000);
+  });
+
   describe('sales: buildings come after every lot and animal lock, ascending', () => {
     it('cancelling an invoice does not hold the lot building while it waits for an animal', async () => {
       const lot = await world.lot(director, { initialCount: 100 });

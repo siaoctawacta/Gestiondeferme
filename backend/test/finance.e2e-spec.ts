@@ -1421,6 +1421,126 @@ describe('Finance (e2e)', () => {
     });
   });
 
+  /* ------------------------------------------------------ lot money by role (Q32) */
+
+  describe('lot purchase price and feed cost need finance read', () => {
+    interface Lot extends Id {
+      purchasePrice?: number | null;
+      performance?: { feedKg: number; feedCost?: number | null };
+    }
+    const asLot = (res: { body: unknown }) => res.body as Lot;
+
+    async function chair() {
+      const l = await lot({ code: 'LC-2026-14', purchasePrice: 1500000 });
+      const { product } = await feedFixture();
+      await world.post(director, '/feed-distributions', {
+        batchId: l.id,
+        date: '2026-10-10',
+        quantityKg: 620,
+        feedProductId: product.id,
+      });
+      return l;
+    }
+    const listOf = async (h: Headers) =>
+      (
+        (
+          await http()
+            .get('/api/batches')
+            .query({ species: 'AVICOLE' })
+            .set(h)
+            .expect(200)
+        ).body as { items: Lot[] }
+      ).items;
+
+    it('returns null purchasePrice and feedCost to roles without finance read (list, detail)', async () => {
+      const l = await chair();
+      for (const role of [
+        'COMMERCIAL',
+        'RESP_AVICOLE',
+        'VETERINAIRE',
+        'AGENT_ELEVAGE',
+      ] as const) {
+        const h = await world.actor(role);
+        const items = await listOf(h);
+        expect(items).toHaveLength(1);
+        expect(items[0].purchasePrice).toBeNull();
+        const detail = asLot(
+          await http().get(`/api/batches/${l.id}`).set(h).expect(200),
+        );
+        expect(detail.purchasePrice).toBeNull();
+        expect(detail.performance?.feedCost).toBeNull();
+        expect(detail.performance?.feedKg).toBe(620);
+      }
+    });
+
+    it('gives the figures to the roles with finance read', async () => {
+      const l = await chair();
+      for (const role of [
+        'DIRECTEUR_FERME',
+        'PROPRIETAIRE',
+        'AUDITEUR',
+      ] as const) {
+        const h = await world.actor(role);
+        expect((await listOf(h))[0].purchasePrice).toBe(1500000);
+        const detail = asLot(
+          await http().get(`/api/batches/${l.id}`).set(h).expect(200),
+        );
+        expect(detail.purchasePrice).toBe(1500000);
+        expect(detail.performance?.feedCost).toBe(198400);
+      }
+    });
+
+    it('the accountant still reads the same figures through /finance/lots', async () => {
+      const l = await chair();
+      expect((await lotDetail(l.id)).costs).toMatchObject({
+        animaux: 1500000,
+        aliment: 198400,
+      });
+    });
+
+    it('writes are unchanged: a master writer may send a price, the response hides it', async () => {
+      const resp = await world.actor('RESP_AVICOLE');
+      const base = {
+        species: 'AVICOLE',
+        type: 'CHAIR',
+        buildingId: world.poultryBld,
+        entryDate: daysAgo(10),
+        initialCount: 50,
+      };
+      const created = asLot(
+        await http()
+          .post('/api/batches')
+          .set(resp)
+          .send({ ...base, purchasePrice: 90000 })
+          .expect(201),
+      );
+      expect(created.purchasePrice).toBeNull();
+      const edited = asLot(
+        await http()
+          .patch(`/api/batches/${created.id}`)
+          .set(resp)
+          .send({ notes: 'RAS' })
+          .expect(200),
+      );
+      expect(edited.purchasePrice).toBeNull();
+      expect(
+        (
+          await prisma.animalBatch.findUniqueOrThrow({
+            where: { id: created.id },
+          })
+        ).purchasePrice?.toNumber(),
+      ).toBe(90000);
+      expect(
+        asLot(
+          await http()
+            .get(`/api/batches/${created.id}`)
+            .set(director)
+            .expect(200),
+        ).purchasePrice,
+      ).toBe(90000);
+    });
+  });
+
   /* ------------------------------------------------------ lots: list and options */
 
   describe('lot profitability', () => {
@@ -1552,8 +1672,8 @@ describe('Finance (e2e)', () => {
         await created({ date: '2026-10-06', amount: 10 + i });
       }
       expect(await queries()).toBe(one);
-      // one grouped read of the view + the 3 reads of the receivables + the request's own 2 (user, farm scope)
-      expect(one).toBe(6);
+      // one grouped read of the view + the one receivables aggregate + the request's own 2 (user, farm scope)
+      expect(one).toBe(4);
     });
 
     it('serves the entries list and the lots profitability in a fixed number of queries', async () => {

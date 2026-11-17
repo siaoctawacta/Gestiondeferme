@@ -5,7 +5,11 @@ import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
 import type { AuditAction } from '../generated/prisma/enums';
 import type { InvoiceReads } from './invoice-reads.service';
-import { standingOf, type InvoiceFull, type InvoiceMoney } from './sale-view';
+import {
+  standingOf,
+  type InvoiceFull,
+  type InvoiceMoney,
+} from './invoice-view';
 import {
   invoiceStatusOf,
   refusal,

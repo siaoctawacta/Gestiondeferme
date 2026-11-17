@@ -314,7 +314,13 @@ export class BreedingService implements LitterWeaningSource {
           );
         }
       }
-      await lockRow(tx, 'Animal', dto.sowId, [farmId]);
+      // The sow and the boar (the boar keeps leaving the herd from under this
+      // record) are locked in ASCENDING id order, as every other path that
+      // takes two animals does: a sale of the pair cannot deadlock with us.
+      for (const id of [dto.sowId, dto.boarId]
+        .filter((v): v is string => !!v)
+        .sort())
+        await lockRow(tx, 'Animal', id, [farmId]);
       const sow = await tx.animal.findFirst({
         where: { id: dto.sowId, farmId },
       });
@@ -335,8 +341,6 @@ export class BreedingService implements LitterWeaningSource {
       }
       await this.assertCycleOrder(tx, sow.id, serviceDate);
       if (dto.boarId) {
-        // Keeps the boar from leaving the herd while this record points at him.
-        await lockRow(tx, 'Animal', dto.boarId, [farmId]);
         const boar = await tx.animal.findFirst({
           where: { id: dto.boarId, farmId, sex: 'M', status: 'ACTIF' },
           select: { id: true },

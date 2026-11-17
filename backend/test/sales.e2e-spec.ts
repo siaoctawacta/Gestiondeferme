@@ -1493,10 +1493,10 @@ describe('Invoices (e2e)', () => {
         .trim()
         .split(/\r?\n/);
       expect(lines[0]).toBe(
-        'Date;N° facture;Client;Produit;Quantité;Total;Reste dû',
+        'Date;N° facture;Client;Produit;Quantité;Total;Payé;Reste dû;Échéance;Statut',
       );
       expect(lines[1]).toContain(
-        `${daysAgo(2)};FA-0310;Restaurant Le Palmier;Poulets de chair;300;1050000;1050000`,
+        `${daysAgo(2)};FA-0310;Restaurant Le Palmier;Poulets de chair;300;1050000;0;1050000;`,
       );
     });
 

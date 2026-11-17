@@ -1,7 +1,9 @@
 import { INestApplication } from '@nestjs/common';
+import { Decimal } from '@prisma/client/runtime/client';
 import { HerdLedgerService } from '../src/herd/herd-ledger.service';
 import { lockRow } from '../src/common/lock-row';
 import { PrismaService } from '../src/prisma/prisma.service';
+import { receivablesOf, receivablesTotal } from '../src/sales/receivables';
 import { StockLedgerService } from '../src/stock/stock-ledger.service';
 import { daysAgo, Headers, Id, Msg, World } from './fixtures';
 import { createFarm, createTestApp, createUser, tokenFor } from './setup';
@@ -113,6 +115,18 @@ describe('Credit notes (e2e)', () => {
       })
     ).id;
     lotId = (await world.lot(director, { initialCount: 400 })).id;
+  });
+
+  /** Property: after any credit-note scenario the aggregate is Σ of the per-invoice dues. */
+  afterEach(async () => {
+    const farmIds = (await prisma.farm.findMany({ select: { id: true } })).map(
+      (f) => f.id,
+    );
+    const per = await receivablesOf(prisma, farmIds);
+    const sum = per.reduce((n, r) => n.add(r.due), new Decimal(0));
+    expect((await receivablesTotal(prisma, farmIds)).toFixed(2)).toBe(
+      sum.toFixed(2),
+    );
   });
 
   afterAll(async () => {
@@ -1553,6 +1567,47 @@ describe('Credit notes (e2e)', () => {
           .body as Page<{ id: string; balance: number; refundDue: number }>
       ).items.find((c) => c.id === customerId);
       expect(row).toMatchObject({ balance: 0, refundDue: 35000 });
+    });
+  });
+
+  describe('list period', () => {
+    it('from and to keep the credit notes of the period (bounds inclusive) and reject a bad day', async () => {
+      const a = await issued({ lines: [lotLine({ quantity: 10 })] });
+      await credit(a, [[0, 1]], { date: daysAgo(4), reason: 'Ancien' });
+      await credit(a, [[0, 1]], { date: daysAgo(2), reason: 'Milieu' });
+      await credit(a, [[0, 1]], { date: daysAgo(1), reason: 'Récent' });
+      const numbers = async (q: Record<string, string>) =>
+        (
+          (
+            await http()
+              .get('/api/credit-notes')
+              .query(q)
+              .set(seller)
+              .expect(200)
+          ).body as Page<CreditRow>
+        ).items
+          .map((i) => i.number)
+          .sort();
+      expect(await numbers({})).toEqual(['AV-0001', 'AV-0002', 'AV-0003']);
+      expect(await numbers({ from: daysAgo(2) })).toEqual([
+        'AV-0002',
+        'AV-0003',
+      ]);
+      expect(await numbers({ to: daysAgo(2) })).toEqual(['AV-0001', 'AV-0002']);
+      expect(await numbers({ from: daysAgo(2), to: daysAgo(2) })).toEqual([
+        'AV-0002',
+      ]);
+      await http()
+        .get('/api/credit-notes')
+        .query({ from: 'hier' })
+        .set(seller)
+        .expect(400);
+      const csv = await http()
+        .get('/api/credit-notes')
+        .query({ format: 'csv', from: daysAgo(1) })
+        .set(seller)
+        .expect(200);
+      expect(csv.text.trim().split(/\r?\n/)).toHaveLength(2);
     });
   });
 });

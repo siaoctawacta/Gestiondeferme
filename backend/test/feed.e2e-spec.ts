@@ -772,6 +772,14 @@ describe('Feed and water (e2e)', () => {
         .get('/api/feed-distributions?sort=bogus:asc')
         .set(headers)
         .expect(400);
+      // the stored cost is not the ledger cost shown: no sort on it
+      for (const sort of ['cost', 'cost:asc', 'cost:desc']) {
+        const res = await http()
+          .get(`/api/feed-distributions?sort=${sort}`)
+          .set(headers)
+          .expect(400);
+        expect((res.body as { message: string }).message).toBe('Tri invalide');
+      }
       const csv = await http()
         .get('/api/feed-distributions?format=csv')
         .set(headers)

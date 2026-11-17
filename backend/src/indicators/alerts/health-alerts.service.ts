@@ -9,6 +9,7 @@ import {
 } from '../../health/health-act-view';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AlertsRegistry } from './alerts-registry';
+import { ALERT_RANK } from './alert.types';
 import {
   healthAlertRules,
   type HealthActAlert,
@@ -57,7 +58,7 @@ export class HealthAlertsService implements HealthAlertData, OnModuleInit {
 
   onModuleInit(): void {
     for (const rule of healthAlertRules(this, () => this.now()))
-      this.registry.register(rule);
+      this.registry.register(rule, ALERT_RANK.HEALTH);
   }
 
   async vaccinations(

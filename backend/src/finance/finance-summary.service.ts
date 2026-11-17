@@ -5,7 +5,7 @@ import { toMoney, zero } from '../common/money';
 import type { Activity, FinanceKind } from '../generated/prisma/enums';
 import { margin, marginRate } from '../indicators/indicators';
 import { PrismaService } from '../prisma/prisma.service';
-import { receivablesOf } from '../sales/receivables';
+import { receivablesTotal } from '../sales/receivables';
 import { OPEN_STATUSES } from '../sales/sale-workflow';
 import {
   CATEGORY_LABEL,
@@ -55,8 +55,8 @@ export interface FinanceSummary {
 /**
  * The farm view: recettes − dépenses over a period, from the finance ledger
  * view only (never stock consumption). The dashboard calls `summary` too, so
- * its figures are these. Queries: one grouped read of the view, the three of
- * `receivablesOf`, and the farm names under `all`: a fixed number whatever the
+ * its figures are these. Queries: one grouped read of the view, the one
+ * receivables aggregate of sales (`receivablesTotal`), and the farm names under `all`: a fixed number whatever the
  * number of documents.
  */
 @Injectable()
@@ -80,7 +80,7 @@ export class FinanceSummaryService {
     const period = periodOf(q.from, q.to);
     const [sums, receivables, farms] = await Promise.all([
       this.ledger.sums({ farmIds: ctx.farmIds, ...period }),
-      receivablesOf(this.prisma, ctx.farmIds, { statuses: OPEN_STATUSES }),
+      receivablesTotal(this.prisma, ctx.farmIds, { statuses: OPEN_STATUSES }),
       withFarms
         ? this.prisma.farm.findMany({
             where: { id: { in: ctx.farmIds } },
@@ -131,7 +131,7 @@ export class FinanceSummaryService {
       expenses: toMoney(total.expenses),
       margin: toMoney(total.margin),
       marginPct: marginRate(total.margin, total.revenue),
-      receivables: toMoney(receivables.reduce((n, r) => n.add(r.due), zero())),
+      receivables: toMoney(receivables),
       byActivity,
       byCategory,
       ...(withFarms

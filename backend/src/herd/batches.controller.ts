@@ -15,6 +15,7 @@ import type { Response } from 'express';
 import { AccessService } from '../access/access.service';
 import { AnyAuthenticated, Ctx } from '../access/decorators';
 import type { RequestContext } from '../access/decorators';
+import { can } from '../access/permissions';
 import { formatDayOrNull } from '../common/days';
 import { sendList } from '../listing/list-helpers';
 import { ListQueryDto } from '../listing/list-query.dto';
@@ -29,6 +30,14 @@ import {
 import { CreateEventDto, TransferDto, UpdateEventDto } from './dto/event.dto';
 import { speciesModule } from './species';
 import { WithdrawalRegistry } from './withdrawal';
+
+/** What a lot cost is finance data: a role without `finance:read` sees null. */
+const seesMoney = (ctx: RequestContext) =>
+  can(ctx.user.role, 'finance', 'read');
+const hideMoney = <T extends { purchasePrice: number | null }>(
+  ctx: RequestContext,
+  batch: T,
+): T => (seesMoney(ctx) ? batch : { ...batch, purchasePrice: null });
 
 /**
  * Poultry batches fall under `lots`, pig batches under `porcs`, so the module
@@ -76,7 +85,7 @@ export class BatchesController {
       q,
       q.species === 'AVICOLE' ? 'lots-avicoles' : 'lots-porcins',
       BATCH_COLUMNS,
-      find,
+      async (range) => (await find(range)).map((b) => hideMoney(ctx, b)),
       count,
       async () => ({
         statusCounts: await this.batches.statusCounts(ctx, q.species),
@@ -89,7 +98,10 @@ export class BatchesController {
   async create(@Ctx() ctx: RequestContext, @Body() dto: CreateBatchDto) {
     this.access.assertMaster(ctx, speciesModule(dto.species));
     // Same shape as the detail: a new lot has no withdrawal period.
-    return { ...(await this.batches.create(ctx, dto)), withdrawalUntil: null };
+    return {
+      ...hideMoney(ctx, await this.batches.create(ctx, dto)),
+      withdrawalUntil: null,
+    };
   }
 
   @Get(':id')
@@ -97,9 +109,12 @@ export class BatchesController {
   async get(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     await this.guard(ctx, id, 'read');
     const batch = await this.batches.get(ctx, id);
+    const performance = await this.performance.get(ctx, id);
     return {
-      ...batch,
-      performance: await this.performance.get(ctx, id),
+      ...hideMoney(ctx, batch),
+      performance: seesMoney(ctx)
+        ? performance
+        : { ...performance, feedCost: null },
       // Last day (inclusive) under a withdrawal period, whatever it is today.
       withdrawalUntil: formatDayOrNull(
         await this.withdrawal.until({ batchId: id }),
@@ -115,7 +130,7 @@ export class BatchesController {
     @Body() dto: UpdateBatchDto,
   ) {
     await this.guard(ctx, id, 'master');
-    return this.batches.update(ctx, id, dto);
+    return hideMoney(ctx, await this.batches.update(ctx, id, dto));
   }
 
   @Delete(':id')
@@ -130,7 +145,7 @@ export class BatchesController {
   @AnyAuthenticated()
   async close(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     await this.guard(ctx, id, 'master');
-    return this.batches.close(ctx, id);
+    return hideMoney(ctx, await this.batches.close(ctx, id));
   }
 
   @Post(':id/reopen')
@@ -138,7 +153,7 @@ export class BatchesController {
   @AnyAuthenticated()
   async reopen(@Ctx() ctx: RequestContext, @Param('id') id: string) {
     await this.guard(ctx, id, 'master');
-    return this.batches.reopen(ctx, id);
+    return hideMoney(ctx, await this.batches.reopen(ctx, id));
   }
 
   @Post(':id/transfer')
@@ -150,7 +165,7 @@ export class BatchesController {
     @Body() dto: TransferDto,
   ) {
     await this.guard(ctx, id, 'master');
-    return this.events.transfer(ctx, id, dto);
+    return hideMoney(ctx, await this.events.transfer(ctx, id, dto));
   }
 
   @Get(':id/events')

@@ -26,7 +26,11 @@ import {
 } from './invoice-guard';
 import { InvoiceReads } from './invoice-reads.service';
 import { balanceOf } from './sale-money';
-import { standingOf, type InvoiceDetail, type InvoiceMoney } from './sale-view';
+import {
+  standingOf,
+  type InvoiceDetail,
+  type InvoiceMoney,
+} from './invoice-view';
 
 type Tx = Prisma.TransactionClient;
 

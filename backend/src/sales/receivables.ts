@@ -1,6 +1,6 @@
 import { Decimal } from '@prisma/client/runtime/client';
-import { formatDayOrNull } from '../common/days';
-import type { Prisma } from '../generated/prisma/client';
+import { formatDay, formatDayOrNull } from '../common/days';
+import { Prisma } from '../generated/prisma/client';
 import type { PrismaService } from '../prisma/prisma.service';
 import { balanceOf } from './sale-money';
 import { REVENUE_STATUSES, type InvoiceStatusValue } from './sale-workflow';
@@ -176,4 +176,37 @@ export function standingOf(
   const zero = new Decimal(0);
   const { due, refundDue } = balanceOf({ total: invoice.total, ...money });
   return { due: owed ? due : zero, refundDue: owed ? refundDue : zero };
+}
+
+/**
+ * What customers still owe in all: Σ of `due` (`GREATEST(0, total − credited −
+ * paid + refunded)`, the definition of `balanceOf` / `standingOf`) over the
+ * invoices of the farms in `statuses` (default `REVENUE_STATUSES`), optionally
+ * only those whose due date is before `dueBefore`. ONE query whatever the
+ * number of invoices, with the credited, paid and refunded sums computed in the
+ * database (correlated sums): the dashboard and the finance summary read this,
+ * the per-invoice `receivablesOf` stays for the lists. It takes no lock.
+ */
+export async function receivablesTotal(
+  client: Client,
+  farmIds: string[],
+  opts: { statuses?: readonly InvoiceStatusValue[]; dueBefore?: Date } = {},
+): Promise<Decimal> {
+  const statuses = [...(opts.statuses ?? REVENUE_STATUSES)];
+  if (farmIds.length === 0 || statuses.length === 0) return new Decimal(0);
+  const before = opts.dueBefore
+    ? Prisma.sql`AND i."dueDate" < ${formatDay(opts.dueBefore)}::date`
+    : Prisma.empty;
+  const [row] = await client.$queryRaw<{ total: string }[]>`
+    SELECT COALESCE(SUM(GREATEST(0::numeric, x."net" - x."paid" + x."refunded")), 0)::text AS "total"
+    FROM (
+      SELECT i."total" - COALESCE((SELECT SUM(c."total") FROM "CreditNote" c WHERE c."invoiceId" = i."id"), 0) AS "net",
+             COALESCE((SELECT SUM(p."amount") FROM "CustomerPayment" p WHERE p."invoiceId" = i."id" AND p."kind" = 'ENCAISSEMENT'), 0) AS "paid",
+             COALESCE((SELECT SUM(p."amount") FROM "CustomerPayment" p WHERE p."invoiceId" = i."id" AND p."kind" = 'REMBOURSEMENT'), 0) AS "refunded"
+      FROM "Invoice" i
+      WHERE i."farmId" = ANY(${farmIds}::text[])
+        AND i."status"::text = ANY(${statuses}::text[])
+        ${before}
+    ) x`;
+  return new Decimal(row.total);
 }

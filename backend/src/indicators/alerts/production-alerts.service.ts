@@ -5,6 +5,7 @@ import { HerdLedgerService } from '../../herd/herd-ledger.service';
 import type { Species } from '../../generated/prisma/enums';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AlertsRegistry } from './alerts-registry';
+import { ALERT_RANK } from './alert.types';
 import {
   productionAlertRules,
   type AlertData,
@@ -48,7 +49,8 @@ export class ProductionAlertsService implements AlertData, OnModuleInit {
   ) {}
 
   onModuleInit(): void {
-    for (const rule of productionAlertRules(this)) this.registry.register(rule);
+    for (const rule of productionAlertRules(this))
+      this.registry.register(rule, ALERT_RANK.PRODUCTION);
   }
 
   /**

@@ -1,6 +1,7 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AlertsRegistry } from '../indicators/alerts/alerts-registry';
+import { ALERT_RANK } from '../indicators/alerts/alert.types';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   receivableAlertRules,
@@ -30,7 +31,7 @@ export class ReceivableAlertsService
 
   onModuleInit(): void {
     for (const rule of receivableAlertRules(this, () => this.now()))
-      this.registry.register(rule);
+      this.registry.register(rule, ALERT_RANK.SALES);
   }
 
   async overdue(ctx: RequestContext, day: Date): Promise<OpenReceivable[]> {
