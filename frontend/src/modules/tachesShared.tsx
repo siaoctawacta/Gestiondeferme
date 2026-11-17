@@ -2,6 +2,7 @@ import { RecordForm } from '../components/module/RecordForm';
 import type { Field, RowGate, StatusDef } from '../components/module/types';
 import { useAuth } from '../lib/auth';
 import { todayIso } from '../lib/format';
+import { useOpenLotOptions } from './productionShared';
 
 /* ---------------------------------------------------------------------------------------------
  * API shapes (backend contract of `/tasks`, `/employees/options`, Task 3). Reconcile with the backend here only.
@@ -96,7 +97,7 @@ export const employeeOptions = {
 };
 
 const TARGETS: { kind: TaskTargetKind; label: string; field: string; module: 'lots' | 'batiments' | 'equipements'; options: { endpoint: string; params?: Record<string, string>; labelKey?: string } }[] = [
-  { kind: 'LOT', label: 'Lot', field: 'batchId', module: 'lots', options: { endpoint: '/batches', params: { status: 'EN_COURS' }, labelKey: 'code' } },
+  { kind: 'LOT', label: 'Lot', field: 'batchId', module: 'lots', options: { endpoint: '/batches' } },
   { kind: 'BATIMENT', label: 'Bâtiment', field: 'buildingId', module: 'batiments', options: { endpoint: '/buildings' } },
   { kind: 'EQUIPEMENT', label: 'Équipement', field: 'equipmentId', module: 'equipements', options: { endpoint: '/equipment' } },
 ];
@@ -122,6 +123,8 @@ export function TaskForm({ row, scope, onSaved, onClose }: { row?: TaskRow; scop
   const { can } = useAuth();
   // A list scoped to a lot, building or equipment (its detail page) fixes the target: the scope sets it, nothing is chosen.
   const scoped = TARGETS.some((x) => scope?.[x.field]);
+  // The open lots of every species the user reads: the list endpoint takes one species at a time.
+  const openLots = useOpenLotOptions(!scoped);
   const offered = scoped ? [] : TARGETS.filter((x) => can(x.module, 'read') || row?.target?.kind === x.kind);
   const fields = (values: Record<string, unknown>): Field[] => [
     { name: 'title', label: 'Tâche', type: 'text', required: true },
@@ -136,7 +139,7 @@ export function TaskForm({ row, scope, onSaved, onClose }: { row?: TaskRow; scop
       options: [{ value: 'NONE', label: 'Rien' }, ...offered.map((x) => ({ value: x.kind, label: x.label }))],
     } satisfies Field]),
     ...TARGETS.filter((x) => values.targetKind === x.kind).map((x): Field => ({
-      name: x.field, label: x.label, type: 'select', required: true, options: x.options, optionsPermission: { module: x.module, action: 'read' },
+      name: x.field, label: x.label, type: 'select', required: true, options: x.kind === 'LOT' ? openLots : x.options, optionsPermission: { module: x.module, action: 'read' },
       currentLabel: row?.target?.kind === x.kind ? row.target.label : undefined,
     })),
   ];

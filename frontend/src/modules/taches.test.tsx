@@ -79,7 +79,12 @@ function mount({ perms = RESP_AVICOLE, tasks = TASKS, route = '/', employees = E
     if (url.startsWith('/api/employees/user-options')) return json(200, { items: [{ id: 'u5', name: 'Awa', email: 'awa@x.tg', role: 'RESP_AVICOLE' }] });
     if (url.startsWith('/api/employees')) return page(EMPLOYEES, { statusCounts: { ACTIF: 2, PARTI: 1 } });
     if (url.startsWith('/api/attendance')) return page(url.includes('from=2026-10-20') ? ATTENDANCE : url.includes('from=') ? [] : ATTENDANCE, { statusCounts: { PRESENT: 1, ABSENT: 1 } });
-    if (url.startsWith('/api/batches')) return page([{ id: 'l1', code: 'LC-2026-14' }, { id: 'l2', code: 'LC-2026-15' }]);
+    // The real list refuses a request without a species (400): the form must name the species it may read.
+    if (url.startsWith('/api/batches')) {
+      const species = new URL(url, 'http://x').searchParams.get('species');
+      if (!species) return json(400, { message: ["L'espèce est requise (AVICOLE ou PORCIN)"] });
+      return species === 'AVICOLE' ? page([{ id: 'l1', code: 'LC-2026-14' }, { id: 'l2', code: 'LC-2026-15' }]) : page([{ id: 'p1', code: 'PC-2026-02' }]);
+    }
     if (url.startsWith('/api/buildings')) return page([{ id: 'b1', name: 'Porcherie 2' }]);
     throw new Error(`unexpected ${call.method} ${url}`);
   });
@@ -369,7 +374,9 @@ describe('taches form', () => {
     await user.selectOptions(within(dialog).getByLabelText('Récurrence'), 'Chaque semaine');
     await user.click(within(dialog).getByRole('radio', { name: 'Lot' }));
     await waitFor(() => expect(within(dialog).getByRole('option', { name: 'LC-2026-14' })).toBeInTheDocument());
-    expect(calls.some((c) => c.url.startsWith('/api/batches') && c.url.includes('status=EN_COURS'))).toBe(true);
+    expect(calls.some((c) => c.url.startsWith('/api/batches') && c.url.includes('status=EN_COURS') && c.url.includes('species=AVICOLE'))).toBe(true);
+    // This role reads no pigs: no request for them.
+    expect(calls.some((c) => c.url.startsWith('/api/batches') && c.url.includes('species=PORCIN'))).toBe(false);
     await user.selectOptions(within(dialog).getByLabelText('Lot'), 'LC-2026-14');
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
@@ -378,6 +385,14 @@ describe('taches form', () => {
       body: { title: 'Contrôle eau', assigneeId: 'e1', dueDate: '2026-11-20', dueTime: '07:30', priority: 'HAUTE', recurrence: 'HEBDOMADAIRE', batchId: 'l1' },
     });
     expect(Object.keys(writes()[0].body as object).sort()).toEqual(['assigneeId', 'batchId', 'dueDate', 'dueTime', 'priority', 'recurrence', 'title']);
+  });
+
+  it('offers the open pig lots too to a user who reads pigs, and asks the API per species', async () => {
+    const { user, dialog } = await openForm({ ...RESP_AVICOLE, porcs: ['read'] });
+    await user.click(within(dialog).getByRole('radio', { name: 'Lot' }));
+    await waitFor(() => expect(within(dialog).getByRole('option', { name: 'PC-2026-02' })).toBeInTheDocument());
+    expect(within(dialog).getByRole('option', { name: 'LC-2026-14' })).toBeInTheDocument();
+    expect(calls.filter((c) => c.url.startsWith('/api/batches')).every((c) => /species=(AVICOLE|PORCIN)/.test(c.url))).toBe(true);
   });
 
   it('refuses a task without title or due date', async () => {
