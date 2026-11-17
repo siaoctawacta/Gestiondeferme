@@ -42,8 +42,9 @@ export interface FeedDistribution {
   waterLiters: number | null;
   /** Absent on older APIs: then only a row that already has water is editable. */
   waterEditable?: boolean;
-  unitCost: number;
-  cost: number;
+  /** Null without `finance:read`. */
+  unitCost: number | null;
+  cost: number | null;
   note: string | null;
 }
 
@@ -363,7 +364,7 @@ export const alimentation: ModuleConfig<FeedDistribution> = {
     { key: 'feedName', header: 'ALIMENT' },
     { key: 'quantityKg', header: 'ALIMENT (KG)', sortable: true, render: (d) => formatNumber(d.quantityKg) },
     { key: 'waterLiters', header: 'EAU (L)', render: (d) => orDash(d.waterLiters) },
-    { key: 'cost', header: 'COÛT', render: (d) => formatMoney(d.cost) },
+    { key: 'cost', header: 'COÛT', visible: ({ can }) => can('finance', 'read'), render: (d) => (d.cost === null ? '—' : formatMoney(d.cost)) },
   ],
   rowLabel: (d) => `${d.target} du ${d.date}`,
   editPermission: 'create',

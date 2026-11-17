@@ -30,7 +30,7 @@ const OVERVIEW = {
 const fetchMock = vi.fn<typeof fetch>();
 const urls: string[] = [];
 
-function mount(overview: unknown = OVERVIEW, perms: Record<string, string[]> = { batiments: ALL }, missing = false) {
+function mount(overview: unknown = OVERVIEW, perms: Record<string, string[]> = { batiments: ALL, lots: ['read'], porcs: ['read'] }, missing = false) {
   fetchMock.mockImplementation(async (input) => {
     const url = String(input);
     urls.push(url);
@@ -123,7 +123,14 @@ describe('BuildingDetail', () => {
 
   it('links a pig lot to the pig herd page', async () => {
     mount({ ...OVERVIEW, lots: [{ id: 'p1', code: 'LP-2026-02', species: 'PORCIN', alive: 40 }] });
-    expect(await screen.findByRole('link', { name: 'LP-2026-02' })).toHaveAttribute('href', '/m/porcs/p1');
+    expect(await screen.findByRole('link', { name: 'LP-2026-02' })).toHaveAttribute('href', '/m/porcs/lot-p1');
+  });
+
+  it('shows a lot as plain text without read access to its module', async () => {
+    mount({ ...OVERVIEW, lots: [OVERVIEW.lots![0], { id: 'p1', code: 'LP-2026-02', species: 'PORCIN', alive: 40 }] }, { batiments: ALL, porcs: ['read'] });
+    expect(await screen.findByRole('link', { name: 'LP-2026-02' })).toBeInTheDocument();
+    expect(screen.getByText('LC-2026-14')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'LC-2026-14' })).not.toBeInTheDocument();
   });
 
   it('opens the QR dialog of the building from the QR button', async () => {

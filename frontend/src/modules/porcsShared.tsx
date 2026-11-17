@@ -2,6 +2,9 @@ import type { ModuleConfig, StatusDef } from '../components/module/types';
 import { formatDecimal, todayIso } from '../lib/format';
 import { STATUSES as LOT_STATUSES, TYPE_LABELS, num, text } from './lotsShared';
 
+/** `/m/porcs/:id` is an animal, or `lot-{id}` for a pig lot. */
+export const PIG_LOT_PREFIX = 'lot-';
+
 /* ---------------------------------------------------------------------------------------------
  * API shapes (backend contract of `/pig-herd`, `/animals`, task 5).
  * If the real backend names a field differently, this is the only place to adjust.

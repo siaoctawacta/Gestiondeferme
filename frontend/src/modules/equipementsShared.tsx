@@ -138,6 +138,8 @@ const toForm = (d: EquipmentDetailData) => ({
 
 function EquipmentFormBody({ record, onSaved, onClose }: { record?: EquipmentDetailData; onSaved: () => void; onClose: () => void }) {
   const broken = record?.condition === 'EN_PANNE';
+  // A location kind is chosen with its site or building; only an equipment stored with none may stay without.
+  const located = !record || record.siteId !== null || record.buildingId !== null;
   const fields = (values: Record<string, unknown>): Field[] => [
     { name: 'name', label: 'Nom', type: 'text', required: true },
     { name: 'type', label: 'Type', type: 'select', required: true, options: EQUIPMENT_TYPES },
@@ -146,8 +148,8 @@ function EquipmentFormBody({ record, onSaved, onClose }: { record?: EquipmentDet
       options: [{ value: 'SITE', label: 'Site' }, { value: 'BATIMENT', label: 'Bâtiment' }],
     },
     values.locationKind === 'BATIMENT'
-      ? { name: 'buildingId', label: 'Bâtiment', type: 'select', options: { endpoint: '/buildings' }, optionsPermission: { module: 'batiments', action: 'read' }, currentLabel: record?.location ?? undefined }
-      : { name: 'siteId', label: 'Site', type: 'select', options: { endpoint: '/sites' }, optionsPermission: { module: 'batiments', action: 'read' }, currentLabel: record?.location ?? undefined },
+      ? { name: 'buildingId', label: 'Bâtiment', type: 'select', required: located, options: { endpoint: '/buildings' }, optionsPermission: { module: 'batiments', action: 'read' }, currentLabel: record?.location ?? undefined }
+      : { name: 'siteId', label: 'Site', type: 'select', required: located, options: { endpoint: '/sites' }, optionsPermission: { module: 'batiments', action: 'read' }, currentLabel: record?.location ?? undefined },
     { name: 'brand', label: 'Marque', type: 'text' },
     { name: 'serialNumber', label: 'N° de série', type: 'text' },
     { name: 'purchaseDate', label: "Date d'achat", type: 'date' },
@@ -276,13 +278,13 @@ const interventionToForm = (m: MaintenanceRow) => ({
 });
 
 /** Add / edit form of the `Interventions` list: the equipment is chosen when adding, unless the list is scoped to one. */
-function MaintenanceForm({ row, scope, onSaved, onClose }: { row?: MaintenanceRow; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }) {
+function MaintenanceFormBody({ row, equipment, scope, onSaved, onClose }: { row?: MaintenanceRow; equipment?: EquipmentRef; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }) {
   const { can } = useAuth();
   return (
     <RecordForm
       label="Équipements"
       row={row}
-      fields={interventionFields(can, { chooseEquipment: !scope?.equipmentId })}
+      fields={interventionFields(can, { chooseEquipment: !scope?.equipmentId, equipment })}
       initial={row ? interventionToForm(row) : undefined}
       toPayload={(v) => {
         const { equipmentId, ...rest } = interventionPayload(v);
@@ -294,6 +296,20 @@ function MaintenanceForm({ row, scope, onSaved, onClose }: { row?: MaintenanceRo
       onSaved={onSaved}
       onClose={onClose}
     />
+  );
+}
+
+/**
+ * Add form of an equipment's own `Interventions` tab (scope `equipmentId`): it loads the equipment (the detail page's query)
+ * so that a broken one offers the same repair fields as the `Intervention` action. An edit and the page's list need none.
+ */
+function MaintenanceForm(props: { row?: MaintenanceRow; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }) {
+  const equipmentId = props.scope?.equipmentId;
+  if (props.row || !equipmentId) return <MaintenanceFormBody {...props} />;
+  return (
+    <LoadedRecord<EquipmentDetailData> title="Ajouter — Équipements" queryKey={['/equipment', 'detail', equipmentId]} path={`/equipment/${equipmentId}`} onClose={props.onClose}>
+      {(equipment) => <MaintenanceFormBody {...props} equipment={equipment} />}
+    </LoadedRecord>
   );
 }
 

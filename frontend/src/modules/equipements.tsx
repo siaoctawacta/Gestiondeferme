@@ -60,6 +60,7 @@ export const equipements: ModuleConfig<EquipmentRow> = {
   statusKey: 'condition',
   form: EquipmentForm,
   createPermission: 'update',
+  deletePermission: 'update',
   rowLabel: (e) => e.name,
   canDelete: equipmentDeleteGate,
   qr: 'equipement',

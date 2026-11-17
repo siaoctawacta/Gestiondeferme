@@ -19,6 +19,7 @@ const DISTRIBUTIONS = [
   { id: 'd1', date: '2026-10-22', target: 'LC-2026-14', targetKind: 'LOT', batchId: 'l1', buildingId: null, feedName: 'Croissance chair', feedProductId: 'p1', formulaId: null, quantityKg: 620, waterLiters: 1250, unitCost: 340, cost: 210800, note: null },
   { id: 'd2', date: '2026-10-22', target: 'Porcherie 1', targetKind: 'BATIMENT', batchId: null, buildingId: 'b2', feedName: 'Engraissement porc', feedProductId: null, formulaId: 'f1', quantityKg: 540, waterLiters: null, unitCost: 280, cost: 151200, note: null },
 ];
+let distributions: unknown[] = DISTRIBUTIONS;
 const PRODUCTS = [
   { id: 'p1', name: 'Croissance chair', kind: 'ALIMENT_COMPLET', unit: 'kg', unitCost: 340, active: true },
   { id: 'p2', name: 'Maïs', kind: 'MATIERE_PREMIERE', unit: 'kg', unitCost: 200, active: true },
@@ -45,7 +46,7 @@ function mount(ui: React.ReactNode, { perms = ALL, farm, modules = {} }: { perms
     }
     if (call.method !== 'GET') return json(201, { id: 'x' });
     const url = call.url;
-    if (url.startsWith('/api/feed-distributions')) return page(DISTRIBUTIONS);
+    if (url.startsWith('/api/feed-distributions')) return page(distributions);
     if (url.startsWith('/api/feed-products')) return page(url.includes('active=true') ? PRODUCTS.filter((p) => p.active) : PRODUCTS);
     if (url.startsWith('/api/feed-formulas')) return page(FORMULAS);
     if (url.startsWith('/api/stock-items')) return page([{ id: 'si1', name: 'Maïs (stock)' }]);
@@ -68,6 +69,7 @@ const mountPage = (opts?: Parameters<typeof mount>[1]) =>
   mount(<Routes><Route path="*" element={<ModulePage config={alimentation} />} /></Routes>, opts);
 
 beforeEach(() => {
+  distributions = DISTRIBUTIONS;
   calls.length = 0;
   fetchMock.mockReset();
   vi.stubGlobal('fetch', fetchMock);
@@ -79,9 +81,27 @@ afterEach(() => {
   setFarmHeader(null);
 });
 
+describe('alimentation costs', () => {
+  it('hides the COÛT column without finance:read', async () => {
+    mountPage();
+    await screen.findByText('LC-2026-14');
+    expect(screen.queryByRole('columnheader', { name: 'COÛT' })).not.toBeInTheDocument();
+    expect(screen.queryByText('210 800 FCFA')).not.toBeInTheDocument();
+  });
+
+  it('shows a dash for a null cost with finance:read, never 0 FCFA', async () => {
+    distributions = DISTRIBUTIONS.map((d) => ({ ...d, cost: null, unitCost: null }));
+    mountPage({ modules: { finance: ['read'] } });
+    const row = (await screen.findByText('LC-2026-14')).closest('tr')!;
+    expect(screen.getByRole('columnheader', { name: 'COÛT' })).toBeInTheDocument();
+    expect(within(row).getAllByText('—')).toHaveLength(1);
+    expect(row.textContent).not.toMatch(/FCFA/);
+  });
+});
+
 describe('alimentation', () => {
   it('renders the reference headers, tile, subtitle, tabs and figures', async () => {
-    mountPage();
+    mountPage({ modules: { finance: ['read'] } });
     expect(await screen.findByText('LC-2026-14')).toBeInTheDocument();
     for (const h of ['DATE', 'LOT / BÂTIMENT', 'ALIMENT', 'ALIMENT (KG)', 'EAU (L)', 'COÛT']) {
       expect(screen.getByRole('columnheader', { name: h })).toBeInTheDocument();

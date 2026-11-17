@@ -8,7 +8,7 @@ import { Pill } from '../components/ui/Pill';
 import { orDash } from '../lib/format';
 import { LotForm } from './lotForm';
 import { lotLocked, text } from './lotsShared';
-import { ANIMAL_CATEGORIES, ANIMAL_LEFT, STATUSES, categoryLabel, hasLeft, statusDef, type AnimalDetailData, type HerdRow } from './porcsShared';
+import { ANIMAL_CATEGORIES, PIG_LOT_PREFIX, ANIMAL_LEFT, STATUSES, categoryLabel, hasLeft, statusDef, type AnimalDetailData, type HerdRow } from './porcsShared';
 import { activeAnimalOptions, breedOptions, useBuildingOptions } from './productionShared';
 import { lazyRetry } from '../components/lazyRetry';
 
@@ -18,11 +18,9 @@ const LotDetail = lazyRetry(() => import('../pages/details/LotDetail').then((m) 
 
 type FormProps = { row?: HerdRow; scope?: Record<string, string>; onSaved: () => void; onClose: () => void };
 
-const LOT_PREFIX = 'lot-';
-
 /** `/m/porcs/:id`: an animal, or `lot-{id}` for a pig lot. */
 function PigDetail({ id }: { id: string }) {
-  return id.startsWith(LOT_PREFIX) ? <LotDetail id={id.slice(LOT_PREFIX.length)} /> : <AnimalDetail id={id} />;
+  return id.startsWith(PIG_LOT_PREFIX) ? <LotDetail id={id.slice(PIG_LOT_PREFIX.length)} /> : <AnimalDetail id={id} />;
 }
 
 /** Add an individual animal; the sex follows the category (Truie, Cochette → F; Verrat → M). */
@@ -139,7 +137,7 @@ export const porcs: ModuleConfig<HerdRow> = {
   statusKey: 'status',
   rowLabel: (r) => r.identifier,
   // Pig lots reuse the species-aware lot detail, under this module's route so `porcs` permissions apply.
-  detailPath: (r) => (r.kind === 'LOT' ? `/m/porcs/${LOT_PREFIX}${r.id}` : `/m/porcs/${r.id}`),
+  detailPath: (r) => (r.kind === 'LOT' ? `/m/porcs/${PIG_LOT_PREFIX}${r.id}` : `/m/porcs/${r.id}`),
   detail: PigDetail,
   qr: (r) => (r.kind === 'LOT' ? 'lot' : 'animal'),
   createPermission: 'update',

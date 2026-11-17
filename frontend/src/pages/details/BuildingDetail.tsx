@@ -2,12 +2,14 @@ import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import { api } from '../../lib/api';
 import { formatDate, formatNumber, formatPct } from '../../lib/format';
+import { useAuth } from '../../lib/auth';
 import { useFarmQuery } from '../../lib/query';
 import { QrButton } from '../../components/module/QrButton';
 import { Card } from '../../components/ui/Card';
 import { Pill } from '../../components/ui/Pill';
 import { BUILDING_STATUSES, buildingTypeLabel } from '../../modules/batimentsShared';
 import { CONDITIONS, type EquipmentCondition } from '../../modules/equipementsShared';
+import { PIG_LOT_PREFIX } from '../../modules/porcsShared';
 import { actTypeLabel, type HealthActType } from '../../modules/santeShared';
 import { DetailGate } from './DetailGate';
 import { DetailLayout } from './DetailLayout';
@@ -41,6 +43,7 @@ const linkClass = 'font-medium text-primary hover:underline';
 
 /** `/m/batiments/:id`: what a building's QR code opens: its figures and what is in it (lots, equipment, open tasks, latest health acts). */
 export function BuildingDetail({ id }: { id: string }) {
+  const { can } = useAuth();
   const query = useFarmQuery<BuildingOverview>(['/buildings', 'overview', id], () => api.get<BuildingOverview>(`/buildings/${id}/overview`));
   return (
     <DetailGate query={query}>
@@ -68,7 +71,11 @@ export function BuildingDetail({ id }: { id: string }) {
                     <ul className="space-y-1.5 text-sm">
                       {o.lots.map((l) => (
                         <li key={l.id} className="flex items-center justify-between gap-3">
-                          <Link to={`/m/${l.species === 'PORCIN' ? 'porcs' : 'lots'}/${l.id}`} className={linkClass}>{l.code}</Link>
+                          {can(l.species === 'PORCIN' ? 'porcs' : 'lots', 'read') ? (
+                            <Link to={l.species === 'PORCIN' ? `/m/porcs/${PIG_LOT_PREFIX}${l.id}` : `/m/lots/${l.id}`} className={linkClass}>{l.code}</Link>
+                          ) : (
+                            <span className="font-medium">{l.code}</span>
+                          )}
                           <span className="text-muted-foreground">{formatNumber(l.alive)} vivants</span>
                         </li>
                       ))}

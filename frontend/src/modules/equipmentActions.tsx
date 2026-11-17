@@ -14,7 +14,7 @@ function BreakdownDialog({ row, onClose, onDone }: DialogProps) {
     <ActionDialog
       title={`Déclarer une panne — ${row.name}`}
       fields={[
-        { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso },
+        { name: 'date', label: 'Date', type: 'date', required: true, defaultValue: todayIso, max: todayIso() },
         { name: 'description', label: 'Description', type: 'text', required: true },
       ]}
       onSubmit={(body) => api.post(`/equipment/${row.id}/breakdowns`, body)}

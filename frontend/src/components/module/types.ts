@@ -142,7 +142,11 @@ interface CellBase {
  * user entered before it was hidden.
  */
 export type Field =
-  | (FieldBase & { type: 'text' | 'date' | 'textarea' })
+  | (FieldBase & {
+      type: 'text' | 'date' | 'textarea';
+      /** A `date` input cannot pick a later day (`YYYY-MM-DD`, e.g. today for an operation date). */
+      max?: string;
+    })
   /**
    * A file chosen from the device (a proof photo): the value is the `File`, or `''` for none (then left out of the
    * payload); the request that sends it (`FormData`) is the caller's. `accept` narrows the picker.

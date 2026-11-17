@@ -83,7 +83,7 @@ export function CellControl({ field, value, onChange, id, disabled, excluded, pa
       type={field.type}
       disabled={disabled}
       min={field.type === 'number' ? field.min : undefined}
-      max={field.type === 'number' ? field.max : undefined}
+      max={field.type === 'number' ? field.max : field.type === 'date' && 'max' in field ? field.max : undefined}
       step={field.type === 'number' ? (typeof field.step === 'function' ? field.step(row ?? {}) : field.step) : undefined}
       autoComplete={field.type === 'password' ? 'new-password' : undefined}
       value={String(value)}

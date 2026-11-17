@@ -188,6 +188,12 @@ describe('equipements gating', () => {
     expect(names('Ventilateur Poulailler B #3')).toEqual(['Intervention', 'Réformer', 'QR code', 'Modifier', 'Supprimer']);
   });
 
+  it('offers delete to a user holding update but not delete', async () => {
+    mount({ perms: { equipements: ['read', 'update'], batiments: ['read'] } });
+    await screen.findByText('Pompe forage');
+    expect(rowOf('Pompe forage').getByRole('button', { name: 'Supprimer' })).toBeInTheDocument();
+  });
+
   it('disables the delete icon of an equipment with history, with the exact reason', async () => {
     mount();
     await screen.findByText('Pompe forage');
@@ -304,6 +310,13 @@ describe('equipment actions', () => {
     expect(writes()[0].body).not.toHaveProperty('conditionAfter');
   });
 
+  it('has a max of today on the breakdown date', async () => {
+    mount();
+    await screen.findByText('Pompe forage');
+    await userEvent.setup().click(rowOf('Pompe forage').getByRole('button', { name: 'Déclarer une panne' }));
+    expect(within(await screen.findByRole('dialog')).getByLabelText('Date')).toHaveAttribute('max', todayIso());
+  });
+
   it('offers the repair only for a corrective intervention', async () => {
     mount();
     await screen.findByText('Ventilateur Poulailler B #3');
@@ -391,6 +404,32 @@ describe('equipements form', () => {
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/equipment/eq1', body: { brand: null, condition: 'A_SURVEILLER' } });
     expect(Object.keys(writes()[0].body as object).sort()).toEqual(['brand', 'condition']);
+  });
+
+  it('refuses a chosen location kind with nothing picked', async () => {
+    const { user, dialog } = await openAdd();
+    await user.type(within(dialog).getByLabelText('Nom'), 'Ventilateur 5');
+    await user.selectOptions(within(dialog).getByLabelText('Type'), 'Ventilateur');
+    await user.click(within(dialog).getByRole('radio', { name: 'Bâtiment' }));
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Le champ « Bâtiment » est requis')).toBeInTheDocument();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it('moves an equipment from its site to a building: the site is cleared, the building set', async () => {
+    mount();
+    await screen.findByText('Pompe forage');
+    const user = userEvent.setup();
+    await user.click(rowOf('Groupe électrogène 20 kVA').getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Modifier — Équipements' });
+    await waitFor(() => expect(within(dialog).getByLabelText('Marque')).toHaveValue('Honda'));
+    await user.click(within(dialog).getByRole('radio', { name: 'Bâtiment' }));
+    await waitFor(() => expect(within(dialog).getByRole('option', { name: 'Poulailler B' })).toBeInTheDocument());
+    await user.selectOptions(within(dialog).getByLabelText('Bâtiment'), 'Poulailler B');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/equipment/eq1', body: { buildingId: 'b1', siteId: null } });
+    expect(Object.keys(writes()[0].body as object).sort()).toEqual(['buildingId', 'siteId']);
   });
 
   it('locks the state of a broken equipment with the hint', async () => {
@@ -529,6 +568,22 @@ describe('EquipmentDetail', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0].body).toMatchObject({ equipmentId: 'eq4', repairsBreakdown: true });
+  });
+
+  it('offers the repair of the open breakdown from the Interventions tab of a broken equipment', async () => {
+    open();
+    await screen.findByRole('heading', { name: 'Ventilateur Poulailler B #3' });
+    const user = userEvent.setup();
+    await screen.findByText('Vidange');
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Équipements' });
+    expect(within(dialog).queryByLabelText('Équipement')).not.toBeInTheDocument();
+    expect(await within(dialog).findByRole('checkbox', { name: 'Répare la panne du 2026-11-02' })).toBeChecked();
+    expect(within(dialog).getByLabelText('État après intervention')).toHaveValue('BON');
+    await user.type(within(dialog).getByLabelText('Description'), 'Moteur');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/maintenance', body: { equipmentId: 'eq4', kind: 'CORRECTIVE', repairsBreakdown: true, conditionAfter: 'BON' } });
   });
 
   it('shows the not-found card for an unknown equipment', async () => {
