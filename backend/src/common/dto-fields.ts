@@ -12,8 +12,8 @@ import {
   Min,
   ValidateIf,
 } from 'class-validator';
-import { IsDay } from '../../herd/dto/is-day';
-import { Trim } from '../../listing/list-helpers';
+import { IsDay } from '../herd/dto/is-day';
+import { Trim } from '../listing/list-helpers';
 
 export const ID = 'Identifiant invalide';
 export const MAX_QTY = 1_000_000;

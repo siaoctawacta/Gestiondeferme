@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
+import { blank } from '../common/blank';
 import { assertNotFuture, formatDay, requireDay } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
@@ -63,9 +64,6 @@ const toItem = (r: Row): BiosecurityLogItem => ({
   visitorName: r.visitorName,
   note: r.note,
 });
-
-const blank = <T>(value: T | null | undefined): T | null =>
-  value === undefined || value === '' ? null : value;
 
 /** Cleaning, disinfection, footbath and visitor logs of a farm (daily entries). */
 @Injectable()

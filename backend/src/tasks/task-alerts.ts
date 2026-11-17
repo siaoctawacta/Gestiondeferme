@@ -46,7 +46,7 @@ export function taskAlerts(rows: OverdueTask[], now: Date): AlertItem[] {
         ? `${r.title} (${r.assigneeName})`
         : r.title;
       return {
-        key: `task:${r.id}`,
+        key: `task:${r.id}:${formatDay(r.dueDate)}`,
         title: 'Tâche en retard',
         detail: withFarm(detail, r.farmName),
         level: 'A_VOIR',

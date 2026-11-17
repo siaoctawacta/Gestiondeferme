@@ -6,18 +6,13 @@ import {
   OptionalId,
   OptionalText,
   RequiredText,
-} from '../../health/dto/fields';
+} from '../../common/dto-fields';
 import { IsDay } from '../../herd/dto/is-day';
 import { Trim } from '../../listing/list-helpers';
 import { ListQueryDto } from '../../listing/list-query.dto';
+import { TASK_RECURRENCE_LIST } from '../task-workflow';
 
 export const TASK_PRIORITIES = ['NORMALE', 'HAUTE', 'URGENTE'] as const;
-export const TASK_RECURRENCES = [
-  'AUCUNE',
-  'QUOTIDIENNE',
-  'HEBDOMADAIRE',
-  'MENSUELLE',
-] as const;
 const PRIORITY = 'La priorité est invalide';
 const RECURRENCE = 'La récurrence est invalide';
 const TIME = "L'heure est invalide (HH:mm)";
@@ -98,10 +93,10 @@ export class CreateTaskDto {
   @IsEnum(TASK_PRIORITIES, { message: PRIORITY })
   priority?: (typeof TASK_PRIORITIES)[number];
 
-  @ApiPropertyOptional({ enum: TASK_RECURRENCES, default: 'AUCUNE' })
+  @ApiPropertyOptional({ enum: TASK_RECURRENCE_LIST, default: 'AUCUNE' })
   @NotNull()
-  @IsEnum(TASK_RECURRENCES, { message: RECURRENCE })
-  recurrence?: (typeof TASK_RECURRENCES)[number];
+  @IsEnum(TASK_RECURRENCE_LIST, { message: RECURRENCE })
+  recurrence?: (typeof TASK_RECURRENCE_LIST)[number];
 
   @OptionalId()
   batchId?: string;
@@ -138,10 +133,10 @@ export class UpdateTaskDto {
   @IsEnum(TASK_PRIORITIES, { message: PRIORITY })
   priority?: (typeof TASK_PRIORITIES)[number];
 
-  @ApiPropertyOptional({ enum: TASK_RECURRENCES })
+  @ApiPropertyOptional({ enum: TASK_RECURRENCE_LIST })
   @NotNull()
-  @IsEnum(TASK_RECURRENCES, { message: RECURRENCE })
-  recurrence?: (typeof TASK_RECURRENCES)[number];
+  @IsEnum(TASK_RECURRENCE_LIST, { message: RECURRENCE })
+  recurrence?: (typeof TASK_RECURRENCE_LIST)[number];
 
   @OptionalId()
   batchId?: string | null;

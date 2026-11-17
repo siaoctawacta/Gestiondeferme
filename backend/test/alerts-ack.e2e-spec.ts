@@ -78,7 +78,7 @@ describe('Per-user alert acknowledgement (e2e)', () => {
         createdById: user.id,
       },
     });
-    return `task:${task.id}`;
+    return `task:${task.id}:${daysAgo(3)}`;
   }
 
   describe('acknowledging', () => {
@@ -153,6 +153,19 @@ describe('Per-user alert acknowledgement (e2e)', () => {
       // Acknowledging again hides it for another period.
       await ack(alice, key).expect(200);
       expect((await alerts(alice)).total).toBe(0);
+    });
+
+    it('purges the caller own expired acknowledgements when acknowledging, never another user', async () => {
+      const old = await overdueTask('Ancienne');
+      await ack(alice, old).expect(200);
+      await ack(bob, old).expect(200);
+      clockPlus(10);
+      const fresh = await overdueTask('Nouvelle');
+      await ack(alice, fresh).expect(200);
+      const keys = (await prisma.alertAck.findMany()).map((a) => a.key);
+      // Alice's expired row is gone, Bob's (not his call) stays, and the new one is in.
+      expect(keys.filter((k) => k === old)).toHaveLength(1);
+      expect(keys).toContain(fresh);
     });
 
     it('follows the alertAckDays setting', async () => {

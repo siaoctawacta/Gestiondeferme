@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
+import { blank } from '../common/blank';
 import { requireDay, today } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
@@ -56,8 +57,6 @@ const ENTERED_DONE =
 const SORTABLE = ['date', 'status', 'type', 'createdAt'];
 
 /** An empty text is no text. */
-const blank = <T>(value: T | null | undefined): T | null =>
-  value === undefined || value === '' ? null : value;
 
 /**
  * Health acts: vaccinations, treatments, disinfections and diagnoses on one

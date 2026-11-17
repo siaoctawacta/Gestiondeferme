@@ -45,7 +45,7 @@ describe('taskAlerts', () => {
     );
     expect(alerts).toEqual([
       {
-        key: 'task:c',
+        key: 'task:c:2026-10-18',
         title: 'Tâche en retard',
         detail: 'Nettoyage Porcherie 2 (Yawa M.)',
         level: 'A_VOIR',
@@ -53,7 +53,7 @@ describe('taskAlerts', () => {
         modules: ['taches'],
       },
       {
-        key: 'task:a',
+        key: 'task:a:2026-10-23',
         title: 'Tâche en retard',
         detail: 'Pesée hebdomadaire LC-2026-14 (Kodjo A.)',
         level: 'A_VOIR',
@@ -61,7 +61,7 @@ describe('taskAlerts', () => {
         modules: ['taches'],
       },
       {
-        key: 'task:b',
+        key: 'task:b:2026-10-24',
         title: 'Tâche en retard',
         detail: 'Vaccination Gumboro LC-2026-15 (Dr Koffi)',
         level: 'A_VOIR',
@@ -94,7 +94,19 @@ describe('taskAlerts', () => {
       ],
       TODAY,
     ).map((a) => a.key);
-    expect(keys).toEqual(['task:x', 'task:y', 'task:z']);
+    expect(keys).toEqual([
+      'task:x:2026-10-23',
+      'task:y:2026-10-23',
+      'task:z:2026-10-23',
+    ]);
+  });
+});
+
+describe('task alert key', () => {
+  it('carries the due date: a task pushed to a new date is a new alert', () => {
+    const [before] = taskAlerts([row({ dueDate: '2026-10-23' })], TODAY);
+    const [after] = taskAlerts([row({ dueDate: '2026-11-02' })], TODAY);
+    expect(before.key).not.toBe(after.key);
   });
 });
 

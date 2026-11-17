@@ -20,7 +20,7 @@ import {
   OptionalId,
   OptionalText,
   RequiredText,
-} from './fields';
+} from '../../common/dto-fields';
 
 const SPECIES = ['AVICOLE', 'PORCIN'] as const;
 const BATCH_TYPES = [

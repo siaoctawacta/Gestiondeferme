@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
+import { blank } from '../common/blank';
 import {
   assertNotBeforeEntry,
   assertNotFuture,
@@ -84,9 +85,6 @@ const toItem = (r: Row): IncidentItem => ({
   buildingId: r.buildingId,
   status: r.status,
 });
-
-const blank = <T>(value: T | null | undefined): T | null =>
-  value === undefined || value === '' ? null : value;
 
 /**
  * Health incidents of a lot and/or a building (daily entries). Closing locks

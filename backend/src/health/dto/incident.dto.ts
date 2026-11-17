@@ -2,7 +2,12 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { IsDay } from '../../herd/dto/is-day';
 import { ListQueryDto } from '../../listing/list-query.dto';
-import { NotNull, OptionalId, OptionalText, RequiredText } from './fields';
+import {
+  NotNull,
+  OptionalId,
+  OptionalText,
+  RequiredText,
+} from '../../common/dto-fields';
 
 export const SEVERITIES = ['FAIBLE', 'MOYENNE', 'GRAVE'] as const;
 export type SeverityValue = (typeof SEVERITIES)[number];

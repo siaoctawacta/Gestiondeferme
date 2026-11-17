@@ -34,6 +34,8 @@ export interface TaskItem {
   status: TaskStatusValue;
   overdue: boolean;
   recurrence: TaskRecurrenceValue;
+  /** The anchor day (1-31) of a monthly series once an occurrence has been generated, else null. */
+  recurrenceDay: number | null;
   target: { kind: TaskTargetKind; id: string; label: string } | null;
   completedDate: string | null;
   hasProof: boolean;
@@ -92,6 +94,7 @@ export const toTaskItem = (
   status: row.status,
   overdue: isOverdue(row, today),
   recurrence: row.recurrence,
+  recurrenceDay: row.recurrenceDay,
   target: targetOf(row),
   completedDate: formatDayOrNull(row.completedDate),
   hasProof: row.proofPath !== null,
@@ -108,6 +111,7 @@ export const taskSnapshot = (row: TaskRecord) => ({
   priority: row.priority,
   status: row.status,
   recurrence: row.recurrence,
+  recurrenceDay: row.recurrenceDay,
   batchId: row.batchId,
   buildingId: row.buildingId,
   equipmentId: row.equipmentId,

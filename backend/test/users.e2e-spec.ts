@@ -358,6 +358,51 @@ describe('Users and settings (e2e)', () => {
         .expect(400);
     });
 
+    it('clears the employee link of a user removed from the employee farm', async () => {
+      const admin = await actor('SUPER_ADMIN');
+      const u = (
+        await http()
+          .post('/api/users')
+          .set(admin.headers)
+          .send(newUser({ farmIds: [farmA, farmB] }))
+      ).body as UserView;
+      const link = (farmId: string, name: string) =>
+        prisma.employee.create({
+          data: {
+            farmId,
+            name,
+            jobTitle: 'Ouvrier',
+            contractType: 'CDI',
+            hireDate: new Date('2025-01-01'),
+            userId: u.id,
+          },
+        });
+      const inA = await link(farmA, 'Employé A');
+      const inB = await link(farmB, 'Employé B');
+      await http()
+        .patch(`/api/users/${u.id}`)
+        .set(admin.headers)
+        .send({ name: 'Renommé' })
+        .expect(200);
+      expect(
+        (await prisma.employee.findUniqueOrThrow({ where: { id: inA.id } }))
+          .userId,
+      ).toBe(u.id);
+      await http()
+        .patch(`/api/users/${u.id}`)
+        .set(admin.headers)
+        .send({ farmIds: [farmB] })
+        .expect(200);
+      const after = await prisma.employee.findMany({
+        orderBy: { name: 'asc' },
+      });
+      expect(after.map((e) => [e.name, e.userId])).toEqual([
+        ['Employé A', null],
+        ['Employé B', u.id],
+      ]);
+      expect(inB.userId).toBe(u.id);
+    });
+
     it('revokes refresh tokens on deactivation and on role change', async () => {
       const admin = await actor('SUPER_ADMIN');
       const u = (
@@ -573,6 +618,37 @@ describe('Users and settings (e2e)', () => {
       expect(
         await prisma.refreshToken.count({ where: { userId: clean.id } }),
       ).toBe(0);
+    });
+
+    it('hard delete of a user linked to an employee unlinks the employee', async () => {
+      const admin = await actor('SUPER_ADMIN');
+      const clean = await createUser({
+        organizationId: orgId,
+        role: 'COMMERCIAL',
+        farmIds: [farmA],
+      });
+      const employee = await prisma.employee.create({
+        data: {
+          farmId: farmA,
+          name: 'Lié',
+          jobTitle: 'Ouvrier',
+          contractType: 'CDI',
+          hireDate: new Date('2025-01-01'),
+          userId: clean.id,
+        },
+      });
+      await http()
+        .delete(`/api/users/${clean.id}`)
+        .set(admin.headers)
+        .expect(200);
+      expect(await prisma.user.count({ where: { id: clean.id } })).toBe(0);
+      expect(
+        (
+          await prisma.employee.findUniqueOrThrow({
+            where: { id: employee.id },
+          })
+        ).userId,
+      ).toBeNull();
     });
 
     it('reset-link: one-time, 24 h, previous links invalidated, tokens revoked', async () => {

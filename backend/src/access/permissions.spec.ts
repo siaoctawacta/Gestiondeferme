@@ -51,6 +51,12 @@ describe('permissions', () => {
     expect(can('SUPER_ADMIN', 'audit', 'read')).toBe(true);
   });
 
+  it('gives finance read to every role that reads the audit log (its snapshots carry salaries and costs)', () => {
+    const readers = ALL_ROLES.filter((r) => can(r, 'audit', 'read'));
+    expect(readers.length).toBeGreaterThan(0);
+    for (const r of readers) expect(can(r, 'finance', 'read')).toBe(true);
+  });
+
   it('applies the per-role rows', () => {
     expect(can('DIRECTEUR_FERME', 'lots', 'validate')).toBe(true);
     expect(can('DIRECTEUR_FERME', 'ventes', 'create')).toBe(false);

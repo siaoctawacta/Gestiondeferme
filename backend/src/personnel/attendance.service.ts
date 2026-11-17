@@ -7,6 +7,7 @@ import {
 import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
+import { blank } from '../common/blank';
 import { ascending } from '../common/ascending';
 import { assertNotFuture, formatDay, requireDay } from '../common/days';
 import { lockRow } from '../common/lock-row';
@@ -21,8 +22,11 @@ import type {
   CreateAttendanceDto,
   UpdateAttendanceDto,
 } from './dto/attendance.dto';
-import { ATTENDANCE_STATUSES } from './dto/attendance.dto';
-import { isActiveOn } from './employee-rules';
+import {
+  ATTENDANCE_STATUSES,
+  countByStatus,
+  isActiveOn,
+} from './employee-rules';
 import {
   attendanceInclude,
   toAttendanceItem,
@@ -37,9 +41,6 @@ const EMPLOYEE_INVALID = 'Employé invalide pour cette ferme';
 const HOURS_ONLY_PRESENT = "Les heures ne s'indiquent que pour une présence";
 const TWICE = 'Un employé figure deux fois dans la feuille';
 const SORTABLE = ['date', 'employeeName'];
-
-const blank = <T>(value: T | null | undefined): T | null =>
-  value === undefined || value === '' ? null : value;
 
 const notInPost = (name: string, day: Date) =>
   `${name} n'est pas en poste le ${formatDay(day)}`;
@@ -114,11 +115,7 @@ export class AttendanceService {
           where: this.where(ctx, q, false),
           _count: { _all: true },
         });
-        const counts = Object.fromEntries(
-          ATTENDANCE_STATUSES.map((s) => [s, 0]),
-        ) as Record<AttendanceStatus, number>;
-        for (const g of groups) counts[g.status] = g._count._all;
-        return { statusCounts: counts };
+        return { statusCounts: countByStatus(groups) };
       },
     };
   }
@@ -174,6 +171,10 @@ export class AttendanceService {
       where: { id: { in: order } },
       select: { id: true, name: true, hireDate: true, endDate: true },
     });
+    // Deleted between the first read and the locks: the same 400, never a 500.
+    if (rows.length !== order.length) {
+      throw new BadRequestException(EMPLOYEE_INVALID);
+    }
     return new Map(rows.map((e) => [e.id, e]));
   }
 
@@ -221,19 +222,23 @@ export class AttendanceService {
         return toAttendanceItem(created);
       });
     } catch (error) {
-      throw await this.explain(error, dto.employeeId, date);
+      throw await this.explain(error, [dto.employeeId], date);
     }
   }
 
   /** A unique-index race on (employee, day) reads like the pre-check; a foreign key like "in use". */
-  private async explain(error: unknown, employeeId: string, date: Date) {
+  private async explain(error: unknown, employeeIds: string[], date: Date) {
     const code = (error as { code?: string } | null)?.code;
     if (code === 'P2002') {
-      const employee = await this.prisma.employee.findUnique({
-        where: { id: employeeId },
-        select: { name: true },
+      // The transaction rolled back: the rows found for these employees that day are the ones that won the race.
+      const taken = await this.prisma.attendance.findFirst({
+        where: { employeeId: { in: employeeIds }, date },
+        select: { employee: { select: { name: true } } },
+        orderBy: { id: 'asc' },
       });
-      return new ConflictException(alreadyEntered(employee?.name ?? '', date));
+      return new ConflictException(
+        alreadyEntered(taken?.employee.name ?? '', date),
+      );
     }
     if (code === 'P2003') return new ConflictException(IN_USE);
     return error;
@@ -365,7 +370,7 @@ export class AttendanceService {
       });
     } catch (error) {
       // The employee rows are locked first, so a duplicate cannot race; a foreign key can.
-      throw await this.explain(error, ids[0], date);
+      throw await this.explain(error, ids, date);
     }
   }
 }

@@ -16,7 +16,7 @@ import {
   OptionalId,
   OptionalText,
   RequiredText,
-} from '../../health/dto/fields';
+} from '../../common/dto-fields';
 
 export const CONTRACT_TYPES = ['CDI', 'CDD', 'JOURNALIER', 'STAGE'] as const;
 export type ContractTypeValue = (typeof CONTRACT_TYPES)[number];

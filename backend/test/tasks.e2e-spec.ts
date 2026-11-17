@@ -29,6 +29,7 @@ interface Task extends Id {
   status: string;
   overdue: boolean;
   recurrence: string;
+  recurrenceDay: number | null;
   target: { kind: string; id: string; label: string } | null;
   completedDate: string | null;
   hasProof: boolean;
@@ -740,7 +741,7 @@ describe('Tâches: workflow, recurrence, proof, alerts (e2e)', () => {
       await act(again.id, 'start');
       const blocked = await act(pesee.id, 'reopen', {}, 409);
       expect(message(blocked)).toBe(
-        "L'occurrence suivante a déjà commencé : rouvrez-la ou modifiez-la",
+        "L'occurrence suivante a déjà commencé : supprimez-la ou retirez sa photo",
       );
       expect(
         (await prisma.task.findUniqueOrThrow({ where: { id: pesee.id } }))
@@ -760,6 +761,134 @@ describe('Tâches: workflow, recurrence, proof, alerts (e2e)', () => {
         .attach('file', PNG, { filename: 'a.png', contentType: 'image/png' })
         .expect(201);
       await act(task.id, 'reopen', {}, 409);
+    });
+
+    describe('reopening', () => {
+      const stored = (id: string) =>
+        prisma.task.findUniqueOrThrow({ where: { id } });
+      const pump = (name = 'Pompe forage') =>
+        prisma.equipment.create({
+          data: { farmId: world.farmId, name, type: 'POMPE' },
+        });
+
+      it('clears an assignee who left before the due date, audits it, never refuses', async () => {
+        const task = await make({ title: 'Pesée', assigneeId: kodjo.id });
+        await act(task.id, 'complete', { date: daysAgo(1) });
+        await http()
+          .patch(`/api/employees/${kodjo.id}`)
+          .set(director)
+          .send({ endDate: '2026-10-20' })
+          .expect(200);
+        const reopened = await act(task.id, 'reopen');
+        expect(reopened).toMatchObject({
+          status: 'A_FAIRE',
+          assigneeId: null,
+          assigneeName: null,
+        });
+        expect((await stored(task.id)).assigneeId).toBeNull();
+        const rows = await audit();
+        const last = rows[rows.length - 1];
+        expect(last.before).toMatchObject({
+          assigneeId: kodjo.id,
+          status: 'TERMINEE',
+        });
+        expect(last.after).toMatchObject({
+          assigneeId: null,
+          status: 'A_FAIRE',
+        });
+      });
+
+      it('clears an assignee hired after the due date', async () => {
+        const task = await make({ title: 'Pesée', assigneeId: yawa.id });
+        await act(task.id, 'complete', { date: daysAgo(1) });
+        await http()
+          .patch(`/api/employees/${yawa.id}`)
+          .set(director)
+          .send({ hireDate: '2026-11-01' })
+          .expect(200);
+        await act(task.id, 'reopen');
+        expect((await stored(task.id)).assigneeId).toBeNull();
+      });
+
+      it('clears an equipment retired since the completion', async () => {
+        const pompe = await pump();
+        const task = await make({ title: 'Graisser', equipmentId: pompe.id });
+        await act(task.id, 'complete', { date: daysAgo(1) });
+        await http()
+          .post(`/api/equipment/${pompe.id}/retire`)
+          .set(director)
+          .send({ date: daysAgo(1) })
+          .expect(200);
+        const reopened = await act(task.id, 'reopen');
+        expect(reopened.target).toBeNull();
+        expect((await stored(task.id)).equipmentId).toBeNull();
+      });
+
+      it('keeps an assignee still in post and an equipment still in service', async () => {
+        const pompe = await pump();
+        const task = await make({
+          title: 'Graisser',
+          assigneeId: kodjo.id,
+          equipmentId: pompe.id,
+        });
+        await act(task.id, 'complete', { date: daysAgo(1) });
+        await act(task.id, 'reopen');
+        expect(await stored(task.id)).toMatchObject({
+          assigneeId: kodjo.id,
+          equipmentId: pompe.id,
+          status: 'A_FAIRE',
+        });
+      });
+
+      it('reopens then completes again an anchored monthly occurrence on its anchor day', async () => {
+        const task = await make({
+          title: 'Mensuelle',
+          recurrence: 'MENSUELLE',
+          dueDate: '2026-01-31',
+        });
+        await act(task.id, 'complete', { date: '2026-01-31' });
+        const feb = await prisma.task.findFirstOrThrow({
+          where: { previousTaskId: task.id },
+        });
+        expect(feb.dueDate.toISOString().slice(0, 10)).toBe('2026-02-28');
+        expect(feb.recurrenceDay).toBe(31);
+        // Exposed on the item, kept by an edit that changes neither date nor recurrence, reset by one that does.
+        const shown = (id: string) =>
+          http()
+            .get(`/api/tasks/${id}`)
+            .set(poultry)
+            .expect(200)
+            .then((res) => res.body as Task);
+        expect((await shown(feb.id)).recurrenceDay).toBe(31);
+        expect((await shown(task.id)).recurrenceDay).toBeNull();
+        await patch(feb.id, { dueDate: '2026-02-28', recurrence: 'MENSUELLE' });
+        expect((await shown(feb.id)).recurrenceDay).toBe(31);
+        await patch(feb.id, { title: 'Mensuelle bis' });
+        expect((await shown(feb.id)).recurrenceDay).toBe(31);
+        const other = await prisma.task.update({
+          where: {
+            id: (await make({ title: 'Autre', recurrence: 'MENSUELLE' })).id,
+          },
+          data: { recurrenceDay: 31 },
+        });
+        await patch(other.id, { dueDate: '2026-10-27' });
+        expect((await shown(other.id)).recurrenceDay).toBeNull();
+        await act(feb.id, 'complete', { date: '2026-02-28' });
+        const mar = await prisma.task.findFirstOrThrow({
+          where: { previousTaskId: feb.id },
+        });
+        expect(mar.dueDate.toISOString().slice(0, 10)).toBe('2026-03-31');
+        await act(feb.id, 'reopen');
+        expect(
+          await prisma.task.count({ where: { previousTaskId: feb.id } }),
+        ).toBe(0);
+        await act(feb.id, 'complete', { date: '2026-02-28' });
+        const again = await prisma.task.findFirstOrThrow({
+          where: { previousTaskId: feb.id },
+        });
+        expect(again.dueDate.toISOString().slice(0, 10)).toBe('2026-03-31');
+        expect(again.recurrenceDay).toBe(31);
+      });
     });
 
     it('creates the next occurrence of other recurrences, clamped to the month', async () => {
@@ -855,6 +984,31 @@ describe('Tâches: workflow, recurrence, proof, alerts (e2e)', () => {
         where: { previousTaskId: task.id },
       });
       expect(next.assigneeId).toBeNull();
+    });
+
+    it('never lets an end date and a task after it both succeed when they race', async () => {
+      const [end, created] = await Promise.all([
+        http()
+          .patch(`/api/employees/${kodjo.id}`)
+          .set(director)
+          .send({ endDate: '2026-10-10' }),
+        http().post('/api/tasks').set(poultry).send({
+          title: 'Course',
+          assigneeId: kodjo.id,
+          dueDate: '2026-10-20',
+        }),
+      ]);
+      expect([end.status, created.status].sort()).not.toEqual([200, 201]);
+      const stored = await prisma.employee.findUniqueOrThrow({
+        where: { id: kodjo.id },
+      });
+      const open = await prisma.task.count({
+        where: {
+          assigneeId: kodjo.id,
+          dueDate: { gt: new Date('2026-10-10') },
+        },
+      });
+      expect(stored.endDate !== null && open > 0).toBe(false);
     });
 
     it('creates one occurrence only when two completions race', async () => {
@@ -957,6 +1111,8 @@ describe('Tâches: workflow, recurrence, proof, alerts (e2e)', () => {
         .expect(200);
       expect(got.headers['content-type']).toBe('image/png');
       expect(got.headers['cache-control']).toBe('private, no-store');
+      // The global helmet() sets it; a browser never sniffs the photo into something else.
+      expect(got.headers['x-content-type-options']).toBe('nosniff');
       expect(got.body).toEqual(PNG);
       expect((await list('?search=Preuve')).items[0].hasProof).toBe(true);
     });
@@ -1168,9 +1324,9 @@ describe('Tâches: workflow, recurrence, proof, alerts (e2e)', () => {
         'Vaccination Gumboro LC-2026-15 (Dr Koffi)',
       ]);
       expect(late.map((a) => a.key)).toEqual([
-        `task:${nettoyage.id}`,
-        `task:${pesee.id}`,
-        `task:${vaccination.id}`,
+        `task:${nettoyage.id}:2026-10-18`,
+        `task:${pesee.id}:2026-10-23`,
+        `task:${vaccination.id}:2026-10-24`,
       ]);
     });
 

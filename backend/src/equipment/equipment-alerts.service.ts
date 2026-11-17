@@ -53,6 +53,11 @@ export class EquipmentAlertsService
         condition: true,
         nextMaintenanceDate: true,
         farm: { select: { name: true } },
+        breakdowns: {
+          where: { resolvedDate: null },
+          select: { id: true },
+          take: 1,
+        },
       },
       relationLoadStrategy: 'join',
     });
@@ -62,6 +67,7 @@ export class EquipmentAlertsService
       name: r.name,
       condition: r.condition,
       nextMaintenance: r.nextMaintenanceDate,
+      openBreakdownId: r.breakdowns[0]?.id ?? null,
       ...(several ? { farmName: r.farm.name } : {}),
     }));
   }

@@ -8,6 +8,7 @@ import { SettingsService } from '../admin/settings/settings.service';
 import type { RequestContext } from '../access/decorators';
 import { can } from '../access/permissions';
 import { AuditService } from '../audit/audit.service';
+import { blank } from '../common/blank';
 import {
   assertNotFuture,
   formatDayOrNull,
@@ -65,11 +66,10 @@ const RETIRE_BEFORE_LAST =
 const HAS_HISTORY = 'Cet équipement a un historique : réformez-le';
 const ALREADY_BROKEN = 'Une panne est déjà déclarée pour cet équipement';
 const BEFORE_PURCHASE = "La date précède l'achat de l'équipement";
+const PURCHASE_AFTER_FIRST =
+  "La date d'achat est postérieure à la première intervention ou panne";
 const NOT_RETIRED = "Cet équipement n'est pas réformé";
 const SORTABLE = ['name', 'nextMaintenance'];
-
-const blank = <T>(value: T | null | undefined): T | null =>
-  value === undefined || value === '' ? null : value;
 
 export interface EquipmentDetail extends EquipmentItem {
   brand: string | null;
@@ -282,6 +282,32 @@ export class EquipmentService {
     }
   }
 
+  /** The purchase date may not move after the earliest intervention or breakdown. */
+  private async assertPurchaseBeforeHistory(
+    tx: Tx,
+    id: string,
+    purchaseDate: Date,
+  ): Promise<void> {
+    const [firstIntervention, firstBreakdown] = await Promise.all([
+      tx.maintenance.aggregate({
+        where: { equipmentId: id },
+        _min: { date: true },
+      }),
+      tx.breakdown.aggregate({
+        where: { equipmentId: id },
+        _min: { date: true },
+      }),
+    ]);
+    for (const first of [
+      firstIntervention._min.date,
+      firstBreakdown._min.date,
+    ]) {
+      if (first && purchaseDate.getTime() > first.getTime()) {
+        throw new BadRequestException(PURCHASE_AFTER_FIRST);
+      }
+    }
+  }
+
   private async assertNameFree(
     client: Tx | PrismaService,
     ctx: RequestContext,
@@ -412,16 +438,25 @@ export class EquipmentService {
         if (dto.condition !== undefined) {
           conditionGuard(before.condition, dto.condition);
         }
+        // Setting one location moves the equipment there: the other is cleared unless the body says otherwise.
         const siteId =
-          dto.siteId === undefined ? before.siteId : blank(dto.siteId);
+          dto.siteId === undefined
+            ? blank(dto.buildingId)
+              ? null
+              : before.siteId
+            : blank(dto.siteId);
         const buildingId =
           dto.buildingId === undefined
-            ? before.buildingId
+            ? blank(dto.siteId)
+              ? null
+              : before.buildingId
             : blank(dto.buildingId);
         await this.assertLocation(tx, ctx, { siteId, buildingId }, before);
         if (dto.name !== undefined && dto.name !== before.name) {
           await this.assertNameFree(tx, ctx, dto.name, id);
         }
+        if (purchaseDate)
+          await this.assertPurchaseBeforeHistory(tx, id, purchaseDate);
         const interval =
           dto.maintenanceIntervalDays === undefined
             ? undefined

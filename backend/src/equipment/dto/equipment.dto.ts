@@ -17,7 +17,7 @@ import {
   OptionalId,
   OptionalText,
   RequiredText,
-} from '../../health/dto/fields';
+} from '../../common/dto-fields';
 import { IsDay } from '../../herd/dto/is-day';
 import { ListQueryDto } from '../../listing/list-query.dto';
 import { CONDITION_LIST, type ConditionValue } from '../equipment-state';

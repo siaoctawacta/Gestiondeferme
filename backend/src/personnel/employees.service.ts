@@ -8,9 +8,9 @@ import { Decimal } from '@prisma/client/runtime/client';
 import { can } from '../access/permissions';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
+import { blank } from '../common/blank';
 import { addDays, requireDay, today } from '../common/days';
 import { lockRow } from '../common/lock-row';
-import { SELECT_FARM } from '../common/messages';
 import { toMoney } from '../common/money';
 import type { Prisma } from '../generated/prisma/client';
 import type { AttendanceStatus } from '../generated/prisma/enums';
@@ -25,6 +25,7 @@ import type {
   UpdateEmployeeDto,
 } from './dto/employee.dto';
 import {
+  countByStatus,
   monthBounds,
   payrollLabel,
   payrollOf,
@@ -52,15 +53,6 @@ const END_BEFORE_HIRE = "La date de départ est antérieure à l'embauche";
 const FUTURE_MONTH = 'Le mois ne peut pas être dans le futur';
 const SORTABLE = ['name', 'hireDate'];
 const STATUSES: EmploymentStatus[] = ['ACTIF', 'PARTI'];
-const ATTENDANCE_STATUSES: AttendanceStatus[] = [
-  'PRESENT',
-  'ABSENT',
-  'CONGE',
-  'MALADIE',
-];
-
-const blank = <T>(value: T | null | undefined): T | null =>
-  value === undefined || value === '' ? null : value;
 
 export interface EmployeeDetail extends EmployeeItem {
   /** Attendance rows of the last 30 days (today included) per status. */
@@ -202,13 +194,9 @@ export class EmployeesService {
         where: { assigneeId: id, status: { in: OPEN_STATUSES } },
       }),
     ]);
-    const counts = Object.fromEntries(
-      ATTENDANCE_STATUSES.map((s) => [s, 0]),
-    ) as Record<AttendanceStatus, number>;
-    for (const g of groups) counts[g.status] = g._count._all;
     return {
       ...toEmployeeItem(row, day, this.withSalary(ctx)),
-      attendanceLast30: counts,
+      attendanceLast30: countByStatus(groups),
       openTasks,
     };
   }
@@ -248,20 +236,26 @@ export class EmployeesService {
 
   /** What the staff costs for a month, and the manual entry already posted for it. The route writes nothing. */
   async payroll(ctx: RequestContext, month: string): Promise<PayrollPreview> {
-    if (!ctx.farmId) throw new BadRequestException(SELECT_FARM);
+    // Under `all` farms the shared guard answers 403 before this runs (Q41).
+    const farmId = ctx.farmId as string;
     const { from } = monthBounds(month);
     const now = today();
     if (from.getTime() > now.getTime()) {
       throw new BadRequestException(FUTURE_MONTH);
     }
     const employees = await this.prisma.employee.findMany({
-      where: { farmId: ctx.farmId, monthlySalary: { not: null } },
+      where: { farmId, monthlySalary: { not: null } },
       orderBy: [{ name: 'asc' }, { id: 'asc' }],
     });
     const { lines, total } = payrollOf(employees, month);
     const label = payrollLabel(month);
     const existing = await this.prisma.financeEntry.findFirst({
-      where: { farmId: ctx.farmId, category: 'SALAIRES', label },
+      where: {
+        farmId,
+        kind: 'DEPENSE',
+        category: 'SALAIRES',
+        label,
+      },
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }],
       select: { id: true, amount: true },
     });

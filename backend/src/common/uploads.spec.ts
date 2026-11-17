@@ -7,6 +7,7 @@ import {
   rmSync,
 } from 'fs';
 import { tmpdir } from 'os';
+import { Logger } from '@nestjs/common';
 import { join } from 'path';
 import {
   detectImage,
@@ -92,6 +93,15 @@ describe('uploads on disk', () => {
 
   it('swallows a failed removal (here a directory in place of the file)', async () => {
     mkdirSync(join(root, 'tasks', 'f', 'stuck'), { recursive: true });
-    await expect(removeUpload('tasks/f/stuck')).resolves.toBeUndefined();
+    // The failure is logged (and asserted here), not printed into the test output.
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation();
+    try {
+      await expect(removeUpload('tasks/f/stuck')).resolves.toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('Fichier non supprimé (tasks/f/stuck)'),
+      );
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

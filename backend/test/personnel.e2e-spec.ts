@@ -392,6 +392,33 @@ describe('Personnel: employees, attendance, payroll (e2e)', () => {
       await patch(kodjo.id, { endDate: DAY });
     });
 
+    it('never lets an end date and a day sheet after it both succeed when they race', async () => {
+      const [end, day] = await Promise.all([
+        http()
+          .patch(`/api/employees/${kodjo.id}`)
+          .set(director)
+          .send({ endDate: '2026-10-10' }),
+        http()
+          .post('/api/attendance/day')
+          .set(poultry)
+          .send({
+            date: DAY,
+            entries: [{ employeeId: kodjo.id, status: 'PRESENT', hours: 8 }],
+          }),
+      ]);
+      expect([end.status, day.status].sort()).not.toEqual([200, 200]);
+      expect([200, 400, 409]).toContain(end.status);
+      expect([200, 400, 409]).toContain(day.status);
+      const stored = await prisma.employee.findUniqueOrThrow({
+        where: { id: kodjo.id },
+      });
+      const sheets = await prisma.attendance.count({
+        where: { employeeId: kodjo.id, date: new Date(DAY) },
+      });
+      // Either the departure stands and no row follows it, or the row stands and the departure was refused.
+      expect(stored.endDate !== null && sheets > 0).toBe(false);
+    });
+
     it('refuses an end date before the hire date with 400', async () => {
       const res = await patch(kodjo.id, { endDate: '2024-01-01' }, 400);
       expect(message(res)).toBe(
@@ -461,6 +488,22 @@ describe('Personnel: employees, attendance, payroll (e2e)', () => {
       ]);
       await http().get('/api/employees').set(agent).expect(403);
       await http().get(`/api/employees/${kodjo.id}`).set(agent).expect(403);
+    });
+
+    it('reads the employee and attendance lists with personnel:read alone (the Comptable), options for any user', async () => {
+      await sheet([{ employeeId: kodjo.id, status: 'PRESENT', hours: 8 }]);
+      const employees = await http()
+        .get('/api/employees')
+        .set(accountant)
+        .expect(200);
+      expect((employees.body as Page<Employee>).total).toBe(4);
+      const attendance = await http()
+        .get('/api/attendance')
+        .set(accountant)
+        .expect(200);
+      expect((attendance.body as Page<Attendance>).total).toBe(1);
+      await http().get('/api/employees/options').set(accountant).expect(200);
+      await http().get('/api/employees/options').set(agent).expect(200);
     });
 
     it('lists by name and exposes the paging, note and userName', async () => {

@@ -257,6 +257,11 @@ export class UsersService implements AuditableService {
           await tx.userFarm.createMany({
             data: farmIds.map((farmId) => ({ userId: id, farmId })),
           });
+          // An employee may only be linked to a user of its farm: a farm the user left no longer vouches for the link.
+          await tx.employee.updateMany({
+            where: { userId: id, farmId: { notIn: farmIds } },
+            data: { userId: null },
+          });
         }
         const updated = await tx.user.update({
           where: { id },
@@ -301,6 +306,11 @@ export class UsersService implements AuditableService {
         await tx.refreshToken.deleteMany({ where: { userId: id } });
         await tx.passwordReset.deleteMany({ where: { userId: id } });
         await tx.userFarm.deleteMany({ where: { userId: id } });
+        // The employee the user was linked to stays (an employee needs no account).
+        await tx.employee.updateMany({
+          where: { userId: id },
+          data: { userId: null },
+        });
         // Masked alerts are a display preference of the user: they go with him.
         await tx.alertAck.deleteMany({ where: { userId: id } });
         await tx.user.delete({ where: { id } });

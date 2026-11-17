@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { AuditService } from '../audit/audit.service';
+import { blank } from '../common/blank';
 import { addDays, formatDay, today } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
@@ -84,9 +85,6 @@ export const PLAN_COLUMNS: ExportColumn<VaccinationPlanItem>[] = [
   { header: 'Type de lot', value: (p) => (p.type ? TYPE_LABEL[p.type] : null) },
   { header: 'Étapes', value: (p) => p.items.length },
 ];
-
-const blank = <T>(value: T | null | undefined): T | null =>
-  value === undefined || value === '' ? null : value;
 
 /**
  * Vaccination plans are organisation master data (not farm-scoped, written

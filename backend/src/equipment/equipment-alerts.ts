@@ -14,6 +14,8 @@ export interface AlertEquipment {
   name: string;
   condition: ConditionValue;
   nextMaintenance: Date | null;
+  /** The equipment's open breakdown, when it has one (part of the alert key). */
+  openBreakdownId?: string | null;
   /** Set when the request spans several farms, to tell their alerts apart. */
   farmName?: string;
 }
@@ -31,6 +33,9 @@ export interface EquipmentAlertData {
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**
+ * The breakdown alert key carries the open breakdown's id, so hiding one
+ * breakdown's alert never hides the NEXT breakdown of the same equipment.
+ *
  * `Équipement en panne` (URGENT, by name) then `Maintenance due` (A_VOIR, by
  * next date then name). A broken equipment raises no due alert: the breakdown
  * is the news.
@@ -44,7 +49,9 @@ export function equipmentAlerts(
     .filter((r) => r.condition === 'EN_PANNE')
     .sort((a, b) => compare(a.name, b.name) || compare(a.id, b.id))
     .map((r): AlertItem => ({
-      key: `breakdown:${r.id}`,
+      key: r.openBreakdownId
+        ? `breakdown:${r.id}:${r.openBreakdownId}`
+        : `breakdown:${r.id}`,
       title: 'Équipement en panne',
       detail: withFarm(r.name, r.farmName),
       level: 'URGENT',

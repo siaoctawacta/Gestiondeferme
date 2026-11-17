@@ -24,6 +24,25 @@ export const ATTENDANCE_LABELS = {
   MALADIE: 'Maladie',
 } as const;
 
+export const ATTENDANCE_STATUSES = [
+  'PRESENT',
+  'ABSENT',
+  'CONGE',
+  'MALADIE',
+] as const;
+export type AttendanceStatusValue = (typeof ATTENDANCE_STATUSES)[number];
+
+/** A count per attendance status, zero for the statuses of no row (from a `groupBy` on `status`). */
+export function countByStatus(
+  groups: { status: AttendanceStatusValue; _count: { _all: number } }[],
+): Record<AttendanceStatusValue, number> {
+  const counts = Object.fromEntries(
+    ATTENDANCE_STATUSES.map((s) => [s, 0]),
+  ) as Record<AttendanceStatusValue, number>;
+  for (const g of groups) counts[g.status] = g._count._all;
+  return counts;
+}
+
 interface Span {
   hireDate: Date;
   endDate: Date | null;

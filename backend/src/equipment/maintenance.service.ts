@@ -8,6 +8,7 @@ import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
 import { can } from '../access/permissions';
 import { AuditService } from '../audit/audit.service';
+import { blank } from '../common/blank';
 import { assertNotFuture, requireDay } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import type { Prisma } from '../generated/prisma/client';
@@ -46,9 +47,6 @@ const BEFORE_PURCHASE = "La date précède l'achat de l'équipement";
 const RACE = "L'équipement a été modifié en même temps : réessayez";
 const NEXT_AFTER = "La prochaine date doit suivre la date de l'intervention";
 const SORTABLE = ['date'];
-
-const blank = <T>(value: T | null | undefined): T | null =>
-  value === undefined || value === '' ? null : value;
 
 /**
  * Interventions are master data of `equipements` (`update` writes them). Lock
@@ -259,7 +257,7 @@ export class MaintenanceService {
           },
         });
         if (open) {
-          await lockRow(tx, 'Breakdown', open.id, ctx.farmIds);
+          // No Breakdown lock here: every breakdown write takes the equipment row lock first, and it is held, so `open` cannot have changed since it was read.
           await tx.breakdown.update({
             where: { id: open.id },
             data: { repairId: created.id, resolvedDate: date },
@@ -305,13 +303,16 @@ export class MaintenanceService {
         ) {
           throw new BadRequestException(BEFORE_PURCHASE);
         }
+        // Lock order: equipment, maintenance, then its breakdown, locked before it is read.
+        if (before.repairs) {
+          await lockRow(tx, 'Breakdown', before.repairs.id, ctx.farmIds);
+        }
         const repaired = before.repairs
           ? await tx.breakdown.findUniqueOrThrow({
               where: { id: before.repairs.id },
               select: { id: true, date: true },
             })
           : null;
-        if (repaired) await lockRow(tx, 'Breakdown', repaired.id, ctx.farmIds);
         const kind = dto.kind ?? before.kind;
         const day = date ?? before.date;
         const next = nextDate === undefined ? before.nextDate : nextDate;

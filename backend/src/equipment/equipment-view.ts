@@ -2,9 +2,11 @@ import { formatDay, formatDayOrNull } from '../common/days';
 import { toMoney } from '../common/money';
 import type { Prisma } from '../generated/prisma/client';
 import type { ExportColumn } from '../listing/export';
+import type { EquipmentTypeValue } from './dto/equipment.dto';
 import { maintenanceDue, type ConditionValue } from './equipment-state';
 
-export const TYPE_LABELS: Record<string, string> = {
+/** Typed on the DTO's list: a type added to one and not the other does not compile. */
+export const TYPE_LABELS: Record<EquipmentTypeValue, string> = {
   COUVEUSE: 'Couveuse',
   BALANCE: 'Balance',
   POMPE: 'Pompe',
@@ -144,7 +146,10 @@ export const equipmentSnapshot = (e: EquipmentRecord) => ({
 
 export const equipmentColumns: ExportColumn<EquipmentItem>[] = [
   { header: 'Équipement', value: (e) => e.name },
-  { header: 'Type', value: (e) => TYPE_LABELS[e.type] ?? e.type },
+  {
+    header: 'Type',
+    value: (e) => TYPE_LABELS[e.type as EquipmentTypeValue] ?? e.type,
+  },
   { header: 'Emplacement', value: (e) => e.location },
   { header: 'Prochaine maintenance', value: (e) => e.nextMaintenance },
   { header: 'État', value: (e) => CONDITION_LABELS[e.condition] },

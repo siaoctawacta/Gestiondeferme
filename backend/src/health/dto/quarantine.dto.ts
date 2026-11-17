@@ -2,7 +2,12 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsOptional, IsString } from 'class-validator';
 import { IsDay } from '../../herd/dto/is-day';
 import { ListQueryDto } from '../../listing/list-query.dto';
-import { NotNull, OptionalDay, OptionalId, RequiredText } from './fields';
+import {
+  NotNull,
+  OptionalDay,
+  OptionalId,
+  RequiredText,
+} from '../../common/dto-fields';
 
 export class QuarantineQueryDto extends ListQueryDto {
   @ApiPropertyOptional()

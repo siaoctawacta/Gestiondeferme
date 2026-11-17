@@ -3,6 +3,8 @@ import { PrismaService } from '../../prisma/prisma.service';
 import type { AlertItem, AlertLevel } from './alert.types';
 import { hides } from './alert-acks';
 
+const DAY_MS = 86_400_000;
+
 /**
  * « Masquer l'alerte »: a per-user display preference. An acknowledgement never changes what another
  * user sees, is not audited, and costs ONE query on a list of alerts whatever their number.
@@ -40,6 +42,13 @@ export class AlertAcksService {
     days: number,
   ): Promise<void> {
     const now = this.now();
+    // Cheap purge: this user's expired acknowledgements are of no use any more.
+    await this.prisma.alertAck.deleteMany({
+      where: {
+        userId,
+        acknowledgedAt: { lte: new Date(now.getTime() - days * DAY_MS) },
+      },
+    });
     const where = { userId_key: { userId, key: item.key } };
     const existing = await this.prisma.alertAck.findUnique({ where });
     if (existing && hides(existing, item.level, now, days)) return;

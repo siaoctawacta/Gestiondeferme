@@ -2,7 +2,7 @@ import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { IsEnum, IsOptional, IsString } from 'class-validator';
 import { IsDay } from '../../herd/dto/is-day';
 import { ListQueryDto } from '../../listing/list-query.dto';
-import { NotNull, OptionalId, OptionalText } from './fields';
+import { NotNull, OptionalId, OptionalText } from '../../common/dto-fields';
 
 export const LOG_TYPES = [
   'NETTOYAGE',

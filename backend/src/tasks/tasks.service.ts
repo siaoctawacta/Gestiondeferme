@@ -9,6 +9,7 @@ import {
 import type { RequestContext } from '../access/decorators';
 import { can } from '../access/permissions';
 import { AuditService } from '../audit/audit.service';
+import { blank } from '../common/blank';
 import { addDays, assertNotFuture, requireDay, today } from '../common/days';
 import { lockRow } from '../common/lock-row';
 import {
@@ -61,15 +62,12 @@ const ONE_TARGET =
   'Une tâche concerne au plus un lot, un bâtiment ou un équipement';
 const COMPLETION_INVALID = 'Date de réalisation invalide';
 const NEXT_STARTED =
-  "L'occurrence suivante a déjà commencé : rouvrez-la ou modifiez-la";
+  "L'occurrence suivante a déjà commencé : supprimez-la ou retirez sa photo";
 const NO_PROOF = 'Aucune photo pour cette tâche';
 const PROOF_MISSING = 'Photo introuvable';
 /** A completion may be dated at most this many days before the due date. */
 const COMPLETION_LEAD_DAYS = 30;
 const SORTABLE = ['dueDate', 'priority', 'title'];
-
-const blank = <T>(value: T | null | undefined): T | null =>
-  value === undefined || value === '' ? null : value;
 
 interface Targets {
   batchId: string | null;
@@ -241,10 +239,12 @@ export class TasksService {
     });
     if (!employee) throw new BadRequestException(ASSIGNEE_INVALID);
     await lockRow(tx, 'Employee', employeeId, ctx.farmIds);
-    const locked = await tx.employee.findUniqueOrThrow({
+    const locked = await tx.employee.findUnique({
       where: { id: employeeId },
       select: { hireDate: true, endDate: true },
     });
+    // Deleted between the first read and the lock.
+    if (!locked) throw new BadRequestException(ASSIGNEE_INVALID);
     if (
       locked.hireDate.getTime() > dueDate.getTime() ||
       (locked.endDate && locked.endDate.getTime() < dueDate.getTime())
@@ -383,9 +383,10 @@ export class TasksService {
         this.assertOneTarget(next);
         const assigneeId = pick(dto.assigneeId, before.assigneeId);
         const due = dueDate ?? before.dueDate;
-        const moved =
-          assigneeId !== before.assigneeId ||
-          due.getTime() !== before.dueDate.getTime();
+        const dateChanged = due.getTime() !== before.dueDate.getTime();
+        const recurrenceChanged =
+          dto.recurrence !== undefined && dto.recurrence !== before.recurrence;
+        const moved = assigneeId !== before.assigneeId || dateChanged;
         if (assigneeId && moved) {
           await this.assertAssignee(tx, ctx, assigneeId, due);
         }
@@ -404,8 +405,10 @@ export class TasksService {
             dueTime: dto.dueTime === undefined ? undefined : blank(dto.dueTime),
             priority: dto.priority,
             recurrence: dto.recurrence,
-            // A new due date or recurrence starts a new series: its anchor day is taken again at completion.
-            ...(dueDate || dto.recurrence ? { recurrenceDay: null } : {}),
+            // A due date or recurrence that really changes starts a new series: its anchor day is taken again at completion.
+            ...(dateChanged || recurrenceChanged
+              ? { recurrenceDay: null }
+              : {}),
             ...next,
           },
           include: taskInclude,
@@ -573,6 +576,47 @@ export class TasksService {
     await this.log(tx, ctx, 'CREATE', undefined, created);
   }
 
+  /**
+   * What a reopened task may still point at (never a refusal, the same spirit
+   * as the occurrence rule): an assignee not in post on the due date and a
+   * retired equipment are cleared. Lock order: the task row (taken by
+   * `advance`), then the assignee's employee row, then the equipment row, the
+   * same as `update`, so a departure date or a retirement entered meanwhile
+   * either waits for this write or is seen by it.
+   */
+  private async stillValid(
+    tx: Tx,
+    ctx: RequestContext,
+    task: TaskRecord,
+  ): Promise<{ assigneeId: string | null; equipmentId: string | null }> {
+    let assigneeId = task.assigneeId;
+    if (assigneeId) {
+      await lockRow(tx, 'Employee', assigneeId, ctx.farmIds);
+      const employee = await tx.employee.findUnique({
+        where: { id: assigneeId },
+        select: { hireDate: true, endDate: true },
+      });
+      const due = task.dueDate.getTime();
+      if (
+        !employee ||
+        employee.hireDate.getTime() > due ||
+        (employee.endDate && employee.endDate.getTime() < due)
+      ) {
+        assigneeId = null;
+      }
+    }
+    let equipmentId = task.equipmentId;
+    if (equipmentId) {
+      await lockRow(tx, 'Equipment', equipmentId, ctx.farmIds);
+      const inService = await tx.equipment.findFirst({
+        where: { id: equipmentId, retiredAt: null },
+        select: { id: true },
+      });
+      if (!inService) equipmentId = null;
+    }
+    return { assigneeId, equipmentId };
+  }
+
   /** The generated occurrence goes with the reopening, while nobody has touched it. */
   reopen(ctx: RequestContext, id: string): Promise<TaskItem> {
     return this.advance(ctx, id, 'reopen', async (tx, before) => {
@@ -589,6 +633,11 @@ export class TasksService {
         await tx.task.delete({ where: { id: next.id } });
         await this.log(tx, ctx, 'DELETE', occurrence, undefined);
       }
+      const { assigneeId, equipmentId } = await this.stillValid(
+        tx,
+        ctx,
+        before,
+      );
       const updated = await tx.task.update({
         where: { id },
         data: {
@@ -596,6 +645,8 @@ export class TasksService {
           completedDate: null,
           completedById: null,
           startedAt: null,
+          assigneeId,
+          equipmentId,
         },
         include: taskInclude,
         relationLoadStrategy: 'join',

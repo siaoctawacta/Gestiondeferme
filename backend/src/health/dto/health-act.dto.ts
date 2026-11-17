@@ -9,7 +9,7 @@ import {
   OptionalId,
   OptionalQuantity,
   OptionalText,
-} from './fields';
+} from '../../common/dto-fields';
 
 export const ACT_TYPES = [
   'VACCINATION',

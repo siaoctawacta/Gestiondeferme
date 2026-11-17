@@ -703,14 +703,43 @@ describe('Équipements et maintenance (e2e)', () => {
         400,
       );
       expect(message(bothSet)).toBe(BOTH);
-      // a body that sets one while the other is stored is the merged result: both set
+      // Setting one location moves the equipment there: the stored other one is cleared.
       await patch(made.id, { siteId: siteNord });
-      const merged = await patch(made.id, { buildingId: poulaillerB }, 400);
-      expect(message(merged)).toBe(BOTH);
+      const merged = await patch(made.id, { buildingId: poulaillerB });
+      expect(merged).toMatchObject({ siteId: null, buildingId: poulaillerB });
+      const back = await patch(made.id, { siteId: siteNord });
+      expect(back).toMatchObject({ siteId: siteNord, buildingId: null });
+      // Setting one while clearing the other explicitly stays valid, and a null alone clears only itself.
+      await patch(made.id, { buildingId: poulaillerB, siteId: null });
+      expect(await patch(made.id, { siteId: null })).toMatchObject({
+        buildingId: poulaillerB,
+      });
       await patch(made.id, { name: null }, 400);
       await patch(made.id, { type: null }, 400);
       await patch(made.id, { condition: null }, 400);
       await patch(made.id, { maintenanceIntervalDays: 0 }, 400);
+    });
+
+    it('does not move the purchase date after the first intervention or breakdown', async () => {
+      const made = await make({
+        name: 'Pompe achat',
+        type: 'POMPE',
+        purchaseDate: daysAgo(100),
+      });
+      await declare(made.id, { date: daysAgo(10), description: 'Fuite' });
+      await intervene({
+        equipmentId: made.id,
+        kind: 'PREVENTIVE',
+        date: daysAgo(20),
+        description: 'Graissage',
+      });
+      const refused = await patch(made.id, { purchaseDate: daysAgo(15) }, 400);
+      expect(message(refused)).toBe(
+        "La date d'achat est postérieure à la première intervention ou panne",
+      );
+      await patch(made.id, { purchaseDate: daysAgo(20) });
+      await patch(made.id, { purchaseDate: daysAgo(30) });
+      await patch(made.id, { purchaseDate: null });
     });
 
     it('refuses a name already taken, and writes no audit row for a PATCH that changes nothing', async () => {
@@ -909,9 +938,11 @@ describe('Équipements et maintenance (e2e)', () => {
         repairId: done.id,
         resolvedDate: daysAgo(5),
       });
-      expect((await alerts()).map((a) => a.key)).not.toContain(
-        `breakdown:${ventilateur.id}`,
-      );
+      expect(
+        (await alerts()).filter((a) =>
+          a.key.startsWith(`breakdown:${ventilateur.id}`),
+        ),
+      ).toEqual([]);
       const [row] = await entries();
       expect(row).toMatchObject({
         label: `Maintenance ${VENTILATEUR} — Remplacement moteur`,
@@ -1643,12 +1674,37 @@ describe('Équipements et maintenance (e2e)', () => {
       farmIds: [world.farmId],
     });
 
+    it('gives the next breakdown of the same equipment a new alert key', async () => {
+      await reference();
+      const keyOf = async () =>
+        (await alerts()).find((a) => a.key.startsWith('breakdown:'))?.key;
+      const first = await keyOf();
+      await intervene({
+        equipmentId: ventilateur.id,
+        kind: 'CORRECTIVE',
+        date: daysAgo(5),
+        description: 'Remplacement moteur',
+        repairsBreakdown: true,
+      });
+      expect(await keyOf()).toBeUndefined();
+      await declare(ventilateur.id, {
+        date: daysAgo(1),
+        description: 'Court-circuit',
+      });
+      const second = await keyOf();
+      expect(second).toBeDefined();
+      expect(second).not.toBe(first);
+    });
+
     it('raises the breakdown (URGENT) then the dues by date, none for retired equipment, and follows the interventions', async () => {
       await reference();
+      const open = await prisma.breakdown.findFirstOrThrow({
+        where: { equipmentId: ventilateur.id, resolvedDate: null },
+      });
       const items = await alerts();
       expect(items).toEqual([
         {
-          key: `breakdown:${ventilateur.id}`,
+          key: `breakdown:${ventilateur.id}:${open.id}`,
           title: 'Équipement en panne',
           detail: VENTILATEUR,
           level: 'URGENT',

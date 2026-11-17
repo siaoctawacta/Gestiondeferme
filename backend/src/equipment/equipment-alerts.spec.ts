@@ -20,6 +20,7 @@ const eq = (
   name,
   condition,
   nextMaintenance: next ? parseDay(next) : null,
+  openBreakdownId: condition === 'EN_PANNE' ? `bd-${id}` : null,
   ...(farmName ? { farmName } : {}),
 });
 const REFERENCE = [
@@ -33,7 +34,7 @@ describe('equipmentAlerts', () => {
   it('raises the breakdown (URGENT) first, then the dues by date', () => {
     expect(equipmentAlerts(REFERENCE, TODAY, 0)).toEqual([
       {
-        key: 'breakdown:v',
+        key: 'breakdown:v:bd-v',
         title: 'Équipement en panne',
         detail: 'Ventilateur Poulailler B #3',
         level: 'URGENT',
@@ -62,7 +63,7 @@ describe('equipmentAlerts', () => {
   it('follows the warning days and never raises a due for a broken equipment', () => {
     const keys = equipmentAlerts(REFERENCE, TODAY, 1).map((a) => a.key);
     expect(keys).toEqual([
-      'breakdown:v',
+      'breakdown:v:bd-v',
       'maintenance:c:2026-10-25',
       'maintenance:g:2026-10-30',
       'maintenance:p:2026-11-15',
@@ -82,12 +83,34 @@ describe('equipmentAlerts', () => {
       0,
     );
     expect(alerts.map((a) => a.key)).toEqual([
-      'breakdown:1',
-      'breakdown:2',
+      'breakdown:1:bd-1',
+      'breakdown:2:bd-2',
       'maintenance:3:2026-11-01',
       'maintenance:4:2026-11-01',
     ]);
     expect(alerts[1].detail).toBe('B pompe — Ferme B');
+  });
+});
+
+describe('breakdown alert key', () => {
+  it('carries the open breakdown id, so the next breakdown is a new alert', () => {
+    const first = equipmentAlerts([eq('v', 'V', 'EN_PANNE', null)], TODAY, 0);
+    const next = equipmentAlerts(
+      [{ ...eq('v', 'V', 'EN_PANNE', null), openBreakdownId: 'other' }],
+      TODAY,
+      0,
+    );
+    expect(first[0].key).not.toBe(next[0].key);
+    expect(next[0].key).toBe('breakdown:v:other');
+  });
+
+  it('falls back to the equipment id alone when no open breakdown is found', () => {
+    const [alert] = equipmentAlerts(
+      [{ ...eq('v', 'V', 'EN_PANNE', null), openBreakdownId: null }],
+      TODAY,
+      0,
+    );
+    expect(alert.key).toBe('breakdown:v');
   });
 });
 

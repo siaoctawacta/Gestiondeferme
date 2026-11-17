@@ -14,17 +14,14 @@ import {
   Min,
   ValidateNested,
 } from 'class-validator';
-import { NotNull, OptionalText } from '../../health/dto/fields';
+import { NotNull, OptionalText } from '../../common/dto-fields';
 import { IsDay } from '../../herd/dto/is-day';
 import { ListQueryDto } from '../../listing/list-query.dto';
+import {
+  ATTENDANCE_STATUSES,
+  type AttendanceStatusValue,
+} from '../employee-rules';
 
-export const ATTENDANCE_STATUSES = [
-  'PRESENT',
-  'ABSENT',
-  'CONGE',
-  'MALADIE',
-] as const;
-export type AttendanceStatusValue = (typeof ATTENDANCE_STATUSES)[number];
 const STATUS = 'Le statut est invalide';
 const HOURS =
   'Les heures doivent être comprises entre 0,01 et 24 (2 décimales au plus)';
