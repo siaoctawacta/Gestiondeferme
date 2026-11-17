@@ -1307,6 +1307,130 @@ describe('Dashboard (e2e)', () => {
     });
   });
 
+  describe('tasks', () => {
+    const task = (
+      farmId: string,
+      title: string,
+      due: string,
+      over: Record<string, unknown> = {},
+    ) =>
+      prisma.task.create({
+        data: {
+          farmId,
+          title,
+          dueDate: new Date(due),
+          createdById: userId,
+          ...over,
+        },
+      });
+    const employee = (farmId: string, name: string) =>
+      prisma.employee.create({
+        data: {
+          farmId,
+          name,
+          jobTitle: 'Agent',
+          contractType: 'CDI',
+          hireDate: new Date('2025-01-01'),
+        },
+      });
+    const dashboard = async (farm: string, h = headersFor(farm)) =>
+      (await http().get('/api/dashboard').set(h).expect(200))
+        .body as DashboardDto;
+
+    /** The reference tasks: three open, one completed yesterday. */
+    const reference = async () => {
+      const [kodjo, koffi, yawa, ama] = await Promise.all(
+        ['Kodjo A.', 'Dr Koffi', 'Yawa M.', 'Ama K.'].map((n) =>
+          employee(farmA, n),
+        ),
+      );
+      await task(farmA, 'Pesée hebdomadaire LC-2026-14', '2026-10-23', {
+        assigneeId: kodjo.id,
+        recurrence: 'HEBDOMADAIRE',
+      });
+      await task(farmA, 'Vaccination Gumboro LC-2026-15', '2026-10-24', {
+        assigneeId: koffi.id,
+        priority: 'HAUTE',
+      });
+      await task(farmA, 'Nettoyage Porcherie 2', '2026-10-18', {
+        assigneeId: yawa.id,
+        priority: 'URGENTE',
+        status: 'EN_COURS',
+      });
+      await task(farmA, 'Collecte des œufs', '2026-10-22', {
+        assigneeId: ama.id,
+        status: 'TERMINEE',
+        completedDate: day(1),
+      });
+    };
+
+    it('counts the open tasks and those completed in the last 30 days, and lists the next ones', async () => {
+      await reference();
+      const body = await dashboard(farmA);
+      expect(body.tasks).toEqual({ done: 1, pending: 3 });
+      expect(body.upcomingTasks).toEqual([
+        expect.objectContaining({
+          title: 'Nettoyage Porcherie 2',
+          assignee: 'Yawa M.',
+          dueDate: '2026-10-18',
+          priority: 'URGENTE',
+        }),
+        expect.objectContaining({
+          title: 'Pesée hebdomadaire LC-2026-14',
+          assignee: 'Kodjo A.',
+          dueDate: '2026-10-23',
+          priority: 'NORMALE',
+        }),
+        expect.objectContaining({
+          title: 'Vaccination Gumboro LC-2026-15',
+          assignee: 'Dr Koffi',
+          dueDate: '2026-10-24',
+          priority: 'HAUTE',
+        }),
+      ]);
+    });
+
+    it('lists five tasks at most, "—" for one without an assignee, and counts a completion older than 30 days out', async () => {
+      for (let i = 0; i < 7; i++) {
+        await task(farmA, `Tâche ${i}`, `2026-10-0${i + 1}`);
+      }
+      await task(farmA, 'Ancienne', '2026-01-01', {
+        status: 'TERMINEE',
+        completedDate: day(30),
+      });
+      const body = await dashboard(farmA);
+      expect(body.upcomingTasks).toHaveLength(5);
+      expect(body.upcomingTasks[0]).toMatchObject({
+        title: 'Tâche 0',
+        assignee: '—',
+      });
+      expect(body.tasks).toEqual({ done: 0, pending: 7 });
+    });
+
+    it('scopes the figures to the selected farm and sums them under all farms', async () => {
+      await reference();
+      await task(farmB, 'Tâche de B', '2026-10-30');
+      expect((await dashboard(farmB)).tasks).toEqual({ done: 0, pending: 1 });
+      expect((await dashboard('all')).tasks).toEqual({ done: 1, pending: 4 });
+    });
+
+    it('shows no task to a role that cannot read them', async () => {
+      await reference();
+      const sales = await createUser({
+        organizationId: orgId,
+        role: 'COMMERCIAL',
+        farmIds: [farmA],
+      });
+      const h = {
+        Authorization: `Bearer ${await tokenFor(sales.id)}`,
+        'X-Farm-Id': farmA,
+      };
+      const body = await dashboard(farmA, h);
+      expect(body.tasks).toEqual({ done: 0, pending: 0 });
+      expect(body.upcomingTasks).toEqual([]);
+    });
+  });
+
   it('leaves the alert services on the wall clock once the frozen-clock block is done', () => {
     for (const service of [StockAlertsService, HealthAlertsService]) {
       const drift = Math.abs(app.get(service).now().getTime() - Date.now());

@@ -22,7 +22,8 @@ export type LockableTable =
   | 'BiosecurityLog'
   | 'VaccinationPlan'
   | 'Employee'
-  | 'Attendance';
+  | 'Attendance'
+  | 'Task';
 
 const TABLE: Record<LockableTable, Prisma.Sql> = {
   AnimalBatch: Prisma.raw('"AnimalBatch"'),
@@ -46,6 +47,7 @@ const TABLE: Record<LockableTable, Prisma.Sql> = {
   VaccinationPlan: Prisma.raw('"VaccinationPlan"'),
   Employee: Prisma.raw('"Employee"'),
   Attendance: Prisma.raw('"Attendance"'),
+  Task: Prisma.raw('"Task"'),
 };
 
 /**

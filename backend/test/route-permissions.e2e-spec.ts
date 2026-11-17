@@ -300,6 +300,7 @@ describe('Route permissions walk (e2e)', () => {
       FinanceReportsController: ['finance'],
       EmployeesController: ['personnel', 'finance'],
       AttendanceController: ['personnel'],
+      TasksController: ['taches'],
     };
     /** Open to every user of the farm by design (Q37): the selects of the task form and the day sheet. */
     const ANY_AUTHENTICATED = ['EmployeesController.options'];

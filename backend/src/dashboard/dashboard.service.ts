@@ -3,7 +3,7 @@ import type { RequestContext } from '../access/decorators';
 import { can } from '../access/permissions';
 import { SettingsService } from '../admin/settings/settings.service';
 import { BuildingStatus } from '../generated/prisma/enums';
-import { formatDay } from '../common/days';
+import { formatDay, today } from '../common/days';
 import { monthToDate } from '../finance/finance-period';
 import {
   FinanceSummaryService,
@@ -15,6 +15,7 @@ import { AlertsRegistry } from '../indicators/alerts/alerts-registry';
 import { layingRate, mortalityRate } from '../indicators/indicators';
 import { HerdListService } from '../pigs/herd-list.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { TaskReads } from '../tasks/task-reads.service';
 import {
   type ActivityTotalsDto,
   type AlertsDto,
@@ -30,6 +31,7 @@ export const ALL_FARMS_NAME = 'Toutes les fermes';
 /** Alerts listed on the dashboard; `alerts.total` counts them all. */
 export const DASHBOARD_ALERTS = 5;
 const EGG_DAYS = 5;
+const UPCOMING_TASKS = 5;
 
 /**
  * Each section is its own method returning its slice of the DTO; later slices
@@ -50,6 +52,7 @@ export class DashboardService {
     private readonly settings: SettingsService,
     private readonly alertsRegistry: AlertsRegistry,
     private readonly finance: FinanceSummaryService,
+    private readonly taskReads: TaskReads,
   ) {}
 
   async get(ctx: RequestContext): Promise<DashboardDto> {
@@ -62,6 +65,8 @@ export class DashboardService {
       waterConsumedL,
       alerts,
       money,
+      tasks,
+      upcomingTasks,
     ] = await Promise.all([
       this.farmName(ctx),
       this.activeBuildings(ctx),
@@ -71,10 +76,12 @@ export class DashboardService {
       this.waterConsumedL(ctx),
       this.alerts(ctx),
       this.money(ctx),
+      this.tasks(ctx),
+      this.upcomingTasks(ctx),
     ]);
     return {
       farmName,
-      tasks: this.tasks(),
+      tasks,
       kpis,
       eggSeries,
       profitability: this.profitability(money),
@@ -86,7 +93,7 @@ export class DashboardService {
         total: alerts.total,
         items: alerts.items.slice(0, DASHBOARD_ALERTS),
       },
-      upcomingTasks: this.upcomingTasks(),
+      upcomingTasks,
     };
   }
 
@@ -105,8 +112,11 @@ export class DashboardService {
     });
   }
 
-  private tasks(): TasksDto {
-    return { done: 0, pending: 0 };
+  /** Open tasks, and those completed in the last 30 days; nothing for a role that cannot read the tasks. */
+  private tasks(ctx: RequestContext): Promise<TasksDto> {
+    return can(ctx.user.role, 'taches', 'read')
+      ? this.taskReads.counts(ctx.farmIds, today())
+      : Promise.resolve({ done: 0, pending: 0 });
   }
 
   /** Poultry lots and their eggs, pigs; one grouped query per figure, whatever the number of lots. */
@@ -269,7 +279,10 @@ export class DashboardService {
     return { total: items.length, items };
   }
 
-  private upcomingTasks(): UpcomingTaskDto[] {
-    return [];
+  /** « Tâches à venir »: the next five open tasks. */
+  private upcomingTasks(ctx: RequestContext): Promise<UpcomingTaskDto[]> {
+    return can(ctx.user.role, 'taches', 'read')
+      ? this.taskReads.upcoming(ctx.farmIds, UPCOMING_TASKS)
+      : Promise.resolve([]);
   }
 }

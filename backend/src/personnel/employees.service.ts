@@ -17,6 +17,8 @@ import type { AttendanceStatus } from '../generated/prisma/enums';
 import { containsInsensitive, IN_USE } from '../listing/list-helpers';
 import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { tasksAfter, tasksBefore } from '../tasks/task-view';
+import { OPEN_STATUSES } from '../tasks/task-workflow';
 import type {
   CreateEmployeeDto,
   EmployeeQueryDto,
@@ -63,7 +65,7 @@ const blank = <T>(value: T | null | undefined): T | null =>
 export interface EmployeeDetail extends EmployeeItem {
   /** Attendance rows of the last 30 days (today included) per status. */
   attendanceLast30: Record<AttendanceStatus, number>;
-  /** Open tasks assigned to the employee (the tasks module fills it in). */
+  /** Open tasks assigned to the employee. */
   openTasks: number;
 }
 
@@ -187,14 +189,19 @@ export class EmployeesService {
   async get(ctx: RequestContext, id: string): Promise<EmployeeDetail> {
     const row = await this.find(this.prisma, ctx, id);
     const day = today();
-    const groups = await this.prisma.attendance.groupBy({
-      by: ['status'],
-      where: {
-        employeeId: id,
-        date: { gte: addDays(day, -29), lte: day },
-      },
-      _count: { _all: true },
-    });
+    const [groups, openTasks] = await Promise.all([
+      this.prisma.attendance.groupBy({
+        by: ['status'],
+        where: {
+          employeeId: id,
+          date: { gte: addDays(day, -29), lte: day },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.task.count({
+        where: { assigneeId: id, status: { in: OPEN_STATUSES } },
+      }),
+    ]);
     const counts = Object.fromEntries(
       ATTENDANCE_STATUSES.map((s) => [s, 0]),
     ) as Record<AttendanceStatus, number>;
@@ -202,7 +209,7 @@ export class EmployeesService {
     return {
       ...toEmployeeItem(row, day, this.withSalary(ctx)),
       attendanceLast30: counts,
-      openTasks: 0,
+      openTasks,
     };
   }
 
@@ -446,16 +453,24 @@ export class EmployeesService {
           await this.assertUser(tx, ctx, userId, id);
         }
         if (end && end.getTime() !== before.endDate?.getTime()) {
-          const late = await tx.attendance.count({
-            where: { employeeId: id, date: { gt: end } },
-          });
-          if (late > 0) throw new ConflictException(AFTER_END);
+          const [late, lateTasks] = await Promise.all([
+            tx.attendance.count({
+              where: { employeeId: id, date: { gt: end } },
+            }),
+            tx.task.count({ where: { assigneeId: id, ...tasksAfter(end) } }),
+          ]);
+          if (late + lateTasks > 0) throw new ConflictException(AFTER_END);
         }
         if (hireDate && hireDate.getTime() > before.hireDate.getTime()) {
-          const early = await tx.attendance.count({
-            where: { employeeId: id, date: { lt: hireDate } },
-          });
-          if (early > 0) throw new ConflictException(BEFORE_HIRE);
+          const [early, earlyTasks] = await Promise.all([
+            tx.attendance.count({
+              where: { employeeId: id, date: { lt: hireDate } },
+            }),
+            tx.task.count({
+              where: { assigneeId: id, ...tasksBefore(hireDate) },
+            }),
+          ]);
+          if (early + earlyTasks > 0) throw new ConflictException(BEFORE_HIRE);
         }
         const updated = await tx.employee.update({
           where: { id },
@@ -488,15 +503,16 @@ export class EmployeesService {
         await this.find(tx, ctx, id);
         await lockRow(tx, 'Employee', id, ctx.farmIds);
         const before = await this.find(tx, ctx, id);
-        const history = await tx.attendance.count({
-          where: { employeeId: id },
-        });
-        if (history > 0) throw new ConflictException(HAS_HISTORY);
+        const [attendance, tasks] = await Promise.all([
+          tx.attendance.count({ where: { employeeId: id } }),
+          tx.task.count({ where: { assigneeId: id } }),
+        ]);
+        if (attendance + tasks > 0) throw new ConflictException(HAS_HISTORY);
         await tx.employee.delete({ where: { id } });
         await this.log(tx, ctx, 'DELETE', before, undefined);
       });
     } catch (error) {
-      // A foreign key of a record written meanwhile (a task): the same advice.
+      // A foreign key of a record written meanwhile (attendance or a task): the same advice.
       if ((error as { code?: string } | null)?.code === 'P2003') {
         throw new ConflictException(HAS_HISTORY);
       }

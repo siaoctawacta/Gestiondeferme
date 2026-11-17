@@ -20,6 +20,7 @@ import { PurchasesModule } from './purchases/purchases.module';
 import { SalesModule } from './sales/sales.module';
 import { StockModule } from './stock/stock.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
+import { TasksModule } from './tasks/tasks.module';
 
 @Module({
   imports: [
@@ -43,6 +44,7 @@ import { SuppliersModule } from './suppliers/suppliers.module';
     IndicatorsModule,
     DashboardModule,
     PersonnelModule,
+    TasksModule,
   ],
   controllers: [HealthController],
 })
