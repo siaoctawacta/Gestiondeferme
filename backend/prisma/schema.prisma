@@ -222,6 +222,7 @@ model Building {
   siteId            String
   site              Site               @relation(fields: [siteId], references: [id])
   name              String
+  /// READ BY FinanceLedgerView (activity of a maintenance expense, from the equipment's CURRENT building).
   type              BuildingType
   capacity          Int
   status            BuildingStatus     @default(ACTIF)
@@ -1797,10 +1798,12 @@ model Equipment {
   id                      String             @id @default(cuid())
   farmId                  String
   farm                    Farm               @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  /// READ BY FinanceLedgerView (label of a maintenance expense).
   name                    String
   type                    EquipmentType
   siteId                  String?
   site                    Site?              @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  /// READ BY FinanceLedgerView (activity of a maintenance expense).
   buildingId              String?
   building                Building?          @relation(fields: [buildingId], references: [id], onDelete: Restrict)
   brand                   String?
@@ -1831,14 +1834,18 @@ model Maintenance {
   id          String          @id @default(cuid())
   farmId      String
   farm        Farm            @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  /// READ BY FinanceLedgerView (equipment name and building of a maintenance expense).
   equipmentId String
   equipment   Equipment       @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
   kind        MaintenanceKind
+  /// READ BY FinanceLedgerView (date of the expense).
   date        DateTime        @db.Date
+  /// READ BY FinanceLedgerView (label of the expense).
   description String
   performedBy String?
   supplierId  String?
   supplier    Supplier?       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  /// READ BY FinanceLedgerView (amount of the expense, when > 0).
   cost        Decimal         @default(0) @db.Decimal(14, 2)
   nextDate    DateTime?       @db.Date
   createdById String

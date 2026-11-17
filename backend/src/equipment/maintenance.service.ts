@@ -37,11 +37,13 @@ const SUPPLIER_INVALID = 'Fournisseur invalide';
 const NOT_CORRECTIVE = 'Seule une intervention corrective répare une panne';
 const NO_OPEN_BREAKDOWN = 'Aucune panne ouverte sur cet équipement';
 const BEFORE_BREAKDOWN = "L'intervention précède la panne";
-const OTHER_OPEN = "Une autre panne est ouverte : supprimez-la d'abord";
+const OTHER_OPEN = "Une autre panne est ouverte : réparez-la d'abord";
 const AFTER_WITHOUT_REPAIR =
   "L'état après intervention suppose la réparation d'une panne";
 const REPAIR_STAYS_CORRECTIVE =
   'Cette intervention répare une panne : elle reste corrective';
+const BEFORE_PURCHASE = "La date précède l'achat de l'équipement";
+const RACE = "L'équipement a été modifié en même temps : réessayez";
 const NEXT_AFTER = "La prochaine date doit suivre la date de l'intervention";
 const SORTABLE = ['date'];
 
@@ -155,7 +157,7 @@ export class MaintenanceService {
     await lockRow(tx, 'Equipment', id, ctx.farmIds);
     const equipment = await tx.equipment.findFirst({
       where: { id, farmId: { in: ctx.farmIds } },
-      select: { id: true, farmId: true, retiredAt: true },
+      select: { id: true, farmId: true, retiredAt: true, purchaseDate: true },
     });
     if (!equipment) throw missing();
     if (equipment.retiredAt) throw new ConflictException(EQUIPMENT_RETIRED);
@@ -185,6 +187,11 @@ export class MaintenanceService {
     );
   }
 
+  /** A lost race on a unique index or a foreign key: one clear message (never the generic name-taken one). */
+  private race<T>(run: () => Promise<T>): Promise<T> {
+    return orConflict(run, RACE);
+  }
+
   private cost(ctx: RequestContext, value: number | null | undefined) {
     if (!this.withCost(ctx) || value === undefined) return undefined;
     return new Decimal(value ?? 0);
@@ -210,7 +217,7 @@ export class MaintenanceService {
       throw new BadRequestException(AFTER_WITHOUT_REPAIR);
     }
     const supplierId = blank(dto.supplierId);
-    return orConflict(() =>
+    return this.race(() =>
       this.prisma.$transaction(async (tx) => {
         const equipment = await this.lockEquipment(
           tx,
@@ -218,6 +225,12 @@ export class MaintenanceService {
           dto.equipmentId,
           () => new BadRequestException(EQUIPMENT_INVALID),
         );
+        if (
+          equipment.purchaseDate &&
+          date.getTime() < equipment.purchaseDate.getTime()
+        ) {
+          throw new BadRequestException(BEFORE_PURCHASE);
+        }
         if (supplierId) await this.assertSupplier(tx, ctx, supplierId);
         const open = repairs
           ? await tx.breakdown.findFirst({
@@ -279,12 +292,19 @@ export class MaintenanceService {
           : requireDay(dto.nextDate);
     const supplierId =
       dto.supplierId === undefined ? undefined : blank(dto.supplierId);
-    return orConflict(() =>
+    return this.race(() =>
       this.prisma.$transaction(async (tx) => {
         const found = await this.find(tx, ctx, id);
-        await this.lockEquipment(tx, ctx, found.equipmentId);
+        const equipment = await this.lockEquipment(tx, ctx, found.equipmentId);
         await lockRow(tx, 'Maintenance', id, ctx.farmIds);
         const before = await this.find(tx, ctx, id);
+        if (
+          date &&
+          equipment.purchaseDate &&
+          date.getTime() < equipment.purchaseDate.getTime()
+        ) {
+          throw new BadRequestException(BEFORE_PURCHASE);
+        }
         const repaired = before.repairs
           ? await tx.breakdown.findUniqueOrThrow({
               where: { id: before.repairs.id },

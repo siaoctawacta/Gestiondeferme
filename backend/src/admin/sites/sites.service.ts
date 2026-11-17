@@ -114,6 +114,12 @@ export class SitesService implements AuditableService {
     if (site._count.buildings > 0) {
       throw new ConflictException('Ce site contient des bâtiments');
     }
+    const equipment = await this.prisma.equipment.count({
+      where: { siteId: id },
+    });
+    if (equipment > 0) {
+      throw new ConflictException('Ce site porte des équipements');
+    }
     await orConflict(() => this.prisma.site.delete({ where: { id } }));
   }
 }

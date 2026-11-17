@@ -92,8 +92,11 @@ export class FinanceEntriesService {
       orderBy(q, SORTABLE, { date: 'desc' }),
     ) as [[LedgerSort, 'asc' | 'desc']];
     return {
-      find: async (range: { skip?: number; take: number }) =>
-        (await this.ledger.rows(f, { sort, dir }, range)).map(toEntryItem),
+      find: async (range: { skip?: number; take: number }) => {
+        const rows = await this.ledger.rows(f, { sort, dir }, range);
+        const equipment = await this.equipmentOf(rows);
+        return rows.map((r) => toEntryItem(r, equipment.get(r.id)));
+      },
       count: () => this.ledger.count(f),
       totals: async () => {
         const { revenue, expenses } = await this.ledger.totals(f);
@@ -106,6 +109,27 @@ export class FinanceEntriesService {
         };
       },
     };
+  }
+
+  /** The equipment of the maintenance rows of a page (the view keeps the intervention id as `sourceId`): one query, none without such a row. */
+  private async equipmentOf(
+    rows: { id: string; origin: string; sourceId: string | null }[],
+  ): Promise<Map<string, string>> {
+    const sources = rows.filter(
+      (r) => r.origin === 'MAINTENANCE' && r.sourceId,
+    );
+    if (sources.length === 0) return new Map();
+    const found = await this.prisma.maintenance.findMany({
+      where: { id: { in: sources.map((r) => r.sourceId as string) } },
+      select: { id: true, equipmentId: true },
+    });
+    const byId = new Map(found.map((m) => [m.id, m.equipmentId]));
+    return new Map(
+      sources.flatMap((r) => {
+        const equipmentId = byId.get(r.sourceId as string);
+        return equipmentId ? [[r.id, equipmentId] as [string, string]] : [];
+      }),
+    );
   }
 
   private assertShape(s: Shape): void {

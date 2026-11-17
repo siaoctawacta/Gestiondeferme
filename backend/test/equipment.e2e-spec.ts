@@ -88,7 +88,7 @@ const ALREADY_BROKEN = 'Une panne est déjà déclarée pour cet équipement';
 const NOT_CORRECTIVE = 'Seule une intervention corrective répare une panne';
 const NO_OPEN = 'Aucune panne ouverte sur cet équipement';
 const BEFORE_BREAKDOWN = "L'intervention précède la panne";
-const OTHER_OPEN = "Une autre panne est ouverte : supprimez-la d'abord";
+const OTHER_OPEN = "Une autre panne est ouverte : réparez-la d'abord";
 const EQUIPMENT_INVALID = 'Équipement invalide pour cette ferme';
 const SUPPLIER_INVALID = 'Fournisseur invalide';
 const BY_HAND = "L'état « En panne » se déclare par une panne";
@@ -1613,11 +1613,11 @@ describe('Équipements et maintenance (e2e)', () => {
         equipmentId: pompe.id,
         recurrence: 'HEBDOMADAIRE',
       });
-      await http()
-        .post(`/api/equipment/${pompe.id}/retire`)
-        .set(director)
-        .send({ date: daysAgo(1) })
-        .expect(200);
+      // Retirement refuses open tasks, so the state is forced in the table.
+      await prisma.equipment.update({
+        where: { id: pompe.id },
+        data: { retiredAt: parseDay(daysAgo(1)) as Date },
+      });
       await http()
         .post(`/api/tasks/${task.id}/complete`)
         .set(poultry)
@@ -1823,6 +1823,135 @@ describe('Équipements et maintenance (e2e)', () => {
         ).cost.toNumber(),
       ).toBe(0);
       expect(await entries()).toHaveLength(0);
+    });
+  });
+
+  describe('polish round', () => {
+    const retire = (id: string, date: string, status = 200) =>
+      http()
+        .post(`/api/equipment/${id}/retire`)
+        .set(director)
+        .send({ date })
+        .expect(status)
+        .then((res) => res.body as Msg);
+
+    it('carries the equipment id on the finance rows of maintenance, and none on the others', async () => {
+      await reference();
+      const done = await intervene({ equipmentId: groupe.id, cost: 4000 });
+      await http()
+        .post('/api/finance/entries')
+        .set(accountant)
+        .send({
+          date: daysAgo(2),
+          kind: 'DEPENSE',
+          label: 'Électricité',
+          activity: 'GENERAL',
+          category: 'ENERGIE',
+          amount: 100,
+        })
+        .expect(201);
+      const rows = (
+        await http().get('/api/finance/entries').set(accountant).expect(200)
+      ).body as Page<FinanceRow & { equipmentId: string | null }>;
+      expect(rows.items).toHaveLength(2);
+      for (const r of rows.items) {
+        expect(r.equipmentId).toBe(
+          r.id === `maintenance:${done.id}` ? groupe.id : undefined,
+        );
+      }
+    });
+
+    it('allows retiring a broken equipment, refuses it with open tasks, and checks the date', async () => {
+      await reference();
+      await retire(ventilateur.id, daysAgo(1));
+      expect((await get(ventilateur.id)).retiredAt).toBe(daysAgo(1));
+
+      const task = await world.post<Id>(poultry, '/tasks', {
+        title: 'Graisser',
+        dueDate: daysAgo(-2),
+        equipmentId: pompe.id,
+      });
+      expect(message(await retire(pompe.id, daysAgo(1), 409))).toBe(
+        'Des tâches ouvertes portent sur cet équipement',
+      );
+      await http()
+        .post(`/api/tasks/${task.id}/complete`)
+        .set(poultry)
+        .send({})
+        .expect(200);
+      await retire(pompe.id, daysAgo(1));
+
+      const dated = await make({
+        name: 'Balance',
+        type: 'BALANCE',
+        purchaseDate: daysAgo(30),
+      });
+      expect(message(await retire(dated.id, daysAgo(31), 400))).toBe(
+        "La date de réforme précède l'achat de l'équipement",
+      );
+      await intervene({ equipmentId: dated.id, date: daysAgo(5) });
+      expect(message(await retire(dated.id, daysAgo(6), 400))).toBe(
+        'La date de réforme précède la dernière intervention ou panne',
+      );
+      expect(message(await retire(dated.id, daysAgo(-1), 400))).toBe(FUTURE);
+      await retire(dated.id, daysAgo(5));
+    });
+
+    it('refuses a deletion of a retired equipment like any other write (409)', async () => {
+      const made = await make({ name: 'Balance', type: 'BALANCE' });
+      await retire(made.id, daysAgo(1));
+      expect(
+        message(await refuse('delete', `/equipment/${made.id}`, {}, 409)),
+      ).toBe(RETIRED);
+    });
+
+    it('refuses an intervention dated before the purchase of the equipment', async () => {
+      const made = await make({
+        name: 'Balance',
+        type: 'BALANCE',
+        purchaseDate: daysAgo(30),
+      });
+      expect(
+        message(
+          await intervene({ equipmentId: made.id, date: daysAgo(31) }, 400),
+        ),
+      ).toBe("La date précède l'achat de l'équipement");
+      const ok = await intervene({ equipmentId: made.id, date: daysAgo(30) });
+      await patchIntervention(ok.id, { date: daysAgo(31) }, 400);
+    });
+
+    it('refuses to delete a site that carries equipment', async () => {
+      await reference();
+      const refused = await http()
+        .delete(`/api/sites/${siteNord}`)
+        .set(director)
+        .expect(409);
+      expect(message(refused.body as Msg)).toBe(
+        'Ce site porte des équipements',
+      );
+    });
+
+    it('a retirement racing a task creation never leaves an open task on a retired equipment', async () => {
+      for (let i = 0; i < 5; i += 1) {
+        const made = await make({ name: `Pompe ${i}`, type: 'POMPE' });
+        const [retired, created] = await Promise.all([
+          http()
+            .post(`/api/equipment/${made.id}/retire`)
+            .set(director)
+            .send({ date: daysAgo(1) })
+            .then((res) => res.status),
+          http()
+            .post('/api/tasks')
+            .set(poultry)
+            .send({
+              title: 'Course',
+              dueDate: daysAgo(-2),
+              equipmentId: made.id,
+            })
+            .then((res) => res.status),
+        ]);
+        expect(['200/400', '409/201']).toContain(`${retired}/${created}`);
+      }
     });
   });
 

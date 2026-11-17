@@ -278,6 +278,10 @@ export class TasksService {
       if (!building) throw new BadRequestException(BUILDING_INVALID);
     }
     if (next.equipmentId && next.equipmentId !== before?.equipmentId) {
+      // Lock order: task, then its assignee's employee row, then the equipment
+      // row: a retirement (which counts the open tasks under this lock) either
+      // waits for this write or makes it see the equipment retired.
+      await lockRow(tx, 'Equipment', next.equipmentId, [farmId]);
       const equipment = await tx.equipment.findFirst({
         where: { id: next.equipmentId, farmId, retiredAt: null },
         select: { id: true },

@@ -56,6 +56,12 @@ const NAME_TAKEN = 'Un équipement porte déjà ce nom dans cette ferme';
 const BOTH_LOCATIONS = 'Indiquez un site ou un bâtiment, pas les deux';
 const SITE_INVALID = 'Site invalide pour cette ferme';
 const BUILDING_INVALID = 'Bâtiment invalide pour cette ferme';
+const LOCATION_INVALID = 'Emplacement invalide pour cette ferme';
+const OPEN_TASKS = 'Des tâches ouvertes portent sur cet équipement';
+const RETIRE_BEFORE_PURCHASE =
+  "La date de réforme précède l'achat de l'équipement";
+const RETIRE_BEFORE_LAST =
+  'La date de réforme précède la dernière intervention ou panne';
 const HAS_HISTORY = 'Cet équipement a un historique : réformez-le';
 const ALREADY_BROKEN = 'Une panne est déjà déclarée pour cet équipement';
 const BEFORE_PURCHASE = "La date précède l'achat de l'équipement";
@@ -209,25 +215,30 @@ export class EquipmentService {
   async get(ctx: RequestContext, id: string): Promise<EquipmentDetail> {
     const row = await this.find(this.prisma, ctx, id);
     const withCost = can(ctx.user.role, 'finance', 'read');
-    const [interventions, openTasks, totals, warningDays] = await Promise.all([
-      this.prisma.maintenance.findMany({
-        where: { equipmentId: id, farmId: { in: ctx.farmIds } },
-        include: maintenanceInclude,
-        relationLoadStrategy: 'join',
-        orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
-      }),
-      this.prisma.task.count({
-        where: { equipmentId: id, status: { in: OPEN_STATUSES } },
-      }),
-      withCost
-        ? this.ledger.totals({
-            farmIds: ctx.farmIds,
-            origin: 'MAINTENANCE',
-            equipmentId: id,
-          })
-        : null,
-      this.warningDays(ctx),
-    ]);
+    const [interventions, breakdowns, openTasks, totals, warningDays] =
+      await Promise.all([
+        this.prisma.maintenance.findMany({
+          where: { equipmentId: id, farmId: { in: ctx.farmIds } },
+          include: maintenanceInclude,
+          relationLoadStrategy: 'join',
+          orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+        }),
+        this.prisma.breakdown.findMany({
+          where: { equipmentId: id, farmId: { in: ctx.farmIds } },
+          orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
+        }),
+        this.prisma.task.count({
+          where: { equipmentId: id, status: { in: OPEN_STATUSES } },
+        }),
+        withCost
+          ? this.ledger.totals({
+              farmIds: ctx.farmIds,
+              origin: 'MAINTENANCE',
+              equipmentId: id,
+            })
+          : null,
+        this.warningDays(ctx),
+      ]);
     return {
       ...toEquipmentItem(row, today(), warningDays),
       brand: row.brand,
@@ -236,7 +247,7 @@ export class EquipmentService {
       firstMaintenanceDate: formatDayOrNull(row.firstMaintenanceDate),
       note: row.note,
       interventions: interventions.map((m) => toMaintenanceItem(m, withCost)),
-      breakdowns: row.breakdowns.map(toBreakdownItem),
+      breakdowns: breakdowns.map(toBreakdownItem),
       openTasks,
       maintenanceCost: totals ? toMoney(totals.expenses) : null,
     };
@@ -288,14 +299,17 @@ export class EquipmentService {
     if (taken) throw new ConflictException(NAME_TAKEN);
   }
 
-  /** A lost race on the unique name still answers with the name message. */
+  /**
+   * A lost race on the unique name answers with the name message; a foreign
+   * key (a site or building deleted meanwhile) with the location message.
+   */
   private async write<T>(run: () => Promise<T>): Promise<T> {
     try {
       return await run();
     } catch (error) {
       const code = (error as { code?: string } | null)?.code;
       if (code === 'P2002') throw new ConflictException(NAME_TAKEN);
-      if (code === 'P2003') throw new ConflictException(HAS_HISTORY);
+      if (code === 'P2003') throw new BadRequestException(LOCATION_INVALID);
       throw error;
     }
   }
@@ -441,11 +455,9 @@ export class EquipmentService {
   }
 
   async remove(ctx: RequestContext, id: string): Promise<void> {
-    await this.write(() =>
-      this.prisma.$transaction(async (tx) => {
-        await this.find(tx, ctx, id);
-        await lockRow(tx, 'Equipment', id, ctx.farmIds);
-        const before = await this.find(tx, ctx, id);
+    try {
+      await this.prisma.$transaction(async (tx) => {
+        const before = await this.lockActive(tx, ctx, id);
         const [maintenances, breakdowns, tasks] = await Promise.all([
           tx.maintenance.count({ where: { equipmentId: id } }),
           tx.breakdown.count({ where: { equipmentId: id } }),
@@ -456,8 +468,14 @@ export class EquipmentService {
         }
         await tx.equipment.delete({ where: { id } });
         await this.log(tx, ctx, 'DELETE', before, undefined);
-      }),
-    );
+      });
+    } catch (error) {
+      // A record written meanwhile (an intervention, a breakdown, a task).
+      if ((error as { code?: string } | null)?.code === 'P2003') {
+        throw new ConflictException(HAS_HISTORY);
+      }
+      throw error;
+    }
   }
 
   retire(
@@ -469,6 +487,35 @@ export class EquipmentService {
     assertNotFuture(date);
     return this.prisma.$transaction(async (tx) => {
       const before = await this.lockActive(tx, ctx, id);
+      if (
+        before.purchaseDate &&
+        date.getTime() < before.purchaseDate.getTime()
+      ) {
+        throw new BadRequestException(RETIRE_BEFORE_PURCHASE);
+      }
+      const [lastIntervention, lastBreakdown] = await Promise.all([
+        tx.maintenance.aggregate({
+          where: { equipmentId: id },
+          _max: { date: true },
+        }),
+        tx.breakdown.aggregate({
+          where: { equipmentId: id },
+          _max: { date: true },
+        }),
+      ]);
+      for (const last of [
+        lastIntervention._max.date,
+        lastBreakdown._max.date,
+      ]) {
+        if (last && date.getTime() < last.getTime()) {
+          throw new BadRequestException(RETIRE_BEFORE_LAST);
+        }
+      }
+      // The equipment row is locked: a task created on it waits, then sees it retired.
+      const openTasks = await tx.task.count({
+        where: { equipmentId: id, status: { in: OPEN_STATUSES } },
+      });
+      if (openTasks > 0) throw new ConflictException(OPEN_TASKS);
       await tx.equipment.update({ where: { id }, data: { retiredAt: date } });
       await this.log(tx, ctx, 'UPDATE', before, await this.find(tx, ctx, id));
       return this.item(tx, ctx, id);

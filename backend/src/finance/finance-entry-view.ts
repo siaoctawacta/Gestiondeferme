@@ -26,11 +26,13 @@ export interface EntryItem {
   batchId: string | null;
   batchCode: string | null;
   note: string | null;
+  /** The equipment of a maintenance expense (the screen links to it); absent for every other origin. */
+  equipmentId?: string;
   /** Only a manual entry is edited here; a derived row is corrected in its document. */
   editable: boolean;
 }
 
-export const toEntryItem = (r: LedgerRow): EntryItem => ({
+export const toEntryItem = (r: LedgerRow, equipmentId?: string): EntryItem => ({
   id: r.id,
   origin: r.origin,
   sourceId: r.sourceId,
@@ -43,6 +45,7 @@ export const toEntryItem = (r: LedgerRow): EntryItem => ({
   batchId: r.batchId,
   batchCode: r.batchCode,
   note: r.note,
+  ...(equipmentId ? { equipmentId } : {}),
   editable: r.origin === 'MANUEL',
 });
 

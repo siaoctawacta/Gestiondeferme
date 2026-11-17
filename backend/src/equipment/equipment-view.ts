@@ -26,11 +26,17 @@ export const KIND_LABELS: Record<string, string> = {
   CORRECTIVE: 'Corrective',
 };
 
-/** What a row of the list needs: the location names, every breakdown (the open one) and whether anything is attached. */
+/**
+ * What a row of the list needs: the location names, the OPEN breakdown (at
+ * most one) and whether anything is attached. A resolved breakdown always has
+ * its repairing intervention, so `maintenances` (one row) and the open
+ * breakdown decide `hasHistory` without loading the whole history.
+ */
 export const equipmentInclude = {
   site: { select: { name: true } },
   building: { select: { name: true } },
   breakdowns: {
+    where: { resolvedDate: null },
     select: {
       id: true,
       date: true,
@@ -38,7 +44,6 @@ export const equipmentInclude = {
       repairId: true,
       resolvedDate: true,
     },
-    orderBy: [{ date: 'desc' }, { createdAt: 'desc' }, { id: 'asc' }],
   },
   maintenances: { select: { id: true }, take: 1 },
   tasks: { select: { id: true }, take: 1 },
@@ -71,7 +76,13 @@ export interface BreakdownItem {
   resolvedDate: string | null;
 }
 
-type BreakdownRecord = EquipmentRecord['breakdowns'][number];
+type BreakdownRecord = {
+  id: string;
+  date: Date;
+  description: string;
+  repairId: string | null;
+  resolvedDate: Date | null;
+};
 
 export const toBreakdownItem = (b: BreakdownRecord): BreakdownItem => ({
   id: b.id,
@@ -86,7 +97,7 @@ export function toEquipmentItem(
   today: Date,
   warningDays: number,
 ): EquipmentItem {
-  const open = e.breakdowns.find((b) => b.resolvedDate === null);
+  const open = e.breakdowns[0];
   const next = formatDayOrNull(e.nextMaintenanceDate);
   return {
     id: e.id,
