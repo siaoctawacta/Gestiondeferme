@@ -2,7 +2,17 @@
 # One-command development start: database, migrations, seed, API (3000) and web (5173).
 #   SEED_ADMIN_EMAIL=moi@exemple.com SEED_ADMIN_PASSWORD='un mot de passe long' ./scripts/dev.sh
 # Never overwrites an existing backend/.env. Ctrl-C stops both servers.
+# With --demo (and DEMO_PASSWORD, 10 characters minimum) the demo farm « Ferme Kpalimé » is loaded after the seed:
+#   DEMO_PASSWORD='un mot de passe long' ./scripts/dev.sh --demo
 set -euo pipefail
+
+DEMO=0
+for arg in "$@"; do
+  case "$arg" in
+    --demo) DEMO=1 ;;
+    *) printf 'Option inconnue / Unknown option: %s (seule --demo existe / only --demo exists)\n' "$arg" >&2; exit 2 ;;
+  esac
+done
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND="$ROOT/backend"
@@ -42,6 +52,11 @@ if [ -z "$SEED_ADMIN_EMAIL" ] || [ -z "$SEED_ADMIN_PASSWORD" ]; then
     SEED_ADMIN_EMAIL=moi@exemple.com SEED_ADMIN_PASSWORD='un mot de passe long' ./scripts/dev.sh
   SEED_ADMIN_EMAIL and SEED_ADMIN_PASSWORD (min. 10 characters) are required: set them in the
   environment or in backend/.env (see the example above)."
+fi
+
+DEMO_PASSWORD="${DEMO_PASSWORD:-}"
+if [ "$DEMO" = 1 ] && [ "${#DEMO_PASSWORD}" -lt 10 ]; then
+  die "--demo exige DEMO_PASSWORD (10 caractères minimum) / --demo requires DEMO_PASSWORD (min. 10 characters)."
 fi
 
 # --- dependencies ----------------------------------------------------------------------
@@ -97,6 +112,11 @@ if ! (cd "$BACKEND" && npx prisma migrate deploy); then
 fi
 say "Administrateur initial / Seeding the first administrator"
 (cd "$BACKEND" && SEED_ADMIN_EMAIL="$SEED_ADMIN_EMAIL" SEED_ADMIN_PASSWORD="$SEED_ADMIN_PASSWORD" npx prisma db seed)
+
+if [ "$DEMO" = 1 ]; then
+  say "Données de démonstration « Ferme Kpalimé » / Loading the demo farm (about 5 s)"
+  (cd "$BACKEND" && SEED_ADMIN_EMAIL="$SEED_ADMIN_EMAIL" DEMO_PASSWORD="$DEMO_PASSWORD" npm run seed:demo)
+fi
 
 # --- servers ---------------------------------------------------------------------------
 set -m # each background job gets its own process group, so Ctrl-C can stop whole trees

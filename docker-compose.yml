@@ -31,9 +31,14 @@ services:
       PORT: "3000"
       TRUST_PROXY: "${TRUST_PROXY:-1}"
       UPLOAD_DIR: /app/uploads
+      # Address encoded in the QR labels; empty means WEB_ORIGIN.
+      APP_URL: ${APP_URL:-}
       # Only read by the explicit seed command (see README); harmless otherwise.
       SEED_ADMIN_EMAIL: ${SEED_ADMIN_EMAIL:-}
       SEED_ADMIN_PASSWORD: ${SEED_ADMIN_PASSWORD:-}
+      # Only read by the explicit demo command (see README): never set in production without a decision.
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-}
+      ALLOW_DEMO_SEED: ${ALLOW_DEMO_SEED:-}
     volumes:
       - api-uploads:/app/uploads
 
