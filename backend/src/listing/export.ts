@@ -3,6 +3,12 @@ import { Workbook } from 'exceljs';
 
 export type ExportColumn<T> = {
   header: string;
+  /**
+   * The values are calendar days (`YYYY-MM-DD`): the workbook writes real date cells shown `dd/mm/yyyy`;
+   * the CSV keeps the text. Only flagged columns are converted, never free text that looks like a day.
+   * (The report tables carry the same flag on their French `jj/mm/aaaa` columns.)
+   */
+  date?: true;
   value: (row: T) => string | number | null;
 };
 
@@ -42,8 +48,8 @@ function asDay(value: string | number | null): string | number | Date | null {
 }
 
 /**
- * The workbook of a list. Every list gives its days as `YYYY-MM-DD`: in the sheet they are real
- * date cells (sortable, formattable) shown `dd/mm/yyyy`; the CSV keeps the text.
+ * The workbook of a list. The columns flagged `date` hold `YYYY-MM-DD` days: in the sheet they are real
+ * date cells (sortable, formattable) shown `dd/mm/yyyy`; any other cell stays as given.
  */
 export async function toXlsx<T>(
   rows: T[],
@@ -54,9 +60,13 @@ export async function toXlsx<T>(
   const ws = wb.addWorksheet(sheetName.slice(0, 31));
   ws.addRow(cols.map((c) => c.header)).font = { bold: true };
   for (const r of rows) {
-    const added = ws.addRow(cols.map((c) => asDay(c.value(r))));
-    added.eachCell((cell) => {
-      if (cell.value instanceof Date) cell.numFmt = 'dd/mm/yyyy';
+    const added = ws.addRow(
+      cols.map((c) => (c.date ? asDay(c.value(r)) : c.value(r))),
+    );
+    cols.forEach((c, i) => {
+      if (c.date && added.getCell(i + 1).value instanceof Date) {
+        added.getCell(i + 1).numFmt = 'dd/mm/yyyy';
+      }
     });
   }
   return Buffer.from(await wb.xlsx.writeBuffer());

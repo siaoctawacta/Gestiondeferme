@@ -67,7 +67,7 @@ const STATUS_LABEL: Record<InventoryStatus, string> = {
 };
 
 export const INVENTORY_COLUMNS: ExportColumn<InventoryItem>[] = [
-  { header: 'Date', value: (i) => i.date },
+  { header: 'Date', date: true, value: (i) => i.date },
   { header: 'Statut', value: (i) => STATUS_LABEL[i.status] },
   { header: 'Lignes comptées', value: (i) => i.lineCount },
   { header: 'Note', value: (i) => i.note },

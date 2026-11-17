@@ -107,7 +107,7 @@ export interface AnimalWeighingItem {
 const SORTABLE = ['tag', 'birthDate', 'status', 'createdAt'];
 
 export const ANIMAL_WEIGHING_COLUMNS: ExportColumn<AnimalWeighingItem>[] = [
-  { header: 'Date', value: (w) => w.date },
+  { header: 'Date', date: true, value: (w) => w.date },
   { header: 'Poids (kg)', value: (w) => w.weightKg },
 ];
 

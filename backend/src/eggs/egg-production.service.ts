@@ -59,7 +59,7 @@ export interface EggProductionItem {
 }
 
 export const EGG_COLUMNS: ExportColumn<EggProductionItem>[] = [
-  { header: 'Date', value: (e) => e.date },
+  { header: 'Date', date: true, value: (e) => e.date },
   { header: 'Lot', value: (e) => e.batchCode },
   { header: 'Œufs collectés', value: (e) => e.collected },
   { header: 'Œufs cassés', value: (e) => e.broken },

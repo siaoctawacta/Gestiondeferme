@@ -56,8 +56,6 @@ const ENTERED_DONE =
   'Cette intervention a été saisie réalisée : modifiez sa date';
 const SORTABLE = ['date', 'status', 'type', 'createdAt'];
 
-/** An empty text is no text. */
-
 /**
  * Health acts: vaccinations, treatments, disinfections and diagnoses on one
  * lot, animal or building. A done act with a stock article and a quantity

@@ -63,10 +63,10 @@ const STATUS_LABEL: Record<QuarantineStatus, string> = {
 };
 
 export const QUARANTINE_COLUMNS: ExportColumn<QuarantineItem>[] = [
-  { header: 'Début', value: (q) => q.startDate },
+  { header: 'Début', date: true, value: (q) => q.startDate },
   { header: 'Lot / animal', value: (q) => q.target },
   { header: 'Motif', value: (q) => q.reason },
-  { header: 'Fin', value: (q) => q.endDate },
+  { header: 'Fin', date: true, value: (q) => q.endDate },
   { header: 'Statut', value: (q) => STATUS_LABEL[q.status] },
 ];
 

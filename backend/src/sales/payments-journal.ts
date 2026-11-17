@@ -51,7 +51,7 @@ const METHOD_LABEL: Record<PaymentMethod, string> = {
 };
 
 export const PAYMENT_JOURNAL_COLUMNS: ExportColumn<PaymentJournalRow>[] = [
-  { header: 'Date', value: (r) => r.date },
+  { header: 'Date', date: true, value: (r) => r.date },
   { header: 'N° reçu', value: (r) => r.number },
   { header: 'Type', value: (r) => KIND_LABEL[r.kind] },
   { header: 'Mode', value: (r) => METHOD_LABEL[r.method] },

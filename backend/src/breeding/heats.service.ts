@@ -22,7 +22,7 @@ export interface HeatItem {
 }
 
 export const HEAT_COLUMNS: ExportColumn<HeatItem>[] = [
-  { header: 'Date', value: (h) => h.date },
+  { header: 'Date', date: true, value: (h) => h.date },
   { header: 'Note', value: (h) => h.note },
 ];
 

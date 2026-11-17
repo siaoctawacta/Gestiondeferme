@@ -82,24 +82,30 @@ describe('toXlsx', () => {
     expect(ws.getRow(2).values).toEqual([undefined, 'Poule', 12, 'x']);
   });
 
-  it('writes a calendar day (YYYY-MM-DD) as a real date cell shown dd/mm/yyyy, in any column', async () => {
+  it('writes a flagged column as real date cells shown dd/mm/yyyy, and nothing else', async () => {
+    const dated: ExportColumn<Row>[] = [
+      { header: 'Nom', value: (r) => r.name },
+      { header: 'Jour', date: true, value: (r) => r.note },
+      { header: 'Texte', value: (r) => r.note },
+    ];
     const buf = await toXlsx(
       [
         { name: 'Poule', qty: 12, note: '2026-11-14' },
-        { name: '2026-02-30', qty: null, note: '2026-11-14 matin' },
+        { name: 'Vide', qty: null, note: '2026-02-30' },
       ],
-      cols,
+      dated,
       'Dates',
     );
     const wb = new Workbook();
     await wb.xlsx.load(buf as unknown as ArrayBuffer);
     const ws = wb.getWorksheet('Dates')!;
-    const day = ws.getRow(2).getCell(3);
+    const day = ws.getRow(2).getCell(2);
     expect(day.value).toEqual(new Date(Date.UTC(2026, 10, 14)));
     expect(day.numFmt).toBe('dd/mm/yyyy');
-    // Not a calendar day, or more than a day: the text stays.
-    expect(ws.getRow(3).getCell(1).value).toBe('2026-02-30');
-    expect(ws.getRow(3).getCell(3).value).toBe('2026-11-14 matin');
+    // The same text in an unflagged column (a lot number, a note) stays a string.
+    expect(ws.getRow(2).getCell(3).value).toBe('2026-11-14');
+    // A flagged value that is not a calendar day stays as it is.
+    expect(ws.getRow(3).getCell(2).value).toBe('2026-02-30');
   });
 
   it('leaves the CSV of the same rows as the text it always was', () => {

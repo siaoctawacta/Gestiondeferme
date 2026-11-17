@@ -224,7 +224,7 @@ export function toDetail(p: PurchaseFull): PurchaseDetail {
 }
 
 export const PURCHASE_COLUMNS: ExportColumn<PurchaseRow>[] = [
-  { header: 'Date', value: (r) => r.date },
+  { header: 'Date', date: true, value: (r) => r.date },
   { header: 'Référence', value: (r) => r.reference },
   { header: 'Fournisseur', value: (r) => r.supplierName },
   { header: 'Article', value: (r) => r.article },

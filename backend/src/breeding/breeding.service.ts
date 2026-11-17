@@ -67,12 +67,16 @@ const SORTABLE = [
 export const BREEDING_COLUMNS: ExportColumn<BreedingItem>[] = [
   { header: 'Truie', value: (b) => b.sowTag },
   { header: 'Verrat / IA', value: (b) => b.sire },
-  { header: 'Date saillie', value: (b) => b.serviceDate },
+  { header: 'Date saillie', date: true, value: (b) => b.serviceDate },
   { header: 'Nés totaux', value: (b) => b.bornTotal },
   { header: 'Nés vivants', value: (b) => b.bornAlive },
   { header: 'Sevrés', value: (b) => b.weanedCount },
   { header: 'Statut', value: (b) => STATUS_LABEL[b.status] },
-  { header: 'Mise bas prévue', value: (b) => b.expectedFarrowingDate },
+  {
+    header: 'Mise bas prévue',
+    date: true,
+    value: (b) => b.expectedFarrowingDate,
+  },
 ];
 
 const average = (values: number[]): number | null =>

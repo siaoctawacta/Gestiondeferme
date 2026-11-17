@@ -63,8 +63,8 @@ const BASE_COLUMNS: ExportColumn<EmployeeItem>[] = [
   { header: 'Poste', value: (e) => e.jobTitle },
   { header: 'Contrat', value: (e) => CONTRACT_LABELS[e.contractType] },
   { header: 'Téléphone', value: (e) => e.phone },
-  { header: 'Embauche', value: (e) => e.hireDate },
-  { header: 'Départ', value: (e) => e.endDate },
+  { header: 'Embauche', date: true, value: (e) => e.hireDate },
+  { header: 'Départ', date: true, value: (e) => e.endDate },
   { header: 'Statut', value: (e) => EMPLOYMENT_LABELS[e.status] },
 ];
 
@@ -110,7 +110,7 @@ export const toAttendanceItem = (a: AttendanceRecord): AttendanceItem => ({
 });
 
 export const ATTENDANCE_COLUMNS: ExportColumn<AttendanceItem>[] = [
-  { header: 'Date', value: (a) => a.date },
+  { header: 'Date', date: true, value: (a) => a.date },
   { header: 'Employé', value: (a) => a.employeeName },
   { header: 'Statut', value: (a) => ATTENDANCE_LABELS[a.status] },
   { header: 'Heures', value: (a) => a.hours },

@@ -165,8 +165,8 @@ export async function runDemoSeed(): Promise<number> {
     logger: ['error', 'warn'],
   });
   let lock: Client | undefined;
-  // The demo accounts exist from the `seedUsers` step on: a run that stops later still leaves them.
-  let usersCreated = false;
+  // The demo accounts are recorded here as `seedUsers` creates them: a run that stops partway still leaves some.
+  const users: DemoContext['users'] = new Map();
   try {
     try {
       configureApp(app);
@@ -249,7 +249,7 @@ export async function runDemoSeed(): Promise<number> {
     const ctx: DemoContext = {
       api: new DemoClient(baseUrl, token, farm.id),
       buildings: new Map(),
-      users: new Map(),
+      users,
       async setCounter(kind, last, mode = 'exact') {
         const organizationId = admin.organizationId;
         if (mode === 'raise') {
@@ -274,7 +274,6 @@ export async function runDemoSeed(): Promise<number> {
     await step('identité légale, utilisateurs', async () => {
       await seedLegalIdentity(ctx);
       await seedUsers(ctx, password);
-      usersCreated = true;
     });
     await step('sites et bâtiments', () => seedPremises(ctx));
     const customers = await seedCustomers(ctx);
@@ -327,7 +326,7 @@ export async function runDemoSeed(): Promise<number> {
         error instanceof Error ? (error.stack ?? error.message) : error,
       );
     }
-    if (usersCreated) console.error(WARNING);
+    if (users.size > 0) console.error(WARNING);
     return 1;
   } finally {
     await lock?.end().catch(() => undefined);

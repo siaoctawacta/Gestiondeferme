@@ -83,7 +83,7 @@ export const creditNoteDetail = (c: CreditNoteFull): CreditNoteDetail => ({
 });
 
 export const CREDIT_NOTE_COLUMNS: ExportColumn<CreditNoteRow>[] = [
-  { header: 'Date', value: (r) => r.date },
+  { header: 'Date', date: true, value: (r) => r.date },
   { header: 'N° avoir', value: (r) => r.number },
   { header: 'Facture', value: (r) => r.invoiceNumber },
   { header: 'Client', value: (r) => r.customerName },

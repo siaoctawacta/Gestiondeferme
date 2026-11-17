@@ -378,7 +378,7 @@ describe('Users and settings (e2e)', () => {
           },
         });
       const inA = await link(farmA, 'Employé A');
-      const inB = await link(farmB, 'Employé B');
+      await link(farmB, 'Employé B');
       await http()
         .patch(`/api/users/${u.id}`)
         .set(admin.headers)
@@ -400,7 +400,16 @@ describe('Users and settings (e2e)', () => {
         ['Employé A', null],
         ['Employé B', u.id],
       ]);
-      expect(inB.userId).toBe(u.id);
+      const rows = await prisma.auditLog.findMany({
+        where: { module: 'personnel', recordId: inA.id },
+      });
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        action: 'UPDATE',
+        farmId: farmA,
+        before: { userId: u.id },
+        after: { userId: null },
+      });
     });
 
     it('revokes refresh tokens on deactivation and on role change', async () => {

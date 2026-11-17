@@ -290,7 +290,7 @@ export const INVOICE_STATUS_LABELS: Record<InvoiceStatusValue, string> = {
 };
 
 export const INVOICE_COLUMNS: ExportColumn<InvoiceRow>[] = [
-  { header: 'Date', value: (r) => r.date },
+  { header: 'Date', date: true, value: (r) => r.date },
   { header: 'N° facture', value: (r) => r.number },
   { header: 'Client', value: (r) => r.customerName },
   { header: 'Produit', value: (r) => r.product },
@@ -298,6 +298,6 @@ export const INVOICE_COLUMNS: ExportColumn<InvoiceRow>[] = [
   { header: 'Total', value: (r) => r.total },
   { header: 'Payé', value: (r) => r.paid },
   { header: 'Reste dû', value: (r) => r.due },
-  { header: 'Échéance', value: (r) => r.dueDate },
+  { header: 'Échéance', date: true, value: (r) => r.dueDate },
   { header: 'Statut', value: (r) => INVOICE_STATUS_LABELS[r.status] },
 ];

@@ -1373,6 +1373,55 @@ describe('Reports (e2e)', () => {
           ].map((w) => ({ farmId: world.farmId, date: D('2026-10-22'), ...w })),
         });
 
+        // What the report counts is what the role's own lists total, for the same days.
+        const lists = async (h: Headers) => {
+          const done = async (type: string) =>
+            (
+              (
+                await http()
+                  .get(
+                    `/api/health-acts?type=${type}&status=REALISE&from=2026-10-01&to=2026-10-27`,
+                  )
+                  .set(h)
+                  .expect(200)
+              ).body as { total: number }
+            ).total;
+          const feedList = (
+            await http()
+              .get(
+                '/api/feed-distributions?from=2026-10-22&to=2026-10-22&pageSize=100',
+              )
+              .set(h)
+              .expect(200)
+          ).body as { items: { quantityKg: number }[] };
+          return {
+            vaccinations: await done('VACCINATION'),
+            treatments: await done('TRAITEMENT'),
+            disinfections: await done('DESINFECTION'),
+            feedKg: feedList.items.reduce((n, i) => n + i.quantityKg, 0),
+          };
+        };
+        const reported = async (h: Headers) => {
+          const r = await report(
+            'sanitaire',
+            { from: '2026-10-01', to: '2026-10-27' },
+            h,
+          );
+          return {
+            vaccinations: figure(r, 'sante', 'vaccinations'),
+            treatments: figure(r, 'sante', 'treatments'),
+            disinfections: figure(r, 'sante', 'disinfections'),
+            feedKg: (await feed(h))[0],
+          };
+        };
+        const hDirector = await as('DIRECTEUR_FERME');
+        for (const h of [hAvicole, hPorcin, hVet, hDirector]) {
+          expect(await reported(h)).toEqual(await lists(h));
+        }
+        // The director reads both species: more than the poultry manager.
+        expect((await reported(hDirector)).feedKg).toBe(
+          (before.feedAvicole[0] as number) + 150,
+        );
         // The poultry manager: not a pig lot code, not a pig act, not a pig feed or water litre.
         expect(await health(hAvicole)).toEqual(before.avicole);
         expect(await feed(hAvicole)).toEqual([

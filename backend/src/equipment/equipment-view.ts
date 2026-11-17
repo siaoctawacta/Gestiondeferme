@@ -151,7 +151,11 @@ export const equipmentColumns: ExportColumn<EquipmentItem>[] = [
     value: (e) => TYPE_LABELS[e.type as EquipmentTypeValue] ?? e.type,
   },
   { header: 'Emplacement', value: (e) => e.location },
-  { header: 'Prochaine maintenance', value: (e) => e.nextMaintenance },
+  {
+    header: 'Prochaine maintenance',
+    date: true,
+    value: (e) => e.nextMaintenance,
+  },
   { header: 'État', value: (e) => CONDITION_LABELS[e.condition] },
 ];
 
@@ -216,12 +220,12 @@ export const maintenanceSnapshot = (m: MaintenanceRecord) => ({
 export const maintenanceColumns = (
   withCost: boolean,
 ): ExportColumn<MaintenanceItem>[] => [
-  { header: 'Date', value: (m) => m.date },
+  { header: 'Date', date: true, value: (m) => m.date },
   { header: 'Équipement', value: (m) => m.equipmentName },
   { header: 'Type', value: (m) => KIND_LABELS[m.kind] ?? m.kind },
   { header: 'Description', value: (m) => m.description },
   { header: 'Intervenant', value: (m) => m.performedBy },
-  { header: 'Prochaine date', value: (m) => m.nextDate },
+  { header: 'Prochaine date', date: true, value: (m) => m.nextDate },
   ...(withCost
     ? [{ header: 'Coût', value: (m: MaintenanceItem) => m.cost }]
     : []),

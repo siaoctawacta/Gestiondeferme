@@ -46,7 +46,7 @@ const TYPE_LABEL: Record<BiosecurityType, string> = {
 };
 
 export const BIOSECURITY_COLUMNS: ExportColumn<BiosecurityLogItem>[] = [
-  { header: 'Date', value: (l) => l.date },
+  { header: 'Date', date: true, value: (l) => l.date },
   { header: 'Type', value: (l) => TYPE_LABEL[l.type] },
   { header: 'Bâtiment', value: (l) => l.buildingName },
   { header: 'Produit', value: (l) => l.productName },

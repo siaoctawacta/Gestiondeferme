@@ -284,6 +284,39 @@ describe('Remaining list exports (e2e)', () => {
   });
 
   describe('stock', () => {
+    it('writes a lot number that looks like a day as text, and the movement day as a date cell', async () => {
+      const item = await world.post<Id>(admin, '/stock-items', {
+        name: 'Vaccin Gumboro',
+        category: 'VACCIN',
+        unit: 'flacon',
+      });
+      await world.post(admin, '/stock/movements', {
+        itemId: item.id,
+        type: 'ENTREE',
+        date: daysAgo(3),
+        quantity: 5,
+        unitCost: 100,
+        reason: 'ACHAT',
+        lotNumber: '2026-11-17',
+      });
+      const res = await http()
+        .get('/api/stock/movements?format=xlsx')
+        .set(admin)
+        .buffer(true)
+        .parse((r, cb) => {
+          const chunks: Buffer[] = [];
+          r.on('data', (c: Buffer) => chunks.push(c));
+          r.on('end', () => cb(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+      const wb = new Workbook();
+      await wb.xlsx.load(res.body as ArrayBuffer);
+      const row = wb.worksheets[0].getRow(2);
+      expect(row.getCell(1).value).toEqual(new Date(`${daysAgo(3)}T00:00:00Z`));
+      expect(row.getCell(7).value).toBe('2026-11-17');
+      expect((await csv('/stock/movements')).rows[0][6]).toBe('2026-11-17');
+    });
+
     it('inventories and movements, readable by a role that reads the stock', async () => {
       const item = await world.post<Id>(admin, '/stock-items', {
         name: 'Vaccin Gumboro',

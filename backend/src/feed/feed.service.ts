@@ -46,10 +46,10 @@ export class FeedService
 
   /**
    * The feed given (kg) and the water drunk (L) on the farms between two days
-   * (both inclusive): the one definition the dashboard (each farm's last
-   * recorded day) and the reports read. Two queries. Over the rows the
-   * caller's feed and water lists show (`FeedTargets.visibleRows`: a role
-   * that cannot read a species' lots never counts their feed).
+   * (both inclusive): the REPORTS' definition, over the rows the caller's feed
+   * and water lists show (`FeedTargets.visibleRows`: a role that cannot read a
+   * species' lots never counts their feed). The dashboard does not read this:
+   * its farm-wide KPIs come from `dayFigures`, unscoped. Two queries.
    */
   async periodFigures(
     ctx: RequestContext,

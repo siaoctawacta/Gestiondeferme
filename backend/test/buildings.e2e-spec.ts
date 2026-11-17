@@ -251,6 +251,51 @@ describe('Building overview (e2e)', () => {
     expect(pigLot.id).toBeTruthy();
   });
 
+  it('lists in the health acts only what the role reads: the species scope of the health list', async () => {
+    const pigLot = await world.pigLot(admin);
+    const sow = await prisma.animal.create({
+      data: {
+        farmId: world.farmId,
+        tag: 'TR-OV',
+        category: 'TRUIE',
+        sex: 'F',
+        buildingId: world.pigBld,
+        birthDate: new Date('2025-01-01'),
+      },
+    });
+    const user = await prisma.user.findFirstOrThrow();
+    const act = (day: number, target: Record<string, string>) =>
+      prisma.healthAct.create({
+        data: {
+          farmId: world.farmId,
+          type: target.buildingId ? 'DESINFECTION' : 'TRAITEMENT',
+          date: new Date(daysAgo(day)),
+          status: 'REALISE',
+          doneDate: new Date(daysAgo(day)),
+          createdById: user.id,
+          productName: `Acte ${day}`,
+          ...target,
+        },
+      });
+    await act(1, { buildingId: world.pigBld });
+    await act(2, { batchId: pigLot.id });
+    await act(3, { animalId: sow.id });
+    const names = async (role: Parameters<World['actor']>[0]) =>
+      (
+        (await overview(await world.actor(role), world.pigBld).expect(200))
+          .body as Overview
+      ).lastHealthActs!.map((a) => a.productName);
+    // The poultry manager reads neither the pig lot nor the pig animals: only the act on the building.
+    expect(await names('RESP_AVICOLE')).toEqual(['Acte 1']);
+    // The pig manager and the director see everything the health list shows.
+    expect(await names('RESP_PORCIN')).toEqual(['Acte 1', 'Acte 2', 'Acte 3']);
+    expect(await names('DIRECTEUR_FERME')).toEqual([
+      'Acte 1',
+      'Acte 2',
+      'Acte 3',
+    ]);
+  });
+
   it('is refused to a role without batiments read, and hidden from other farms', async () => {
     await overview(await world.actor('RESP_STOCK'), world.poultryBld).expect(
       403,

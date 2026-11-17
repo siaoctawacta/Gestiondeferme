@@ -122,7 +122,7 @@ export const taskSnapshot = (row: TaskRecord) => ({
 export const taskColumns: ExportColumn<TaskItem>[] = [
   { header: 'Tâche', value: (t) => t.title },
   { header: 'Responsable', value: (t) => t.assigneeName },
-  { header: 'Échéance', value: (t) => t.dueDate },
+  { header: 'Échéance', date: true, value: (t) => t.dueDate },
   { header: 'Heure', value: (t) => t.dueTime },
   { header: 'Priorité', value: (t) => PRIORITY_LABELS[t.priority] },
   { header: 'Statut', value: (t) => STATUS_LABELS[t.status] },

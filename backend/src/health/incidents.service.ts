@@ -67,7 +67,7 @@ const STATUS_LABEL: Record<IncidentStatus, string> = {
 };
 
 export const INCIDENT_COLUMNS: ExportColumn<IncidentItem>[] = [
-  { header: 'Date', value: (i) => i.date },
+  { header: 'Date', date: true, value: (i) => i.date },
   { header: 'Titre', value: (i) => i.title },
   { header: 'Gravité', value: (i) => SEVERITY_LABEL[i.severity] },
   { header: 'Cible', value: (i) => i.target },

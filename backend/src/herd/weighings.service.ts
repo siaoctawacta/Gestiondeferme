@@ -25,7 +25,7 @@ export interface WeighingItem {
 }
 
 export const WEIGHING_COLUMNS: ExportColumn<WeighingItem>[] = [
-  { header: 'Date', value: (w) => w.date },
+  { header: 'Date', date: true, value: (w) => w.date },
   { header: 'Échantillon', value: (w) => w.sampleSize },
   { header: 'Poids moyen (g)', value: (w) => w.averageWeightG },
 ];

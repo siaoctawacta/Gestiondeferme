@@ -96,7 +96,11 @@ export const HERD_COLUMNS: ExportColumn<HerdRow>[] = [
   { header: 'Catégorie', value: (r) => r.category },
   { header: 'Race', value: (r) => r.breedName },
   { header: 'Bâtiment', value: (r) => r.buildingName },
-  { header: 'Date de naissance', value: (r) => r.birthDate ?? r.entryDate },
+  {
+    header: 'Date de naissance',
+    date: true,
+    value: (r) => r.birthDate ?? r.entryDate,
+  },
   { header: 'Poids (kg)', value: (r) => r.weightKg },
   { header: 'Statut', value: (r) => STATUS_LABEL[r.status] ?? r.status },
 ];

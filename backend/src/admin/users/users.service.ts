@@ -194,6 +194,38 @@ export class UsersService implements AuditableService {
     return { current, otherAdmin };
   }
 
+  /**
+   * Clears the link of the employees matching `where` to a user (deleted, or no longer of their farm), one
+   * audit row per employee in the same transaction: the employee changed, even if the request was about a user.
+   */
+  private async unlinkEmployees(
+    tx: Prisma.TransactionClient,
+    ctx: RequestContext,
+    where: Prisma.EmployeeWhereInput,
+  ): Promise<void> {
+    const linked = await tx.employee.findMany({
+      where,
+      select: { id: true, name: true, farmId: true, userId: true },
+      orderBy: { id: 'asc' },
+    });
+    for (const e of linked) {
+      await tx.employee.update({ where: { id: e.id }, data: { userId: null } });
+      await this.audit.logChange(
+        {
+          ctx,
+          farmId: e.farmId,
+          module: 'personnel',
+          action: 'UPDATE',
+          recordId: e.id,
+          label: e.name,
+          before: { userId: e.userId },
+          after: { userId: null },
+        },
+        tx,
+      );
+    }
+  }
+
   async create(ctx: RequestContext, dto: CreateUserDto): Promise<UserView> {
     if (needsFarm(dto.role, dto.farmIds.length))
       throw new BadRequestException(FARM_REQUIRED);
@@ -258,9 +290,9 @@ export class UsersService implements AuditableService {
             data: farmIds.map((farmId) => ({ userId: id, farmId })),
           });
           // An employee may only be linked to a user of its farm: a farm the user left no longer vouches for the link.
-          await tx.employee.updateMany({
-            where: { userId: id, farmId: { notIn: farmIds } },
-            data: { userId: null },
+          await this.unlinkEmployees(tx, ctx, {
+            userId: id,
+            farmId: { notIn: farmIds },
           });
         }
         const updated = await tx.user.update({
@@ -307,10 +339,7 @@ export class UsersService implements AuditableService {
         await tx.passwordReset.deleteMany({ where: { userId: id } });
         await tx.userFarm.deleteMany({ where: { userId: id } });
         // The employee the user was linked to stays (an employee needs no account).
-        await tx.employee.updateMany({
-          where: { userId: id },
-          data: { userId: null },
-        });
+        await this.unlinkEmployees(tx, ctx, { userId: id });
         // Masked alerts are a display preference of the user: they go with him.
         await tx.alertAck.deleteMany({ where: { userId: id } });
         await tx.user.delete({ where: { id } });

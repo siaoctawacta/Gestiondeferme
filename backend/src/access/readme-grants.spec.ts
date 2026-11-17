@@ -1,7 +1,7 @@
 import { readFileSync } from 'fs';
 import { join } from 'path';
 import { permissionsFor, type Action, type ModuleKey } from './permissions';
-import type { Role } from './roles';
+import { ALL_ROLES, type Role } from './roles';
 
 /** The columns of the README table, in its order, with their headers. */
 const ROLES: [Role, string][] = [
@@ -80,6 +80,7 @@ describe('README grants table', () => {
   const readme = readFileSync(join(__dirname, '../../../README.md'), 'utf8');
 
   it('covers every module and every role of the code', () => {
+    expect(ROLES.map(([r]) => r).sort()).toEqual([...ALL_ROLES].sort());
     expect(MODULES.map(([m]) => m).sort()).toEqual(
       Object.keys(permissionsFor('SUPER_ADMIN')).sort(),
     );

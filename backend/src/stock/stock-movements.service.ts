@@ -75,7 +75,7 @@ const REASON_LABEL: Record<string, string> = {
 };
 
 export const MOVEMENT_COLUMNS: ExportColumn<MovementItem>[] = [
-  { header: 'Date', value: (m) => m.date },
+  { header: 'Date', date: true, value: (m) => m.date },
   { header: 'Article', value: (m) => m.itemName },
   { header: 'Type', value: (m) => TYPE_LABEL[m.type] ?? m.type },
   { header: 'Quantité', value: (m) => m.quantity },

@@ -27,7 +27,7 @@ const EVENT_LABEL: Record<BatchEventType, string> = {
 };
 
 export const EVENT_COLUMNS: ExportColumn<BatchEventItem>[] = [
-  { header: 'Date', value: (e) => e.date },
+  { header: 'Date', date: true, value: (e) => e.date },
   { header: 'Type', value: (e) => EVENT_LABEL[e.type] },
   { header: 'Quantité', value: (e) => e.quantity },
   { header: 'Cause', value: (e) => e.cause },

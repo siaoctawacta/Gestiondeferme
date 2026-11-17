@@ -35,7 +35,7 @@ const NOT_FOUND = 'Enregistrement introuvable';
 const SORTABLE = ['date', 'liters'];
 
 export const WATER_COLUMNS: ExportColumn<WaterItem>[] = [
-  { header: 'Date', value: (w) => w.date },
+  { header: 'Date', date: true, value: (w) => w.date },
   { header: 'Lot / bâtiment', value: (w) => w.target },
   { header: 'Eau (L)', value: (w) => w.liters },
 ];

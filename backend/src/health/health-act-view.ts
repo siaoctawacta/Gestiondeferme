@@ -99,7 +99,7 @@ export const ACT_STATUSES = Object.keys(STATUS_LABEL) as ActStatus[];
 export const actTypeLabel = (type: HealthActType): string => TYPE_LABEL[type];
 
 export const ACT_COLUMNS: ExportColumn<HealthActItem>[] = [
-  { header: 'Date', value: (a) => a.date },
+  { header: 'Date', date: true, value: (a) => a.date },
   { header: 'Lot / Animal', value: (a) => a.target },
   { header: 'Type', value: (a) => TYPE_LABEL[a.type] },
   { header: 'Produit', value: (a) => a.productName },

@@ -145,7 +145,7 @@ export function quoteDetail(q: QuoteFull, today: string): QuoteDetail {
 }
 
 export const QUOTE_COLUMNS: ExportColumn<QuoteRow>[] = [
-  { header: 'Date', value: (r) => r.date },
+  { header: 'Date', date: true, value: (r) => r.date },
   { header: 'N° devis', value: (r) => r.reference },
   { header: 'Client', value: (r) => r.customerName },
   { header: 'Produit', value: (r) => r.product },

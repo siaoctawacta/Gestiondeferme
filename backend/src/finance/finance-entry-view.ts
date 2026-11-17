@@ -80,7 +80,7 @@ const KIND_LABEL: Record<FinanceKind, string> = {
 };
 
 export const ENTRY_COLUMNS: ExportColumn<EntryItem>[] = [
-  { header: 'Date', value: (r) => r.date },
+  { header: 'Date', date: true, value: (r) => r.date },
   { header: 'Libellé', value: (r) => r.label },
   { header: 'Type', value: (r) => KIND_LABEL[r.kind] },
   { header: 'Activité', value: (r) => ACTIVITY_LABEL[r.activity] },

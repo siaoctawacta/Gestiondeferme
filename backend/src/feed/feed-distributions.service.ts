@@ -85,7 +85,7 @@ export const columnsFor = (
     : DISTRIBUTION_COLUMNS.filter((c) => c.header !== 'Coût');
 
 export const DISTRIBUTION_COLUMNS: ExportColumn<FeedDistributionItem>[] = [
-  { header: 'Date', value: (d) => d.date },
+  { header: 'Date', date: true, value: (d) => d.date },
   { header: 'Lot / Bâtiment', value: (d) => d.target },
   { header: 'Aliment', value: (d) => d.feedName },
   { header: 'Aliment (kg)', value: (d) => d.quantityKg },
