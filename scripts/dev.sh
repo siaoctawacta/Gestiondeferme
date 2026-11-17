@@ -2,7 +2,9 @@
 # One-command development start: database, migrations, seed, API (3000) and web (5173).
 #   SEED_ADMIN_EMAIL=moi@exemple.com SEED_ADMIN_PASSWORD='un mot de passe long' ./scripts/dev.sh
 # Never overwrites an existing backend/.env. Ctrl-C stops both servers.
-# With --demo (and DEMO_PASSWORD, 10 characters minimum) the demo farm « Ferme Kpalimé » is loaded after the seed:
+# With --demo the demo farm « Ferme Kpalimé » is loaded after the seed. DEMO_PASSWORD (10 characters minimum) is the
+# password of its 12 accounts; without it one is generated and printed once. Nothing is reloaded when the demo is there:
+#   ./scripts/dev.sh --demo
 #   DEMO_PASSWORD='un mot de passe long' ./scripts/dev.sh --demo
 set -euo pipefail
 
@@ -38,6 +40,24 @@ if [ ! -f "$ENV_FILE" ]; then
   '
 fi
 
+# An existing backend/.env that still holds the placeholders of .env.example (empty or `change-me...`) gets fresh
+# secrets for JWT_SECRET and TOTP_ENC_KEY: the API and the demo seed refuse to start with them.
+ENV_FILE="$ENV_FILE" node -e '
+  const { randomBytes } = require("crypto");
+  const { readFileSync, writeFileSync } = require("fs");
+  const file = process.env.ENV_FILE;
+  let text = readFileSync(file, "utf8");
+  const fill = (key, bytes) => {
+    const m = text.match(new RegExp(`^${key}=(.*)$`, "m"));
+    const value = m ? m[1].replace(/^["\x27]|["\x27]$/g, "") : null;
+    if (m && (value === "" || value.startsWith("change-me")))
+      text = text.replace(m[0], () => `${key}="${randomBytes(bytes).toString("base64")}"`);
+  };
+  fill("JWT_SECRET", 48);
+  fill("TOTP_ENC_KEY", 32);
+  writeFileSync(file, text);
+'
+
 # Value of KEY from backend/.env (quotes stripped); empty if absent.
 env_value() {
   { grep -E "^$1=" "$ENV_FILE" || true; } | tail -n 1 | cut -d= -f2- | sed -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//"
@@ -55,8 +75,13 @@ if [ -z "$SEED_ADMIN_EMAIL" ] || [ -z "$SEED_ADMIN_PASSWORD" ]; then
 fi
 
 DEMO_PASSWORD="${DEMO_PASSWORD:-}"
+DEMO_PASSWORD_GENERATED=0
+if [ "$DEMO" = 1 ] && [ -z "$DEMO_PASSWORD" ]; then
+  DEMO_PASSWORD="$(node -e 'process.stdout.write(require("crypto").randomBytes(15).toString("base64url"))')"
+  DEMO_PASSWORD_GENERATED=1
+fi
 if [ "$DEMO" = 1 ] && [ "${#DEMO_PASSWORD}" -lt 10 ]; then
-  die "--demo exige DEMO_PASSWORD (10 caractères minimum) / --demo requires DEMO_PASSWORD (min. 10 characters)."
+  die "DEMO_PASSWORD doit avoir 10 caractères minimum / DEMO_PASSWORD must have at least 10 characters."
 fi
 
 # --- dependencies ----------------------------------------------------------------------
@@ -115,7 +140,21 @@ say "Administrateur initial / Seeding the first administrator"
 
 if [ "$DEMO" = 1 ]; then
   say "Données de démonstration « Ferme Kpalimé » / Loading the demo farm (about 5 s)"
-  (cd "$BACKEND" && SEED_ADMIN_EMAIL="$SEED_ADMIN_EMAIL" DEMO_PASSWORD="$DEMO_PASSWORD" npm run seed:demo)
+  DEMO_OUT="$(mktemp)"
+  if ! (cd "$BACKEND" && SEED_ADMIN_EMAIL="$SEED_ADMIN_EMAIL" DEMO_PASSWORD="$DEMO_PASSWORD" npm run seed:demo) 2>&1 | tee "$DEMO_OUT"; then
+    rm -f "$DEMO_OUT"; die "Le chargement de la démo a échoué / Loading the demo failed (voir ci-dessus / see above)."
+  fi
+  # `tee` hides the exit status of the seed: read its verdict from what it printed.
+  if grep -q "Démo chargée" "$DEMO_OUT"; then
+    if [ "$DEMO_PASSWORD_GENERATED" = 1 ]; then
+      printf '\n==> Mot de passe des comptes de démonstration (affiché UNE SEULE FOIS) / Demo accounts password (shown once):\n    %s\n' "$DEMO_PASSWORD"
+    fi
+  elif grep -q "déjà chargées" "$DEMO_OUT"; then
+    printf '\n==> La démo était déjà chargée : rien n'\''a changé, et le mot de passe reste celui du premier chargement / The demo was already loaded: nothing changed.\n'
+  else
+    rm -f "$DEMO_OUT"; die "La démo n'a pas été chargée / The demo was not loaded (voir ci-dessus / see above)."
+  fi
+  rm -f "$DEMO_OUT"
 fi
 
 # --- servers ---------------------------------------------------------------------------

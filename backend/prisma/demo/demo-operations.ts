@@ -1,8 +1,7 @@
 // Personnel (employees and a week of attendance, the payroll entry), tasks and equipment with their interventions: the
 // rows of m_taches and m_equipements plus what the alerts, the attendance sheet and the reports need.
-import { requireDay } from '../../src/common/days';
 import type { DemoContext } from './demo-client';
-import { lastWorkingDays, ref, todayDay } from './demo-dates';
+import { lastWorkingDays, payrollPeriod, ref } from './demo-dates';
 import type { ProductionIds } from './demo-production';
 
 export interface EmployeeIds {
@@ -86,17 +85,13 @@ export async function seedPersonnel(ctx: DemoContext): Promise<EmployeeIds> {
     });
   }
 
-  // The payroll of last month, posted as the accountant does from the preview.
-  const now = requireDay(todayDay());
-  const previous = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1),
-  );
-  const month = `${previous.getUTCFullYear()}-${String(previous.getUTCMonth() + 1).padStart(2, '0')}`;
+  // The payroll of last month, posted as the accountant does from the preview, dated the first of the current month.
+  const { month, entryDate } = payrollPeriod();
   const payroll = await api.get<{ label: string; total: number }>(
     `/employees/payroll?month=${month}`,
   );
   await post('/finance/entries', {
-    date: `${todayDay().slice(0, 8)}01`,
+    date: entryDate,
     kind: 'DEPENSE',
     label: payroll.label,
     activity: 'GENERAL',

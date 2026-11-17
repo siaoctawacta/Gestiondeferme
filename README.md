@@ -215,20 +215,39 @@ SEED_ADMIN_EMAIL=moi@exemple.com DEMO_PASSWORD='10 caractères minimum' npm run 
 ```
 
 - `SEED_ADMIN_EMAIL` doit être l'administrateur créé par `prisma db seed` ; `DEMO_PASSWORD` est le mot de passe commun des comptes.
-- Avec `scripts/dev.sh` : `DEMO_PASSWORD='…' ./scripts/dev.sh --demo`. Avec Docker :
-  `docker compose run --rm -e ALLOW_DEMO_SEED=1 -e DEMO_PASSWORD='…' api node dist-demo/prisma/demo/seed-demo.js`
-  (l'API Docker tourne en production, d'où `ALLOW_DEMO_SEED=1`).
+- Avec `scripts/dev.sh` : `./scripts/dev.sh --demo` (sans `DEMO_PASSWORD`, un mot de passe est généré et affiché **une seule fois** ; avec
+  `DEMO_PASSWORD='…'`, c'est le vôtre). Rien n'est rechargé si la démo est déjà là.
+- **Docker = production.** L'image tourne avec `NODE_ENV=production` : la démo y est refusée sauf `ALLOW_DEMO_SEED=1`, et son mot de passe
+  doit alors avoir **16 caractères au moins**. Commande exacte (depuis le dossier du `docker-compose.yml`, `SEED_ADMIN_EMAIL` étant celui
+  du `.env` utilisé pour `prisma db seed`) :
+
+  ```bash
+  docker compose run --rm -e ALLOW_DEMO_SEED=1 -e DEMO_PASSWORD='un mot de passe de 16 caractères ou plus' \
+    api node dist-demo/prisma/demo/seed-demo.js
+  ```
+
+  (`docker-compose.yml` transmet `SEED_ADMIN_EMAIL`, `DEMO_PASSWORD` et `ALLOW_DEMO_SEED` ; `-e` les remplace pour cette commande.)
 - **Comptes** : un par rôle, `<rôle>@kpalime.demo`, tous avec `DEMO_PASSWORD` : `super.admin`, `proprietaire`, `directeur.ferme`,
   `resp.avicole`, `resp.porcin`, `veterinaire`, `resp.stock`, `comptable`, `commercial`, `agent.elevage`, `magasinier`, `auditeur`.
   Les quatre rôles à double authentification obligatoire (Super admin, Propriétaire, Directeur, Comptable) l'activent à leur première
   connexion. « Kodjo A. » est lié au compte `agent.elevage`, « Dr Koffi » au compte `veterinaire` (voir leurs tâches).
-- **Une seule fois** : relancer la commande ne change rien (« Données de démonstration déjà chargées ») ; sur une ferme qui contient déjà des
-  données sans le marqueur de démo, elle refuse. En développement, `npm run demo:reset` remet la base à zéro puis recharge
-  (refusé en production).
-- **Production** : la commande est refusée quand `NODE_ENV=production`, sauf `ALLOW_DEMO_SEED=1`.
-- **Avertissement** : la démo crée **un second Super administrateur** (`super.admin@kpalime.demo`) et 11 autres comptes dont le mot de passe est
-  partagé. Ne la chargez **jamais** sur une installation réelle ; si elle l'a été, supprimez ces 12 comptes (Administration > Utilisateurs)
-  avant tout usage réel.
+- **Une seule fois** : relancer la commande ne change rien (« Données de démonstration déjà chargées »). Un chargement interrompu, ou une
+  ferme qui contient déjà des données (même des clients, fournisseurs, articles ou comptes `@kpalime.demo`), est **refusé** avec la marche à
+  suivre : en développement `npm run demo:reset`, en production restaurer une sauvegarde ou recréer la base. Deux chargements simultanés ne
+  se mélangent pas (verrou PostgreSQL).
+- **`npm run demo:reset` détruit TOUTE la base de données** (`prisma migrate reset`), puis recharge le seed et la démo. Il exige
+  `ALLOW_DEMO_RESET=1`, `NODE_ENV` différent de `production`, une base sur `localhost`, `127.0.0.1` ou l'hôte `db` de Docker, et
+  `SEED_ADMIN_EMAIL` / `SEED_ADMIN_PASSWORD` dans l'environnement :
+
+  ```bash
+  ALLOW_DEMO_RESET=1 SEED_ADMIN_EMAIL=moi@exemple.com SEED_ADMIN_PASSWORD='un mot de passe long' \
+    DEMO_PASSWORD='10 caractères minimum' npm run demo:reset
+  ```
+
+- **Production** : la commande est refusée quand `NODE_ENV=production`, sauf `ALLOW_DEMO_SEED=1` (mot de passe de 16 caractères au moins).
+- **AVERTISSEMENT** : la démo crée **12 comptes au mot de passe partagé, dont un Super administrateur** (`super.admin@kpalime.demo`) sans
+  double authentification activée. Un bloc d'avertissement le rappelle à la fin de chaque chargement. Ne la chargez **jamais** sur une
+  installation accessible ; si elle l'a été, supprimez ces 12 comptes (Administration > Utilisateurs) avant tout usage réel.
 - Les dates sont relatives au jour du chargement (les dates de la maquette sont avancées du nombre de jours écoulés depuis le
   2026-11-14), donc les alertes, les jours de stock et les créances se lisent comme sur la maquette. Écarts avec la maquette, listés en tête de
   `backend/prisma/demo/seed-demo.ts` : « Vaccination à venir » remplace « Vaccination en retard » ; les alertes sont plus nombreuses que les 14
@@ -264,7 +283,8 @@ SEED_ADMIN_EMAIL=moi@exemple.com DEMO_PASSWORD='10 caractères minimum' npm run 
 | `SEED_ADMIN_EMAIL` | pour le seed | E-mail de l'administrateur initial (utilisé par `prisma db seed` et `seed:demo`) |
 | `SEED_ADMIN_PASSWORD` | pour le seed | Mot de passe initial, 10 caractères minimum |
 | `DEMO_PASSWORD` | pour la démo | Mot de passe des 12 comptes de démonstration, 10 caractères minimum ; lu dans l'environnement, jamais écrit ni journalisé |
-| `ALLOW_DEMO_SEED` | non | `1` pour autoriser la démo quand `NODE_ENV=production` (installation d'évaluation) |
+| `ALLOW_DEMO_SEED` | non | `1` pour autoriser la démo quand `NODE_ENV=production` (installation d'évaluation) ; le mot de passe de démo doit alors avoir 16 caractères au moins |
+| `ALLOW_DEMO_RESET` | non | `1` pour autoriser `npm run demo:reset`, qui **détruit toute la base** (développement, base locale seulement) |
 
 ### `.env` à la racine (Docker ; modèle : `.env.example`)
 

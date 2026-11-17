@@ -21,8 +21,8 @@
     "postinstall": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "build:demo": "tsc -p tsconfig.demo.json",
-    "seed:demo": "npm run build:demo && node dist-demo/prisma/demo/seed-demo.js",
-    "demo:reset": "node -e \"if (process.env.NODE_ENV === 'production') { console.error('demo:reset est refusé en production'); process.exit(1); }\" && prisma migrate reset --force && prisma db seed && npm run seed:demo"
+    "seed:demo": "node -e \"require('fs').rmSync('dist-demo', { recursive: true, force: true })\" && npm run build:demo && node dist-demo/prisma/demo/seed-demo.js",
+    "demo:reset": "npm run build:demo && node dist-demo/prisma/demo/demo-reset-guard.js && prisma migrate reset --force && prisma db seed && npm run seed:demo"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",
@@ -82,7 +82,11 @@
       "json",
       "ts"
     ],
-    "rootDir": "src",
+    "rootDir": ".",
+    "roots": [
+      "<rootDir>/src",
+      "<rootDir>/prisma/demo"
+    ],
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
@@ -90,7 +94,7 @@
     "collectCoverageFrom": [
       "**/*.(t|j)s"
     ],
-    "coverageDirectory": "../coverage",
+    "coverageDirectory": "coverage",
     "testEnvironment": "node"
   }
 }

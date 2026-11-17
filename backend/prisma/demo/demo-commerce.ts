@@ -286,7 +286,7 @@ export async function seedFinance(
     42000,
   );
   await entry(
-    ago(4),
+    ago(0),
     'RECETTE',
     'Vente de fientes (engrais)',
     'AVICOLE',

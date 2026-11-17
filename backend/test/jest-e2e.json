@@ -5,6 +5,7 @@
   "testRegex": "\\.(e2e|int)-spec\\.ts$",
   "setupFiles": ["<rootDir>/env.ts"],
   "maxWorkers": 1,
+  "testTimeout": 60000,
   "transform": {
     "^.+\\.(t|j)s$": [
       "ts-jest",

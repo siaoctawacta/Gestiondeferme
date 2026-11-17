@@ -23,7 +23,7 @@ COPY --from=build --chown=node:node /app/dist-demo ./dist-demo
 # Needed by `prisma migrate deploy` and `prisma db seed` (the seed imports ../src/auth/password).
 COPY --from=build --chown=node:node /app/src ./src
 COPY --from=build --chown=node:node /app/prisma ./prisma
-COPY --from=build --chown=node:node /app/prisma.config.ts /app/package.json /app/tsconfig.json /app/tsconfig.demo.json ./
+COPY --from=build --chown=node:node /app/prisma.config.ts /app/package.json /app/tsconfig.json ./
 RUN mkdir -p /app/uploads && chown node:node /app/uploads
 USER node
 EXPOSE 3000

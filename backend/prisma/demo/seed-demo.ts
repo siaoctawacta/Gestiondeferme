@@ -9,9 +9,16 @@
 // moving the `FA` counter, the purchase numbers by moving `DA` and `BC`) and the marker `Setting demoSeed`, written last.
 //
 // Guards (exit code 1 unless said):
-//   - NODE_ENV=production without ALLOW_DEMO_SEED=1: refused.
+//   - NODE_ENV=production without ALLOW_DEMO_SEED=1: refused; with it, DEMO_PASSWORD needs 16 characters.
 //   - marker present: nothing to do (exit 0).
-//   - the farm already holds data without the marker (a failed or foreign load): refused, never half-repeated.
+//   - a `demoSeedStarted` marker without the final one (the previous run did not finish) or any row the demo writes
+//     (users @kpalime.demo, sites, customers, suppliers, stock articles...) without the marker: refused, with the
+//     recovery recipe; a failed run is never half-repeated.
+//   - a Postgres advisory lock is held for the whole run: two concurrent loads never interleave.
+//
+// WARNING: the demo creates 12 accounts sharing one password, among them a SUPER ADMINISTRATOR
+// (super.admin@kpalime.demo) with no second factor enrolled. Delete them before any real use, and never load the
+// demo on an installation that can be reached. A warning is printed at the end of every successful run.
 //
 // Dates: every date is relative to the day the demo is loaded (demo-dates.ts). The reference screens date from
 // 2026-11-14; its dates are moved forward by the days elapsed since, so the alerts, the stock days and the receivables
@@ -36,8 +43,8 @@ import type { AddressInfo } from 'node:net';
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../../src/app.module';
 import { signAccessToken } from '../../src/access/access-token';
-import { MIN_PASSWORD_LENGTH } from '../../src/auth/password';
 import { configureApp } from '../../src/configure-app';
+import { Client } from 'pg';
 import { PrismaService } from '../../src/prisma/prisma.service';
 import { DemoClient, DemoError, type DemoContext } from './demo-client';
 import { seedCommerce, seedCustomers, seedFinance } from './demo-commerce';
@@ -45,6 +52,7 @@ import { seedEquipment, seedPersonnel, seedTasks } from './demo-operations';
 import { seedHealth, seedLogistics } from './demo-logistics';
 import { seedPremises, seedProduction } from './demo-production';
 import { seedLegalIdentity, seedUsers } from './demo-users';
+import { demoPasswordProblem, MESSAGES, seedRefusal } from './demo-guards';
 
 config({ quiet: true });
 
@@ -52,13 +60,11 @@ const FARM_NAME = 'Ferme Kpalimé';
 const MARKER_KEY = 'demoSeed';
 const MARKER_VERSION = 1;
 
-export const MESSAGES = {
-  production:
-    'La démo ne se charge pas en production (ALLOW_DEMO_SEED=1 pour forcer)',
-  alreadyLoaded: 'Données de démonstration déjà chargées',
-  notEmpty:
-    'La ferme contient déjà des données : chargez la démo sur une base vierge (npm run demo:reset en développement)',
-};
+const STARTED_KEY = 'demoSeedStarted';
+/** One advisory lock for the whole run: two concurrent loads never interleave. */
+const LOCK_ID = 727_001;
+
+export { MESSAGES };
 
 class Refused extends Error {}
 
@@ -92,33 +98,59 @@ async function counts(
   return out;
 }
 
+/**
+ * Anything the demo writes, even the first steps (users, sites, customers, suppliers, stock articles...): a run that
+ * stopped early leaves some of it, and a second run would die on a conflict half way.
+ */
 async function farmHoldsData(
   prisma: PrismaService,
+  organizationId: string,
   farmId: string,
 ): Promise<boolean> {
-  const where = { farmId };
+  const farm = { farmId };
+  const org = { organizationId };
   const found = await Promise.all([
-    prisma.building.count({ where }),
-    prisma.animalBatch.count({ where }),
-    prisma.stockMovement.count({ where }),
-    prisma.purchase.count({ where }),
-    prisma.quote.count({ where }),
-    prisma.invoice.count({ where }),
-    prisma.financeEntry.count({ where }),
-    prisma.employee.count({ where }),
-    prisma.task.count({ where }),
-    prisma.equipment.count({ where }),
+    prisma.user.count({
+      where: { organizationId, email: { endsWith: '@kpalime.demo' } },
+    }),
+    prisma.site.count({ where: farm }),
+    prisma.zone.count({ where: farm }),
+    prisma.building.count({ where: farm }),
+    prisma.animalBatch.count({ where: farm }),
+    prisma.stockMovement.count({ where: farm }),
+    prisma.purchase.count({ where: farm }),
+    prisma.quote.count({ where: farm }),
+    prisma.invoice.count({ where: farm }),
+    prisma.financeEntry.count({ where: farm }),
+    prisma.employee.count({ where: farm }),
+    prisma.task.count({ where: farm }),
+    prisma.equipment.count({ where: farm }),
+    prisma.customer.count({ where: org }),
+    prisma.supplier.count({ where: org }),
+    prisma.stockItem.count({ where: org }),
+    prisma.breed.count({ where: org }),
+    prisma.feedProduct.count({ where: org }),
   ]);
   return found.some((n) => n > 0);
 }
 
+const WARNING = [
+  '',
+  '############################################################################',
+  '# ATTENTION : COMPTES DE DÉMONSTRATION                                      #',
+  '# 12 comptes <rôle>@kpalime.demo viennent d’être créés avec UN SEUL mot de  #',
+  '# passe, dont un SUPER ADMINISTRATEUR (super.admin@kpalime.demo) sans       #',
+  '# double authentification activée. Supprimez ces comptes avant tout usage   #',
+  '# réel, ou ne chargez jamais la démo sur une installation accessible.       #',
+  '############################################################################',
+  '',
+].join('\n');
+
 /** Loads the demo; returns the process exit code. */
 export async function runDemoSeed(): Promise<number> {
-  if (
-    process.env.NODE_ENV === 'production' &&
-    process.env.ALLOW_DEMO_SEED !== '1'
-  ) {
-    console.error(MESSAGES.production);
+  const refusal = seedRefusal(process.env);
+  if (refusal) {
+    console.error(refusal);
     return 1;
   }
   const adminEmail = process.env.SEED_ADMIN_EMAIL?.trim().toLowerCase();
@@ -132,8 +164,16 @@ export async function runDemoSeed(): Promise<number> {
   const app = await NestFactory.create(AppModule, {
     logger: ['error', 'warn'],
   });
+  let lock: Client | undefined;
   try {
-    configureApp(app);
+    try {
+      configureApp(app);
+    } catch (error) {
+      // A placeholder or missing variable: one line naming it, no stack trace.
+      throw new Refused(
+        `${error instanceof Error ? error.message : String(error)} (backend/.env ; scripts/dev.sh le remplit)`,
+      );
+    }
     await app.listen(0, '127.0.0.1');
     const baseUrl = `http://127.0.0.1:${((app.getHttpServer() as Server).address() as AddressInfo).port}`;
     const prisma = app.get(PrismaService);
@@ -157,26 +197,45 @@ export async function runDemoSeed(): Promise<number> {
         `La ferme « ${FARM_NAME} » n'existe pas : lancez d'abord \`npx prisma db seed\``,
       );
 
-    const marker = await prisma.setting.findUnique({
-      where: {
-        organizationId_key: {
-          organizationId: admin.organizationId,
-          key: MARKER_KEY,
+    lock = new Client({ connectionString: process.env.DATABASE_URL });
+    await lock.connect();
+    const locked = await lock.query<{ ok: boolean }>(
+      'SELECT pg_try_advisory_lock($1) AS ok',
+      [LOCK_ID],
+    );
+    if (!locked.rows[0].ok) throw new Refused(MESSAGES.concurrent);
+
+    const setting = (key: string) =>
+      prisma.setting.findUnique({
+        where: {
+          organizationId_key: { organizationId: admin.organizationId, key },
         },
-      },
-    });
-    if (marker) {
+      });
+    if (await setting(MARKER_KEY)) {
       console.log(MESSAGES.alreadyLoaded);
       return 0;
     }
-    if (await farmHoldsData(prisma, farm.id))
-      throw new Refused(MESSAGES.notEmpty);
-    const password = process.env.DEMO_PASSWORD ?? '';
-    if (password.length < MIN_PASSWORD_LENGTH) {
+    const interrupted = await setting(STARTED_KEY);
+    if (interrupted) {
+      const at = (interrupted.value as { at?: string }).at ?? '?';
       throw new Refused(
-        `DEMO_PASSWORD doit contenir au moins ${MIN_PASSWORD_LENGTH} caractères`,
+        `${MESSAGES.interrupted} (commencé le ${at}).\n${MESSAGES.recovery}`,
       );
     }
+    if (await farmHoldsData(prisma, admin.organizationId, farm.id)) {
+      throw new Refused(`${MESSAGES.notEmpty}\n${MESSAGES.recovery}`);
+    }
+    const passwordProblem = demoPasswordProblem(process.env);
+    if (passwordProblem) throw new Refused(passwordProblem);
+    const password = process.env.DEMO_PASSWORD ?? '';
+    // Written before the first row: a run that stops on the way is recognised next time.
+    await prisma.setting.create({
+      data: {
+        organizationId: admin.organizationId,
+        key: STARTED_KEY,
+        value: { version: MARKER_VERSION, at: new Date().toISOString() },
+      },
+    });
 
     const started = Date.now();
     const token = signAccessToken({
@@ -233,9 +292,19 @@ export async function runDemoSeed(): Promise<number> {
 
     // Written last: a run that stopped on the way leaves no marker and is refused next time.
     const value = { version: MARKER_VERSION, at: new Date().toISOString() };
-    await prisma.setting.create({
-      data: { organizationId: admin.organizationId, key: MARKER_KEY, value },
-    });
+    await prisma.$transaction([
+      prisma.setting.create({
+        data: { organizationId: admin.organizationId, key: MARKER_KEY, value },
+      }),
+      prisma.setting.delete({
+        where: {
+          organizationId_key: {
+            organizationId: admin.organizationId,
+            key: STARTED_KEY,
+          },
+        },
+      }),
+    ]);
     console.log(
       `Démo chargée en ${((Date.now() - started) / 1000).toFixed(1)} s`,
     );
@@ -243,6 +312,7 @@ export async function runDemoSeed(): Promise<number> {
     console.log(
       `Comptes de démonstration : <rôle>@kpalime.demo (ex. agent.elevage@kpalime.demo), mot de passe DEMO_PASSWORD`,
     );
+    console.log(WARNING);
     return 0;
   } catch (error) {
     if (error instanceof Refused) {
@@ -256,6 +326,7 @@ export async function runDemoSeed(): Promise<number> {
     }
     return 1;
   } finally {
+    await lock?.end().catch(() => undefined);
     await app.close();
   }
 }

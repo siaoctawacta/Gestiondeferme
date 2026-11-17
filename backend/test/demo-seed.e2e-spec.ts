@@ -1,4 +1,4 @@
-import { spawnSync } from 'child_process';
+import { spawn, spawnSync } from 'child_process';
 import { join } from 'path';
 import { INestApplication } from '@nestjs/common';
 import request from 'supertest';
@@ -68,6 +68,27 @@ function run(
   return { status: result.status, out: `${result.stdout}${result.stderr}` };
 }
 
+function runAsync(
+  args: string[],
+  env: Record<string, string | undefined> = {},
+): Promise<Run> {
+  return new Promise((resolve) => {
+    const child = spawn('node', args, {
+      cwd: BACKEND,
+      env: {
+        ...process.env,
+        SEED_ADMIN_EMAIL: ADMIN_EMAIL,
+        DEMO_PASSWORD,
+        ...env,
+      },
+    });
+    let out = '';
+    child.stdout.on('data', (d: Buffer) => (out += d.toString()));
+    child.stderr.on('data', (d: Buffer) => (out += d.toString()));
+    child.on('close', (status) => resolve({ status, out }));
+  });
+}
+
 const seedDemo = (env: Record<string, string | undefined> = {}) =>
   run('node', ['dist-demo/prisma/demo/seed-demo.js'], env);
 
@@ -133,6 +154,13 @@ describe('Demo seed (e2e)', () => {
 
   it('completes and writes its marker last', async () => {
     expect(first.out).toContain('Démo chargée');
+    // The warning about the demo accounts closes every successful run.
+    expect(first.out).toContain('COMPTES DE DÉMONSTRATION');
+    expect(first.out).toContain('SUPER ADMINISTRATEUR');
+    expect(first.out).toContain('ne chargez jamais la démo');
+    expect(
+      await prisma.setting.findFirst({ where: { key: 'demoSeedStarted' } }),
+    ).toBeNull();
     expect(first.status).toBe(0);
     const stored = await marker();
     expect(stored?.value).toEqual({
@@ -747,6 +775,146 @@ describe('Demo seed (e2e)', () => {
       const missing = seedDemo({ DEMO_PASSWORD: undefined });
       expect(missing.status).toBe(1);
       expect(await tableCounts()).toEqual(before);
+    });
+
+    describe('half-finished loads', () => {
+      const blank = async () => {
+        await resetDb();
+        expect(run('npx', ['tsx', 'prisma/seed.ts']).status).toBe(0);
+      };
+      const organizationId = async () =>
+        (await prisma.organization.findFirstOrThrow()).id;
+
+      it('says the previous run did not finish when its « started » marker is there', async () => {
+        await blank();
+        await prisma.setting.create({
+          data: {
+            organizationId: await organizationId(),
+            key: 'demoSeedStarted',
+            value: { version: 1, at: '2026-11-17T10:00:00.000Z' },
+          },
+        });
+        const before = await tableCounts();
+        const refused = seedDemo();
+        expect(refused.status).toBe(1);
+        expect(refused.out).toContain('ne s’est pas terminé');
+        expect(refused.out).toContain('2026-11-17T10:00:00.000Z');
+        expect(refused.out).toContain('npm run demo:reset');
+        expect(refused.out).toContain('restaurez une sauvegarde');
+        expect(await tableCounts()).toEqual(before);
+      });
+
+      it.each([
+        [
+          'a demo user',
+          async (org: string, farm: string) => {
+            await prisma.user.create({
+              data: {
+                organizationId: org,
+                email: 'agent.elevage@kpalime.demo',
+                name: 'Reste d’un essai',
+                role: 'AGENT_ELEVAGE',
+                passwordHash: 'x',
+              },
+            });
+            void farm;
+          },
+        ],
+        [
+          'a site',
+          async (_org: string, farm: string) => {
+            await prisma.site.create({
+              data: { farmId: farm, name: 'Site Nord' },
+            });
+          },
+        ],
+        [
+          'a customer',
+          async (org: string) => {
+            await prisma.customer.create({
+              data: {
+                organizationId: org,
+                name: 'Restaurant Le Palmier',
+                type: 'RESTAURANT',
+              },
+            });
+          },
+        ],
+        [
+          'a stock article',
+          async (org: string) => {
+            await prisma.stockItem.create({
+              data: {
+                organizationId: org,
+                name: 'Aliment ponte',
+                category: 'ALIMENT',
+                unit: 'kg',
+              },
+            });
+          },
+        ],
+      ])(
+        'refuses clearly, with the recovery recipe, after an early crash that left %s',
+        async (_label, leave) => {
+          await blank();
+          const farm = await prisma.farm.findFirstOrThrow({
+            where: { name: 'Ferme Kpalimé' },
+          });
+          await leave(await organizationId(), farm.id);
+          const before = await tableCounts();
+          const refused = seedDemo();
+          expect(refused.status).toBe(1);
+          expect(refused.out).toContain('La ferme contient déjà des données');
+          expect(refused.out).toContain('npm run demo:reset');
+          expect(refused.out).toContain('restaurez une sauvegarde');
+          expect(refused.out).not.toMatch(/409|Conflict/);
+          expect(await tableCounts()).toEqual(before);
+        },
+      );
+    });
+
+    it('asks 16 characters when the demo is forced in production', async () => {
+      await resetDb();
+      expect(run('npx', ['tsx', 'prisma/seed.ts']).status).toBe(0);
+      const before = await tableCounts();
+      const forced = { NODE_ENV: 'production', ALLOW_DEMO_SEED: '1' };
+      const short = seedDemo({ ...forced, DEMO_PASSWORD: 'a'.repeat(15) });
+      expect(short.status).toBe(1);
+      expect(short.out).toContain('au moins 16 caractères');
+      expect(await tableCounts()).toEqual(before);
+    });
+
+    it('names a placeholder secret on one line, without a stack trace', () => {
+      const refused = seedDemo({
+        JWT_SECRET: 'change-me-please-change-me-please-12',
+      });
+      expect(refused.status).toBe(1);
+      expect(refused.out).toContain('JWT_SECRET');
+      expect(refused.out).not.toMatch(/\n\s+at /);
+      const key = seedDemo({ TOTP_ENC_KEY: 'change-me' });
+      expect(key.status).toBe(1);
+      expect(key.out).toContain('TOTP_ENC_KEY');
+      expect(key.out).not.toMatch(/\n\s+at /);
+    });
+
+    it('lets one of two concurrent loads through and refuses or skips the other', async () => {
+      await resetDb();
+      expect(run('npx', ['tsx', 'prisma/seed.ts']).status).toBe(0);
+      const args = ['dist-demo/prisma/demo/seed-demo.js'];
+      const [a, b] = await Promise.all([runAsync(args), runAsync(args)]);
+      const loaded = [a, b].filter((r) => r.out.includes('Démo chargée'));
+      expect(loaded).toHaveLength(1);
+      const other = loaded[0] === a ? b : a;
+      expect(other.status === 0 || other.status === 1).toBe(true);
+      expect(other.out).toMatch(
+        /Un autre chargement de la démo est en cours|déjà chargées/,
+      );
+      expect(await prisma.invoice.count()).toBe(7);
+      expect(
+        await prisma.user.count({
+          where: { email: { endsWith: '@kpalime.demo' } },
+        }),
+      ).toBe(12);
     });
   });
 });
