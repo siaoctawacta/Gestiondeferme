@@ -8,6 +8,7 @@ import { lockRow } from '../common/lock-row';
 import { Prisma } from '../generated/prisma/client';
 import type { FeedDistribution, FeedProduct } from '../generated/prisma/client';
 import { currentCost, type CostRow } from './feed-cost';
+import { FeedTargets } from './feed-targets';
 import { formulaShares } from './formula-shares';
 import {
   FEED_COST,
@@ -35,6 +36,7 @@ export class FeedService
     private readonly costs: LotCostRegistry,
     private readonly history: BatchHistoryRegistry,
     private readonly ledger: StockLedgerService,
+    private readonly targets: FeedTargets,
   ) {}
 
   onModuleInit(): void {
@@ -45,14 +47,20 @@ export class FeedService
   /**
    * The feed given (kg) and the water drunk (L) on the farms between two days
    * (both inclusive): the one definition the dashboard (each farm's last
-   * recorded day) and the reports read. Two queries.
+   * recorded day) and the reports read. Two queries. Over the rows the
+   * caller's feed and water lists show (`FeedTargets.visibleRows`: a role
+   * that cannot read a species' lots never counts their feed).
    */
   async periodFigures(
-    farmIds: string[],
+    ctx: RequestContext,
     from: Date,
     to: Date,
   ): Promise<{ feedKg: number; waterL: number }> {
-    const where = { farmId: { in: farmIds }, date: { gte: from, lte: to } };
+    const where = {
+      farmId: { in: ctx.farmIds },
+      date: { gte: from, lte: to },
+      AND: [this.targets.visibleRows(ctx)],
+    };
     const [feed, water] = await Promise.all([
       this.prisma.feedDistribution.aggregate({
         where,

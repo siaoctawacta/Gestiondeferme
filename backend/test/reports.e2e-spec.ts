@@ -5,6 +5,7 @@ import type { DashboardDto } from '../src/dashboard/dashboard.types';
 import type { ReportDto, ReportSection } from '../src/reports/report.types';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { HerdLedgerService } from '../src/herd/herd-ledger.service';
+import type { RequestContext } from '../src/access/decorators';
 import { HealthReport } from '../src/health/health-report';
 import { Headers, Id, Msg, World } from './fixtures';
 import { countQueries } from './query-counter';
@@ -851,7 +852,7 @@ describe('Reports (e2e)', () => {
         ['treatments', 'Traitements réalisés', 2],
         ['disinfections', 'Désinfections réalisées', 1],
         ['overdue', 'Actes en retard (au 31/10/2026)', 3],
-        ['quarantines', 'Quarantaines en cours', 1],
+        ['quarantines', 'Quarantaines en cours (au 31/10/2026)', 1],
         ['incidents', 'Incidents', 2],
         ['biosecurity', 'Contrôles de biosécurité', 3],
       ]);
@@ -922,7 +923,12 @@ describe('Reports (e2e)', () => {
         ['expenses', 'Dépenses', 2835000, 'FCFA'],
         ['margin', 'Marge', 1135000, 'FCFA'],
         ['marginPct', 'Taux de marge', summary.marginPct, '%'],
-        ['receivables', 'Créances clients', summary.receivables, 'FCFA'],
+        [
+          'receivables',
+          "Créances clients (aujourd'hui)",
+          summary.receivables,
+          'FCFA',
+        ],
         ['received', 'Encaissements', journal.totals.received, 'FCFA'],
         ['refunded', 'Remboursements', journal.totals.refunded, 'FCFA'],
       ]);
@@ -1220,6 +1226,186 @@ describe('Reports (e2e)', () => {
           .table!.rows.map((x) => x.code)
           .sort(),
       ).toEqual(['LOT-ENG-07', 'PE-0001', 'PO-2026-01']);
+    });
+  });
+
+  describe('species scope of the health and feed figures', () => {
+    const health = async (h: Headers) => {
+      const r = await report(
+        'sanitaire',
+        { from: '2026-10-01', to: '2026-10-31' },
+        h,
+      );
+      return {
+        vaccinations: figure(r, 'sante', 'vaccinations') as number,
+        treatments: figure(r, 'sante', 'treatments') as number,
+        overdue: figure(r, 'sante', 'overdue') as number,
+        quarantines: figure(r, 'sante', 'quarantines') as number,
+        incidents: figure(r, 'sante', 'incidents') as number,
+        targets: section(r, 'delais')!.table!.rows.map((x) => x.target),
+      };
+    };
+    const feed = async (h: Headers) => {
+      const r = await report('quotidien', { date: '2026-10-22' }, h);
+      return [
+        figure(r, 'alimentation', 'feed'),
+        figure(r, 'alimentation', 'water'),
+      ];
+    };
+
+    it('shows a role in the reports what its screens show: no other species, no pig act without porcs', async () => {
+      const [hAvicole, hPorcin, hVet, hStock] = await Promise.all([
+        as('RESP_AVICOLE'),
+        as('RESP_PORCIN'),
+        as('VETERINAIRE'),
+        as('RESP_STOCK'),
+      ]);
+      const before = {
+        avicole: await health(hAvicole),
+        porcin: await health(hPorcin),
+        vet: await health(hVet),
+        feedAvicole: await feed(hAvicole),
+        feedPorcin: await feed(hPorcin),
+        feedStock: await feed(hStock),
+        feedVet: await feed(hVet),
+      };
+      const pigLot = await prisma.animalBatch.findFirstOrThrow({
+        where: { code: 'LOT-ENG-07' },
+      });
+      const sow = await prisma.animal.findFirstOrThrow({
+        where: { tag: 'TR-001' },
+      });
+      const cleanup = () =>
+        Promise.all([
+          prisma.healthAct.deleteMany({
+            where: { OR: [{ batchId: pigLot.id }, { animalId: sow.id }] },
+          }),
+          prisma.quarantine.deleteMany({ where: { batchId: pigLot.id } }),
+          prisma.healthIncident.deleteMany({ where: { batchId: pigLot.id } }),
+          prisma.feedDistribution.deleteMany({
+            where: {
+              OR: [{ batchId: pigLot.id }, { buildingId: world.pigBld }],
+            },
+          }),
+          prisma.waterConsumption.deleteMany({
+            where: {
+              OR: [{ batchId: pigLot.id }, { buildingId: world.pigBld }],
+            },
+          }),
+        ]);
+      try {
+        const act = (
+          type: 'VACCINATION' | 'TRAITEMENT',
+          date: string,
+          target: { batchId?: string; animalId?: string },
+          over: Record<string, unknown> = {},
+        ) =>
+          prisma.healthAct.create({
+            data: {
+              farmId: world.farmId,
+              type,
+              date: D(date),
+              createdById: userId,
+              ...target,
+              ...over,
+            },
+          });
+        const done = (day: string) => ({
+          status: 'REALISE' as const,
+          doneDate: D(day),
+        });
+        await act(
+          'VACCINATION',
+          '2026-10-20',
+          { batchId: pigLot.id },
+          done('2026-10-20'),
+        );
+        await act(
+          'TRAITEMENT',
+          '2026-10-25',
+          { batchId: pigLot.id },
+          { ...done('2026-10-25'), durationDays: 3, withdrawalDays: 7 },
+        );
+        await act(
+          'TRAITEMENT',
+          '2026-10-22',
+          { animalId: sow.id },
+          done('2026-10-22'),
+        );
+        await act('VACCINATION', '2026-10-21', { batchId: pigLot.id });
+        await prisma.quarantine.create({
+          data: {
+            farmId: world.farmId,
+            batchId: pigLot.id,
+            startDate: D('2026-10-12'),
+            reason: 'Toux',
+          },
+        });
+        await prisma.healthIncident.create({
+          data: {
+            farmId: world.farmId,
+            batchId: pigLot.id,
+            date: D('2026-10-15'),
+            title: 'Porcs',
+            severity: 'FAIBLE',
+          },
+        });
+        const product = await prisma.feedProduct.findFirstOrThrow();
+        await prisma.feedDistribution.createMany({
+          data: [
+            [pigLot.id, null, 100],
+            [null, world.pigBld, 50],
+          ].map(([batchId, buildingId, kg]) => ({
+            farmId: world.farmId,
+            batchId: batchId as string | null,
+            buildingId: buildingId as string | null,
+            feedProductId: product.id,
+            date: D('2026-10-22'),
+            quantityKg: kg as number,
+            unitCost: 300,
+            cost: (kg as number) * 300,
+          })),
+        });
+        await prisma.waterConsumption.createMany({
+          data: [
+            { batchId: pigLot.id, buildingId: null, liters: 400 },
+            { batchId: null, buildingId: world.pigBld, liters: 30 },
+          ].map((w) => ({ farmId: world.farmId, date: D('2026-10-22'), ...w })),
+        });
+
+        // The poultry manager: not a pig lot code, not a pig act, not a pig feed or water litre.
+        expect(await health(hAvicole)).toEqual(before.avicole);
+        expect(await feed(hAvicole)).toEqual([
+          (before.feedAvicole[0] as number) + 50,
+          (before.feedAvicole[1] as number) + 30,
+        ]);
+        // The pig manager: the pig lot and its animal, and only that.
+        const pig = await health(hPorcin);
+        expect(pig).toMatchObject({
+          vaccinations: before.porcin.vaccinations + 1,
+          treatments: before.porcin.treatments + 2,
+          quarantines: before.porcin.quarantines + 1,
+          incidents: before.porcin.incidents + 1,
+        });
+        expect(pig.overdue).toBe(before.porcin.overdue + 1);
+        expect(pig.targets).toContain('LOT-ENG-07');
+        expect(pig.targets).not.toContain('LC-0001');
+        expect(before.avicole.targets).toContain('LC-0001');
+        expect(before.avicole.targets).not.toContain('LOT-ENG-07');
+        // The stock manager reads the feed list but no lot: only the rows aimed at a building.
+        expect(await feed(hStock)).toEqual([50, 30]);
+        expect(before.feedStock).toEqual([0, 0]);
+        expect(await feed(hPorcin)).toEqual([150, 430]);
+        // The veterinarian reads both species.
+        const v = await health(hVet);
+        expect(v.vaccinations).toBe(before.vet.vaccinations + 1);
+        expect(v.targets).toEqual(
+          expect.arrayContaining(['LC-0001', 'LOT-ENG-07']),
+        );
+        expect((await feed(hVet))[0]).toBe((before.feedVet[0] as number) + 150);
+      } finally {
+        await cleanup();
+      }
     });
   });
 
@@ -1806,8 +1992,14 @@ describe('Reports (e2e)', () => {
     it('answers an empty report, not a 500, when no farm is in view', async () => {
       const health = app.get(HealthReport);
       const day = D('2026-10-31');
-      expect(await health.withdrawalsAt([], day)).toEqual([]);
-      expect(await health.periodFigures([], day, day)).toMatchObject({
+      const none = {
+        user: { id: userId, role: 'DIRECTEUR_FERME' },
+        farmId: null,
+        allFarms: false,
+        farmIds: [],
+      } as unknown as RequestContext;
+      expect(await health.withdrawalsAt(none, day)).toEqual([]);
+      expect(await health.periodFigures(none, day, day)).toMatchObject({
         overdueAtEnd: 0,
         openQuarantines: 0,
       });

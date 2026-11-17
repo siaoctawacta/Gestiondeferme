@@ -166,7 +166,8 @@ export async function receivablesOf(
 
 /**
  * What an invoice is worth now. Only an issued invoice is owed: a draft and a
- * cancelled invoice stand at 0.
+ * cancelled invoice stand at 0. The SQL form of this rule is `receivablesTotal`
+ * (below): change both together.
  */
 export function standingOf(
   invoice: { status: InvoiceStatusValue; total: Decimal },
@@ -186,6 +187,10 @@ export function standingOf(
  * number of invoices, with the credited, paid and refunded sums computed in the
  * database (correlated sums): the dashboard and the finance summary read this,
  * the per-invoice `receivablesOf` stays for the lists. It takes no lock.
+ *
+ * The SQL below and `balanceOf` (sale-money.ts) / `standingOf` (above) state ONE
+ * rule twice: `due = GREATEST(0, net - paid + refunded)` with `net = total -
+ * credited`, only issued invoices owed. Change them together.
  */
 export async function receivablesTotal(
   client: Client,

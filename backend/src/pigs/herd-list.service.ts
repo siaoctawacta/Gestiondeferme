@@ -7,6 +7,7 @@ import type {
 } from '../generated/prisma/enums';
 import { addDays, formatDay } from '../common/days';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
+import { openAtWhere } from '../herd/lot-open';
 import type { ExportColumn } from '../listing/export';
 import { PrismaService } from '../prisma/prisma.service';
 import {
@@ -125,10 +126,7 @@ export class HerdListService {
           ...(at
             ? {
                 entryDate: { lte: at },
-                OR: [
-                  { status: 'EN_COURS' },
-                  { closedAt: { gte: addDays(at, 1) } },
-                ],
+                ...openAtWhere(at),
               }
             : { status: 'EN_COURS' }),
         },

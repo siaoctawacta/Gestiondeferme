@@ -22,6 +22,7 @@ import { orderBy } from '../listing/list-query.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { mortalityRate } from '../indicators/indicators';
 import { nextBatchCode } from './batch-code';
+import { openAtWhere } from './lot-open';
 import { BatchHistoryRegistry } from './batch-history';
 import {
   addDays,
@@ -80,10 +81,6 @@ export interface BatchItem {
   motherAnimalId: string | null;
   notes: string | null;
 }
-
-/** Still open at the end of `day` (a lot closed that day is not). */
-export const lotOpenAt = (lot: { closedAt: Date | null }, day: Date): boolean =>
-  lot.closedAt === null || lot.closedAt.getTime() >= addDays(day, 1).getTime();
 
 export const TYPE_LABEL: Record<BatchType, string> = {
   CHAIR: 'Chair',
@@ -254,14 +251,15 @@ export class BatchesService {
   /**
    * The lots of the farms open at some point of the period (entered by its
    * end, still open or closed on or after its start), by code: one query. The
-   * reports list them; `lotOpenAt` says which are still open on a day.
+   * reports list them; `lotOpenAt` (lot-open.ts) says which are still open on a day.
+   * "Closed on or after `from`" is `openAtWhere` of the day before `from`.
    */
   periodLots(farmIds: string[], from: Date, to: Date) {
     return this.prisma.animalBatch.findMany({
       where: {
         farmId: { in: farmIds },
         entryDate: { lte: to },
-        OR: [{ status: 'EN_COURS' }, { closedAt: { gte: from } }],
+        ...openAtWhere(addDays(from, -1)),
       },
       select: {
         id: true,

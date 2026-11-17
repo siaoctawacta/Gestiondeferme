@@ -1,7 +1,9 @@
 import { Injectable } from '@nestjs/common';
+import type { RequestContext } from '../access/decorators';
 import { addDays, formatDay, today } from '../common/days';
 import { Prisma } from '../generated/prisma/client';
 import type { HealthActType } from '../generated/prisma/enums';
+import { openAtWhere } from '../herd/lot-open';
 import { PrismaService } from '../prisma/prisma.service';
 import {
   actInclude,
@@ -9,6 +11,7 @@ import {
   targetLabel,
   withdrawalEnd,
 } from './health-act-view';
+import { HealthTargets } from './health-targets';
 
 export type HealthPeriodFigures = {
   /** Acts done in the period, by type (by their done date). */
@@ -22,23 +25,13 @@ export type HealthPeriodFigures = {
 };
 
 /**
- * The health figures other modules read (the reports): each is a fixed number
- * of queries over the farms given, whatever the number of acts.
- */
-/**
  * The rule of `toActItem` judged at the end of `day`: an act on a lot closed,
  * or an animal gone, by then can no longer be done, so it is not late (a lot
  * closed after `day` still counts).
  */
 const openAt = (day: Date) => ({
   AND: [
-    {
-      OR: [
-        { batchId: null },
-        { batch: { closedAt: null } },
-        { batch: { closedAt: { gte: addDays(day, 1) } } },
-      ],
-    },
+    { OR: [{ batchId: null }, { batch: openAtWhere(day) }] },
     {
       OR: [
         { animalId: null },
@@ -49,9 +42,16 @@ const openAt = (day: Date) => ({
   ],
 });
 
+/**
+ * The health figures other modules read (the reports): each is a fixed number
+ * of queries over the farms given, whatever the number of acts.
+ */
 @Injectable()
 export class HealthReport {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly targets: HealthTargets,
+  ) {}
 
   /**
    * What the health records say between two days (both inclusive). An act is
@@ -62,14 +62,17 @@ export class HealthReport {
    * health list's `EN_RETARD` (`overdueActWhere`: open lot or animal only); for
    * a past period the target's CURRENT status is not looked at (a lot closed
    * after `to` still counted). Cancelled acts carry no cancellation date, so
-   * they are never counted. A quarantine is under way at the end of `to` when
+   * they are never counted. Every figure is over what the caller's health
+   * screens list (`HealthTargets.visibleBatch` / `visibleAnimal`: the other
+   * species' lots and the pigs are left out for a role that cannot read them). A quarantine is under way at the end of `to` when
    * it started by then and is still open or was lifted after it.
    */
   async periodFigures(
-    farmIds: string[],
+    ctx: RequestContext,
     from: Date,
     to: Date,
   ): Promise<HealthPeriodFigures> {
+    const farmIds = ctx.farmIds;
     if (farmIds.length === 0) {
       return {
         done: { VACCINATION: 0, TRAITEMENT: 0, DESINFECTION: 0, DIAGNOSTIC: 0 },
@@ -81,17 +84,28 @@ export class HealthReport {
     }
     const farmId = { in: farmIds };
     const between = { gte: from, lte: to };
+    const visibleActs = [
+      this.targets.visibleBatch(ctx),
+      this.targets.visibleAnimal(ctx),
+    ];
+    const visibleBatch = [this.targets.visibleBatch(ctx)];
     const [done, overdueAtEnd, openQuarantines, incidents, biosecurityLogs] =
       await Promise.all([
         this.prisma.healthAct.groupBy({
           by: ['type'],
-          where: { farmId, status: 'REALISE', doneDate: between },
+          where: {
+            farmId,
+            status: 'REALISE',
+            doneDate: between,
+            AND: visibleActs,
+          },
           _count: { _all: true },
         }),
         this.prisma.healthAct.count({
           where: {
             farmId,
             date: { lte: to },
+            AND: visibleActs,
             OR: [
               to.getTime() >= today().getTime()
                 ? overdueActWhere(addDays(to, 1))
@@ -109,10 +123,13 @@ export class HealthReport {
           where: {
             farmId,
             startDate: { lte: to },
+            AND: visibleActs,
             OR: [{ status: 'EN_COURS' }, { endDate: { gt: to } }],
           },
         }),
-        this.prisma.healthIncident.count({ where: { farmId, date: between } }),
+        this.prisma.healthIncident.count({
+          where: { farmId, date: between, AND: visibleBatch },
+        }),
         this.prisma.biosecurityLog.count({ where: { farmId, date: between } }),
       ]);
     const byType: Record<HealthActType, number> = {
@@ -134,12 +151,14 @@ export class HealthReport {
   /**
    * The lots, animals and buildings under a withdrawal period on `day` (done
    * by then, last day of the period on or after it), with the last day: the
-   * same period as the health list's `withdrawalUntil`. By end date, then name.
+   * same period as the health list's `withdrawalUntil`, over the acts the
+   * caller's health list shows. By end date, then name.
    */
   async withdrawalsAt(
-    farmIds: string[],
+    ctx: RequestContext,
     day: Date,
   ): Promise<{ target: string; until: Date }[]> {
+    const farmIds = ctx.farmIds;
     if (farmIds.length === 0) return [];
     // The window (done day to done day + treatment + withdrawal days, as
     // `withdrawalPeriod`) is tested in SQL, so only the acts under withdrawal that
@@ -152,7 +171,11 @@ export class HealthReport {
         AND "doneDate" + (COALESCE("durationDays", 0) + "withdrawalDays") * INTERVAL '1 day' >= ${formatDay(day)}::date`);
     if (hits.length === 0) return [];
     const acts = await this.prisma.healthAct.findMany({
-      where: { id: { in: hits.map((h) => h.id) } },
+      where: {
+        id: { in: hits.map((h) => h.id) },
+        // The acts the caller's health list shows: never another species' lot or a pig.
+        AND: [this.targets.visibleBatch(ctx), this.targets.visibleAnimal(ctx)],
+      },
       include: actInclude,
     });
     return acts

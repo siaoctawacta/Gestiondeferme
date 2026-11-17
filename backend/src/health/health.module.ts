@@ -45,6 +45,6 @@ import { VaccinationPlansService } from './vaccination-plans.service';
     IncidentsService,
     BiosecurityService,
   ],
-  exports: [HealthReport],
+  exports: [HealthReport, HealthTargets],
 })
 export class HealthModule {}

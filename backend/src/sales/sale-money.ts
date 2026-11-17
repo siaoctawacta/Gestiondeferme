@@ -11,6 +11,9 @@ export const documentTotal = (
 /**
  * What an invoice is worth now: `net` (after credit notes), `due` (still to
  * collect) and `refundDue` (collected beyond the net and not yet given back).
+ *
+ * The same definition is written in SQL in `receivablesTotal`
+ * (receivables.ts: `GREATEST(0, net - paid + refunded)`): change both together.
  */
 export function balanceOf(b: {
   total: Decimal;

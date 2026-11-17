@@ -8,6 +8,7 @@ import {
   LIVE_ANIMAL,
   toActItem,
 } from '../../health/health-act-view';
+import { HealthTargets } from '../../health/health-targets';
 import { OPEN_STATUSES } from '../../tasks/task-workflow';
 import { PrismaService } from '../../prisma/prisma.service';
 import {
@@ -31,6 +32,7 @@ export class BuildingOverviewService {
     private readonly prisma: PrismaService,
     private readonly buildings: BuildingsService,
     private readonly ledger: HerdLedgerService,
+    private readonly healthTargets: HealthTargets,
   ) {}
 
   async get(ctx: RequestContext, id: string): Promise<BuildingOverviewDto> {
@@ -146,6 +148,11 @@ export class BuildingOverviewService {
     const rows = await this.prisma.healthAct.findMany({
       where: {
         farmId: { in: ctx.farmIds },
+        // The same visibility as the health list: no other species' lot, no pig without `porcs`.
+        AND: [
+          this.healthTargets.visibleBatch(ctx),
+          this.healthTargets.visibleAnimal(ctx),
+        ],
         OR: [
           { buildingId: id },
           ...(access.species.length

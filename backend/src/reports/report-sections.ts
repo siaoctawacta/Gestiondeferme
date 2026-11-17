@@ -12,11 +12,8 @@ import type { FeedService } from '../feed/feed.service';
 import type { Species } from '../generated/prisma/enums';
 import type { BreedingService } from '../breeding/breeding.service';
 import type { HealthReport } from '../health/health-report';
-import {
-  lotOpenAt,
-  TYPE_LABEL,
-  type BatchesService,
-} from '../herd/batches.service';
+import { TYPE_LABEL, type BatchesService } from '../herd/batches.service';
+import { lotOpenAt } from '../herd/lot-open';
 import type { HerdLedgerService } from '../herd/herd-ledger.service';
 import { layingRate } from '../indicators/indicators';
 import type { IndicatorsService } from '../indicators/indicators.service';
@@ -238,7 +235,7 @@ const alimentation: SectionDef = {
   allowed: reads('alimentation'),
   async build(env) {
     const f = await env.readers.feed.periodFigures(
-      env.ctx.farmIds,
+      env.ctx,
       env.period.from,
       env.period.to,
     );
@@ -258,7 +255,7 @@ const sante: SectionDef = {
   allowed: reads('sante'),
   async build(env) {
     const { from, to } = env.period;
-    const h = await env.readers.health.periodFigures(env.ctx.farmIds, from, to);
+    const h = await env.readers.health.periodFigures(env.ctx, from, to);
     return {
       key: 'sante',
       title: 'Santé',
@@ -267,7 +264,11 @@ const sante: SectionDef = {
         row('treatments', 'Traitements réalisés', h.done.TRAITEMENT),
         row('disinfections', 'Désinfections réalisées', h.done.DESINFECTION),
         row('overdue', `Actes en retard (au ${frenchDay(to)})`, h.overdueAtEnd),
-        row('quarantines', 'Quarantaines en cours', h.openQuarantines),
+        row(
+          'quarantines',
+          `Quarantaines en cours (au ${frenchDay(to)})`,
+          h.openQuarantines,
+        ),
         row('incidents', 'Incidents', h.incidents),
         row('biosecurity', 'Contrôles de biosécurité', h.biosecurityLogs),
       ],
@@ -356,7 +357,12 @@ const finance: SectionDef = {
         row('expenses', 'Dépenses', summary.expenses, 'FCFA'),
         row('margin', 'Marge', summary.margin, 'FCFA'),
         row('marginPct', 'Taux de marge', summary.marginPct, '%'),
-        row('receivables', 'Créances clients', summary.receivables, 'FCFA'),
+        row(
+          'receivables',
+          "Créances clients (aujourd'hui)",
+          summary.receivables,
+          'FCFA',
+        ),
         row('received', 'Encaissements', journal.received, 'FCFA'),
         row('refunded', 'Remboursements', journal.refunded, 'FCFA'),
       ],
@@ -446,7 +452,7 @@ const delais: SectionDef = {
   allowed: reads('sante'),
   async build(env) {
     const withdrawals = await env.readers.health.withdrawalsAt(
-      env.ctx.farmIds,
+      env.ctx,
       env.period.to,
     );
     return {
