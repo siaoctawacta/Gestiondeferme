@@ -166,6 +166,7 @@ describe('Settings page', () => {
   const SETTINGS = {
     currency: 'FCFA', mortalityDailyPct: 0.5, mortalityCumulPct: 3, consumptionDeviationPct: 25,
     expiryWarningDays: 30, farrowingWarningDays: 7, vaccinationWarningDays: 3, gestationDays: 114,
+    alertAckDays: 7, maintenanceWarningDays: 0,
     legal: { name: 'AgriPilot SARL', address: 'Lomé', nif: '123', rccm: 'TG-LOM' },
   };
 
@@ -214,6 +215,38 @@ describe('Settings page', () => {
     const puts = calls.filter((c) => c.method === 'PUT').map((c) => [c.url, c.body]);
     expect(puts).toContainEqual(['/api/settings/vaccinationWarningDays', { value: 5 }]);
     expect(puts.some(([url]) => /biosecurity/i.test(String(url)))).toBe(false);
+  });
+
+  it('offers the alert masking and maintenance notice settings in the alert card and checks their whole numbers', async () => {
+    mount(<Settings />, (c) => {
+      if (c.method === 'GET' && c.url === '/api/settings') return json(200, SETTINGS);
+      if (c.method === 'PUT') return json(200, {});
+      return undefined;
+    });
+    const card = (await screen.findByRole('heading', { name: "Seuils d'alerte" })).closest('form')!;
+    const ack = within(card).getByLabelText('Masquage des alertes (jours)');
+    const notice = within(card).getByLabelText('Préavis de maintenance (jours)');
+    expect(ack).toHaveValue(7);
+    expect(notice).toHaveValue(0);
+    const user = userEvent.setup();
+    await user.clear(ack);
+    await user.type(ack, '0');
+    await user.click(within(card).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(card).findByText('Le champ « Masquage des alertes (jours) » doit être un entier positif')).toBeInTheDocument();
+    await user.clear(ack);
+    await user.type(ack, '14');
+    await user.clear(notice);
+    await user.type(notice, '-1');
+    await user.click(within(card).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(card).findByText('Le champ « Préavis de maintenance (jours) » doit être un entier positif ou nul')).toBeInTheDocument();
+    expect(calls.some((c) => c.method === 'PUT')).toBe(false);
+    await user.clear(notice);
+    await user.type(notice, '3');
+    await user.click(within(card).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'PUT')).toBe(true));
+    const puts = calls.filter((c) => c.method === 'PUT').map((c) => [c.url, c.body]);
+    expect(puts).toContainEqual(['/api/settings/alertAckDays', { value: 14 }]);
+    expect(puts).toContainEqual(['/api/settings/maintenanceWarningDays', { value: 3 }]);
   });
 
   it('does not send a cleared number field as 0', async () => {

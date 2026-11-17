@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { api } from '../../lib/api';
 import { formatMoney, signedMoney } from '../../lib/format';
 import { useFarmQuery } from '../../lib/query';
@@ -10,6 +11,7 @@ import { Card } from '../../components/ui/Card';
 import { Table, TD, TH, THead, TR } from '../../components/ui/Table';
 import { ActivityCards, SUMS_HINT, entryKindLabel, type FinanceSummaryDto } from '../../modules/financeShared';
 import { Skeleton } from '../PageParts';
+import { monthToDate } from './period';
 
 /** The same hint as the plan words it: consumption is counted in the lots' cost, not as an expense. */
 const CONSUMPTION_HINT = "La consommation d'aliments et de produits vétérinaires n'est pas une dépense : elle est comptée dans le coût des lots.";
@@ -22,10 +24,19 @@ export function FinanceSummary() {
   const { values, set, error } = useSharedFilters();
   const from = values.from ?? '';
   const to = values.to ?? '';
+  // Opened without a period (the entries list shows all dates), the summary starts on the month to date.
+  useEffect(() => {
+    if (from || to) return;
+    const month = monthToDate();
+    set('from', month.from);
+    set('to', month.to);
+    // Only when the tab opens: a period the user empties again is theirs to complete.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const query = useFarmQuery<FinanceSummaryDto>(
     ['/finance/summary', from, to],
     () => api.get<FinanceSummaryDto>('/finance/summary', { from, to }),
-    { enabled: !error },
+    { enabled: !error && Boolean(from && to) },
   );
   const d = query.data;
 

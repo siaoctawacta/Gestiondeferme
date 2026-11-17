@@ -22,6 +22,8 @@ interface SettingField {
   kind: 'number' | 'text';
   /** A number that must be a whole number above 0 (a number of days, of eggs). */
   positiveInteger?: boolean;
+  /** A number that must be a whole number from 0 (a notice that may be zero). */
+  nonNegativeInteger?: boolean;
 }
 
 const GROUPS: { title: string; fields: SettingField[] }[] = [
@@ -33,6 +35,8 @@ const GROUPS: { title: string; fields: SettingField[] }[] = [
       { key: 'consumptionDeviationPct', label: 'Écart de consommation (%)', kind: 'number' },
       { key: 'expiryWarningDays', label: 'Alerte de péremption (jours)', kind: 'number' },
       { key: 'vaccinationWarningDays', label: 'Alerte vaccination (jours avant)', kind: 'number' },
+      { key: 'maintenanceWarningDays', label: 'Préavis de maintenance (jours)', kind: 'number', nonNegativeInteger: true },
+      { key: 'alertAckDays', label: 'Masquage des alertes (jours)', kind: 'number', positiveInteger: true },
     ],
   },
   {
@@ -94,8 +98,8 @@ function SettingInput({ field, value, readOnly, onChange }: {
       <Input
         id={id}
         type={field.kind === 'number' ? 'number' : 'text'}
-        step={field.kind === 'number' ? (field.positiveInteger ? 1 : 'any') : undefined}
-        min={field.positiveInteger ? 1 : undefined}
+        step={field.kind === 'number' ? (field.positiveInteger || field.nonNegativeInteger ? 1 : 'any') : undefined}
+        min={field.positiveInteger ? 1 : field.nonNegativeInteger ? 0 : undefined}
         readOnly={readOnly}
         value={value}
         onChange={(e) => onChange(e.target.value)}
@@ -127,6 +131,11 @@ function SettingsCard({ title, fields, data, canEdit }: {
     const notWhole = fields.find((f) => f.positiveInteger && !/^[1-9]\d*$/.test(values[fieldId(f)].trim()));
     if (notWhole) {
       setFeedback({ tone: 'error', message: `Le champ « ${notWhole.label} » doit être un entier positif` });
+      return;
+    }
+    const notWholeOrZero = fields.find((f) => f.nonNegativeInteger && !/^\d+$/.test(values[fieldId(f)].trim()));
+    if (notWholeOrZero) {
+      setFeedback({ tone: 'error', message: `Le champ « ${notWholeOrZero.label} » doit être un entier positif ou nul` });
       return;
     }
     setSaving(true);

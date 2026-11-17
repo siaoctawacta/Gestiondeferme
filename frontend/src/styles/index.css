@@ -70,3 +70,14 @@
     display: none;
   }
 }
+
+/* The QR label sheet: A4 with no margin of its own, the labels' grid is centred by the sheet's padding. */
+@media print {
+  @page qr-labels {
+    size: A4 portrait;
+    margin: 0;
+  }
+  .qr-sheet {
+    page: qr-labels;
+  }
+}

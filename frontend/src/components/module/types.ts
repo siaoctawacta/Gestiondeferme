@@ -1,6 +1,7 @@
 import type { ComponentType, ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { Action, ModuleKey } from '../../lib/modules';
+import type { QrKind } from '../../lib/qr';
 
 /**
  * Options read from a list endpoint (`{items}` shape); every page is loaded.
@@ -289,6 +290,22 @@ export type RowGate = boolean | string;
 /** The add / edit form of a module: generated from `fields`, or a custom component. */
 export type CustomForm<T> = ComponentType<{ row?: T; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }>;
 
+/**
+ * THE gating model of a list's write controls (the only place it is described), from the outermost switch inward:
+ * 1. The user's permission on `slug`, and the farm: `createPermission` (`Ajouter`), `editPermission` / `deletePermission` (row icons),
+ *    a row action's `permission`. Under "all farms" nothing writes (but a `farmScoped: false` list).
+ * 2. `ModuleConfig.noCreate`: the records are made elsewhere, so no `Ajouter`; the row icons stay.
+ * 3. `ModuleList`'s `readOnly` (a page that embeds the list in a state where nothing may change):
+ *    - `true`: no `Ajouter` and no write icon at all, but what `whenReadOnly` lets through (row by row);
+ *    - a reason string (`Lot clôturé`, `Animal sorti du cheptel`): no `Ajouter`, every row icon stays visible but disabled
+ *      with the reason as tooltip (the built-in edit and delete, and the row actions), but what `whenReadOnly` lets through.
+ * 4. Per row, `canEdit` / `canDelete`: `false` hides the icon (a final record), a string disables it with that reason,
+ *    `true` leaves it usable. A list's `readOnly` reason wins over a row's own string; a row's `false` stays hidden.
+ * A row action is further limited by its `visible`.
+ *
+ * Everything an embedded list needs to say about "this record is closed" goes through `readOnly`; there is no other prop.
+ */
+
 /** Everything `ModulePage` needs to render one module list; plain data only. */
 export type ModuleConfig<T extends { id: string }> = ModuleConfigBase<T> &
   (
@@ -373,10 +390,9 @@ type ModuleConfigBase<T extends { id: string }> = {
    */
   createPermission?: Action;
   /**
-   * No `Ajouter` button, for a list whose records are made elsewhere (credit notes are made from an invoice). THE flag
-   * for it: `ModuleList`'s `noCreate` prop (a page that embeds a list and hides the button in some states) sets the same
-   * thing, and either one hides it. The rows keep their icons: `canEdit` / `canDelete` answering `false` hide those of a
-   * final record. `fields: []` goes with it when there is no generated form.
+   * No `Ajouter` button, for a list whose records are made elsewhere (credit notes are made from an invoice). The rows
+   * keep their icons: `canEdit` / `canDelete` answering `false` hide those of a final record. `fields: []` goes with it
+   * when there is no generated form. (See the gating model above.)
    */
   noCreate?: boolean;
   /**
@@ -394,14 +410,18 @@ type ModuleConfigBase<T extends { id: string }> = {
    * merge it itself). It wins over a filter or form field of the same name. Never shown as filters.
    */
   scope?: Record<string, string>;
-  /** Shows a QR code button linking to `detailPath`. */
-  qr?: boolean;
+  /**
+   * The kind of record a row's QR code labels (`'lot'`, a function of the row for a list that mixes kinds; `null` for a row
+   * without one). It shows the `QR code` row icon, which opens the QR dialog of `{kind, row.id}` (`GET /qr/:kind/:id`), and
+   * adds `Étiquettes QR` to the export menu: the sheet of labels of the rows on screen (`POST /qr/labels`).
+   */
+  qr?: QrKind | ((row: T) => QrKind | null);
   actions?: RowAction<T>[];
   /**
    * What an embedded list that is `readOnly` (a closed lot, an exited animal) still lets through, decided row by row:
    * the row actions by `key` (they must also be `visible` and permitted) and the delete icon (still behind
-   * `deletePermission` and `canDelete`). Without it a read-only list has no write control at all. Add, edit and every
-   * other action stay hidden.
+   * `deletePermission` and `canDelete`). Without it a `readOnly` list has no usable write control (hidden, or disabled
+   * with its reason). Add, edit and every other action stay out.
    */
   whenReadOnly?: {
     actions?: Record<string, (row: T) => boolean>;

@@ -1,6 +1,9 @@
 import type { Field, ModuleConfig } from '../components/module/types';
-import { CustomerDetail } from '../pages/details/CustomerDetail';
 import { CUSTOMER_TYPES, customerTypeLabel, type CustomerRow } from './salesShared';
+import { lazyRetry } from '../components/lazyRetry';
+
+// Loaded when the page opens, so the main bundle does not hold it (the config itself stays eager: the registry needs it).
+const CustomerDetail = lazyRetry(() => import('../pages/details/CustomerDetail').then((m) => ({ default: m.CustomerDetail })));
 
 const FIELDS: Field[] = [
   { name: 'name', label: 'Nom', type: 'text', required: true },

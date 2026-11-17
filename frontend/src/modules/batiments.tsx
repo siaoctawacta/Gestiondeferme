@@ -87,5 +87,6 @@ export const batiments: ModuleConfig<Building> = {
   ],
   statuses: STATUSES,
   statusKey: 'status',
+  qr: 'batiment',
   tabs: [{ key: 'zones', label: 'Zones', config: zones }],
 };

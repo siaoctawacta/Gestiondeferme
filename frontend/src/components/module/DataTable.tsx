@@ -4,6 +4,7 @@ import { Link } from 'react-router';
 import { ChevronDown, ChevronUp, Pencil, QrCode, Trash2 } from 'lucide-react';
 import { Table, TD, TH, THead, TR } from '../ui/Table';
 import { Pill } from '../ui/Pill';
+import type { QrKind } from '../../lib/qr';
 import type { Column, RowGate, StatusDef } from './types';
 
 export interface SortState {
@@ -17,6 +18,8 @@ export interface TableAction<T> {
   label: string;
   icon: LucideIcon;
   visible?: (row: T) => boolean;
+  /** A reason keeps the button visible but disabled (a read-only list with a reason); `undefined` leaves it usable. */
+  disabled?: (row: T) => string | undefined;
   run: (row: T) => void;
 }
 
@@ -31,7 +34,8 @@ export interface DataTableProps<T extends { id: string }> {
   onSort?: (key: string) => void;
   /** `undefined` for a row without a page: its first cell is plain text. */
   detailPath?: (row: T) => string | undefined;
-  qr?: boolean;
+  /** The QR icon of a row: which kind of record it labels (`null` for a row without a QR) and what opens its dialog. */
+  qr?: { kindOf: (row: T) => QrKind | null; open: (row: T, kind: QrKind) => void };
   actions?: TableAction<T>[];
   /** Shown when there are no rows (default `Aucun enregistrement`). */
   emptyText?: string;
@@ -148,14 +152,14 @@ export function DataTable<T extends { id: string }>({
                 <TD>
                   <div className="flex min-h-8 items-center justify-end">
                     {actions?.filter((a) => a.visible?.(row) ?? true).map((a) => (
-                      <ActionButton key={a.key} label={a.label} onClick={() => a.run(row)}>
+                      <ActionButton key={a.key} label={a.label} onClick={() => a.run(row)} disabledReason={a.disabled?.(row)}>
                         <a.icon aria-hidden className="size-4" />
                       </ActionButton>
                     ))}
-                    {qr && detailPath?.(row) && (
-                      <Link to={detailPath(row)!} aria-label="QR code" title="QR code" className={ICON_BUTTON}>
+                    {qr && qr.kindOf(row) && (
+                      <ActionButton label="QR code" onClick={() => qr.open(row, qr.kindOf(row)!)}>
                         <QrCode aria-hidden className="size-4" />
-                      </Link>
+                      </ActionButton>
                     )}
                     {onEdit && gate(canEdit, row) !== false && (
                       <ActionButton label="Modifier" onClick={() => onEdit(row)} disabledReason={reason(gate(canEdit, row))}>

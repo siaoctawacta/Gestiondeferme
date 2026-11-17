@@ -10,6 +10,8 @@ export interface ExportMenuProps {
   filename: string;
   params: Record<string, string | undefined>;
   onError: (message: string) => void;
+  /** A list of records with a QR (`ModuleConfig.qr`) adds `Étiquettes QR`, which opens the sheet of labels of the rows on screen. */
+  onLabels?: () => void;
 }
 
 const FORMATS = [
@@ -17,7 +19,7 @@ const FORMATS = [
   { format: 'xlsx', label: 'Excel' },
 ] as const;
 
-export function ExportMenu({ endpoint, filename, params, onError }: ExportMenuProps) {
+export function ExportMenu({ endpoint, filename, params, onError, onLabels }: ExportMenuProps) {
   const [open, setOpen] = useState(false);
   const { menuRef, triggerRef, onMenuKeyDown, closeAndFocusTrigger } = useMenu<HTMLUListElement>(open, setOpen);
 
@@ -58,6 +60,18 @@ export function ExportMenu({ endpoint, filename, params, onError }: ExportMenuPr
                 </button>
               </li>
             ))}
+            {onLabels && (
+              <li role="none">
+                <button
+                  type="button"
+                  role="menuitem"
+                  onClick={() => { closeAndFocusTrigger(); onLabels(); }}
+                  className="block w-full whitespace-nowrap px-4 py-2 text-left text-sm hover:bg-muted"
+                >
+                  Étiquettes QR
+                </button>
+              </li>
+            )}
           </ul>
         </>
       )}

@@ -6,12 +6,15 @@ import { Button } from '../components/ui/Button';
 import { Dialog } from '../components/ui/Dialog';
 import { Pill } from '../components/ui/Pill';
 import { orDash } from '../lib/format';
-import { AnimalDetail } from '../pages/details/AnimalDetail';
-import { LotDetail } from '../pages/details/LotDetail';
 import { LotForm } from './lotForm';
 import { lotLocked, text } from './lotsShared';
-import { ANIMAL_CATEGORIES, STATUSES, categoryLabel, hasLeft, statusDef, type AnimalDetailData, type HerdRow } from './porcsShared';
+import { ANIMAL_CATEGORIES, ANIMAL_LEFT, STATUSES, categoryLabel, hasLeft, statusDef, type AnimalDetailData, type HerdRow } from './porcsShared';
 import { activeAnimalOptions, breedOptions, useBuildingOptions } from './productionShared';
+import { lazyRetry } from '../components/lazyRetry';
+
+// Loaded when the page opens, so the main bundle does not hold it (the config itself stays eager: the registry needs it).
+const AnimalDetail = lazyRetry(() => import('../pages/details/AnimalDetail').then((m) => ({ default: m.AnimalDetail })));
+const LotDetail = lazyRetry(() => import('../pages/details/LotDetail').then((m) => ({ default: m.LotDetail })));
 
 type FormProps = { row?: HerdRow; scope?: Record<string, string>; onSaved: () => void; onClose: () => void };
 
@@ -108,7 +111,7 @@ function PigForm({ row, onSaved, onClose }: FormProps) {
 
 /** Why a herd row cannot be edited or deleted: a closed lot, an animal that left the herd (`true` otherwise; the API refuses the rest). */
 const rowLocked = (r: HerdRow): string | true =>
-  r.kind === 'LOT' ? lotLocked(r) : hasLeft(r.status) ? 'Animal sorti du cheptel' : true;
+  r.kind === 'LOT' ? lotLocked(r) : hasLeft(r.status) ? ANIMAL_LEFT : true;
 
 export const porcs: ModuleConfig<HerdRow> = {
   slug: 'porcs',
@@ -138,6 +141,7 @@ export const porcs: ModuleConfig<HerdRow> = {
   // Pig lots reuse the species-aware lot detail, under this module's route so `porcs` permissions apply.
   detailPath: (r) => (r.kind === 'LOT' ? `/m/porcs/${LOT_PREFIX}${r.id}` : `/m/porcs/${r.id}`),
   detail: PigDetail,
+  qr: (r) => (r.kind === 'LOT' ? 'lot' : 'animal'),
   createPermission: 'update',
   // An animal or a lot with history is refused by the API (409, shown in the dialog).
   canEdit: rowLocked,

@@ -8,12 +8,15 @@ import { ApiError, api } from '../lib/api';
 import { useAuth } from '../lib/auth';
 import { farmKey } from '../lib/query';
 import { formatNumber, orDash, todayIso } from '../lib/format';
-import { InventoryDetail } from '../pages/details/InventoryDetail';
-import { StockItemDetail } from '../pages/details/StockItemDetail';
 import {
   CATEGORIES, LEVELS, MovementDialog, categoryLabel, inventoryPill, levelPill, stockMovements,
   type InventoryRow, type StockRow,
 } from './stocksShared';
+import { lazyRetry } from '../components/lazyRetry';
+
+// Loaded when the page opens, so the main bundle does not hold it (the config itself stays eager: the registry needs it).
+const InventoryDetail = lazyRetry(() => import('../pages/details/InventoryDetail').then((m) => ({ default: m.InventoryDetail })));
+const StockItemDetail = lazyRetry(() => import('../pages/details/StockItemDetail').then((m) => ({ default: m.StockItemDetail })));
 
 type RowDialogProps = { row: StockRow; onClose: () => void; onDone: () => void };
 
@@ -98,7 +101,6 @@ const inventories: ModuleConfig<InventoryRow> = {
   title: 'Inventaires',
   subtitle: 'Comptages physiques et ajustements.',
   endpoint: '/inventories',
-  exportable: false,
   columns: [
     { key: 'date', header: 'DATE' },
     { key: 'status', header: 'STATUT', render: (r) => inventoryPill(r.status) },
@@ -142,6 +144,7 @@ export const stocks: ModuleConfig<StockRow> = {
   form: StockItemForm,
   deletePath: (s) => `/stock-items/${s.id}`,
   detail: StockDetail,
+  qr: 'article',
   actions: [
     movementAction('entree', 'Entrée', ArrowDownToLine, EntryDialog),
     movementAction('sortie', 'Sortie', ArrowUpFromLine, ExitDialog),

@@ -171,7 +171,6 @@ export const incubations: ModuleConfig<Incubation> = {
   title: 'Incubation',
   subtitle: 'Incubations, mirage et éclosions.',
   endpoint: '/incubations',
-  exportable: false,
   columns: [
     { key: 'code', header: 'CODE' },
     { key: 'incubator', header: 'COUVEUSE', render: (i) => i.incubator ?? '' },

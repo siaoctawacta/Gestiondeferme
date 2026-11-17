@@ -9,10 +9,13 @@ import { useAuth } from '../lib/auth';
 import { formatMoney, formatNumber, todayIso } from '../lib/format';
 import { linesTotal } from '../lib/money';
 import { farmKey } from '../lib/query';
-import { PurchaseDetail } from '../pages/details/PurchaseDetail';
 import { PURCHASE_ACTIONS } from './purchaseActions';
 import { stockItemOptions } from './stocksShared';
 import { ACTIVITIES, PURCHASE_STATUSES, editableGate, type PurchaseData, type PurchaseRow } from './purchasingShared';
+import { lazyRetry } from '../components/lazyRetry';
+
+// Loaded when the page opens, so the main bundle does not hold it (the config itself stays eager: the registry needs it).
+const PurchaseDetail = lazyRetry(() => import('../pages/details/PurchaseDetail').then((m) => ({ default: m.PurchaseDetail })));
 
 const fields = (suppliers: { value: string; label: string }[]): Field[] => [
   { name: 'supplierId', label: 'Fournisseur', type: 'select', required: true, options: suppliers },

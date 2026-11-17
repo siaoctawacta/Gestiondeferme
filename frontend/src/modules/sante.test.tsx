@@ -824,7 +824,10 @@ describe('complete and edit with stock', () => {
 });
 
 describe('Santé tab when the target is closed', () => {
-  const names = (text: string) => within(rowOf(text)).queryAllByRole('button').map((b) => b.getAttribute('aria-label') ?? b.textContent);
+  // The icons that work: the others stay visible, disabled with the reason as tooltip.
+  const label = (b: HTMLElement) => b.getAttribute('aria-label') ?? b.textContent;
+  const names = (text: string) => within(rowOf(text)).queryAllByRole('button').filter((b) => b.getAttribute('aria-disabled') !== 'true').map(label);
+  const locked = (text: string) => within(rowOf(text)).queryAllByRole('button').filter((b) => b.getAttribute('aria-disabled') === 'true');
 
   it('on a closed lot: no add, and only the planned acts can be cancelled or deleted', async () => {
     lotData = { ...LOT, status: 'CLOTURE', closedAt: '2026-11-01' };
@@ -836,11 +839,15 @@ describe('Santé tab when the target is closed', () => {
     // Planned (or overdue): cancel and delete, but neither complete nor edit.
     expect(names('Gumboro')).toEqual(['Annuler', 'Supprimer']);
     expect(names('Marek libre')).toEqual(['Annuler', 'Supprimer']);
-    // Done, and cancelled: the API refuses any change on a closed lot, so no icon at all.
+    // The other icons stay, disabled with the reason.
+    expect(locked('Gumboro').map(label)).toEqual(['Marquer réalisé', 'Modifier']);
+    for (const b of locked('Gumboro')) expect(b).toHaveAttribute('title', 'Lot clôturé');
+    // Done, and cancelled: the API refuses any change on a closed lot, so nothing works.
     expect(names('Newcastle')).toEqual([]);
     expect(names('Marek fait')).toEqual([]);
+    expect(locked('Newcastle').length).toBeGreaterThan(0);
     const cancelled = screen.getAllByRole('row').find((r) => within(r).queryByText('Annulé'));
-    expect(within(cancelled!).queryAllByRole('button')).toEqual([]);
+    expect(within(cancelled!).queryAllByRole('button').filter((b) => b.getAttribute('aria-disabled') !== 'true')).toEqual([]);
 
     const user = userEvent.setup();
     await user.click(within(rowOf('Gumboro')).getByRole('button', { name: 'Annuler' }));
@@ -860,8 +867,10 @@ describe('Santé tab when the target is closed', () => {
     await openTab('Santé');
     await screen.findByText('Gumboro');
     expect(screen.queryByRole('button', { name: 'Ajouter' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Marquer réalisé' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Modifier' })).toBeNull();
+    for (const b of screen.getAllByRole('button', { name: /^(Marquer réalisé|Modifier)$/ })) {
+      expect(b).toHaveAttribute('aria-disabled', 'true');
+      expect(b).toHaveAttribute('title', 'Animal sorti du cheptel');
+    }
     expect(names('Gumboro')).toEqual(['Annuler', 'Supprimer']);
     expect(names('Newcastle')).toEqual([]);
   });

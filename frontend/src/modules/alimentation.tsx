@@ -314,7 +314,6 @@ export const feedProducts: ModuleConfig<FeedProduct> = {
   title: 'Aliments',
   subtitle: 'Matières premières et aliments complets.',
   endpoint: '/feed-products',
-  exportable: false,
   farmScoped: false,
   createPermission: 'update',
   columns: [
@@ -339,7 +338,6 @@ export const feedFormulas: ModuleConfig<FeedFormula> = {
   title: 'Formules',
   subtitle: "Formules d'aliment et coût au kilo.",
   endpoint: '/feed-formulas',
-  exportable: false,
   farmScoped: false,
   createPermission: 'update',
   columns: [
@@ -365,7 +363,7 @@ export const alimentation: ModuleConfig<FeedDistribution> = {
     { key: 'feedName', header: 'ALIMENT' },
     { key: 'quantityKg', header: 'ALIMENT (KG)', sortable: true, render: (d) => formatNumber(d.quantityKg) },
     { key: 'waterLiters', header: 'EAU (L)', render: (d) => orDash(d.waterLiters) },
-    { key: 'cost', header: 'COÛT', sortable: true, render: (d) => formatMoney(d.cost) },
+    { key: 'cost', header: 'COÛT', render: (d) => formatMoney(d.cost) },
   ],
   rowLabel: (d) => `${d.target} du ${d.date}`,
   editPermission: 'create',

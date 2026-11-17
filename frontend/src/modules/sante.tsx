@@ -31,7 +31,6 @@ const plans: ModuleConfig<VaccinationPlanRow> = {
   title: 'Plans vaccinaux',
   subtitle: 'Programmes de vaccination appliqués aux lots.',
   endpoint: '/vaccination-plans',
-  exportable: false,
   // Organisation data like the feed formulas: master rights write it from any farm view.
   farmScoped: false,
   columns: [
@@ -82,7 +81,6 @@ const biosecurity: ModuleConfig<BiosecurityLogRow> = {
   title: 'Biosécurité',
   subtitle: 'Nettoyages, désinfections, pédiluves et visiteurs.',
   endpoint: '/biosecurity-logs',
-  exportable: false,
   columns: [
     { key: 'date', header: 'DATE' },
     { key: 'type', header: 'TYPE', render: (l) => LOG_TYPES.find((t) => t.value === l.type)?.label ?? l.type },
@@ -109,7 +107,6 @@ const quarantines: ModuleConfig<QuarantineRow> = {
   title: 'Quarantaines',
   subtitle: 'Lots et animaux isolés.',
   endpoint: '/quarantines',
-  exportable: false,
   columns: [
     { key: 'startDate', header: 'DÉBUT' },
     { key: 'target', header: 'LOT / ANIMAL' },
@@ -140,7 +137,6 @@ const incidents: ModuleConfig<IncidentRow> = {
   title: 'Incidents',
   subtitle: 'Événements sanitaires à suivre.',
   endpoint: '/incidents',
-  exportable: false,
   columns: [
     { key: 'date', header: 'DATE' },
     { key: 'title', header: 'TITRE' },

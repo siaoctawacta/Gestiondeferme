@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, render, renderHook, screen } from '@testing-library/react';
-import { PrintOverlay, usePrintWhenReady } from './SheetFrame';
+import { PrintOverlay } from '../../components/ui/PrintOverlay';
+import { usePrintWhenReady } from './SheetFrame';
 
 const print = vi.fn();
 beforeEach(() => { print.mockReset(); vi.stubGlobal('print', print); });

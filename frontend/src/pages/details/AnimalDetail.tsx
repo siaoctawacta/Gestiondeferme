@@ -16,7 +16,7 @@ import { formatDecimal, formatNumber, orDash, todayIso } from '../../lib/format'
 import { farmKey, useFarmQuery } from '../../lib/query';
 import { BREEDING_STATUSES } from '../../modules/breedingShared';
 import {
-  ageLabel, animalHeats, animalWeighings, categoryLabel, hasLeft, statusDef, type AnimalDetailData, type BreedingHistory,
+  ANIMAL_LEFT, ageLabel, animalHeats, animalWeighings, categoryLabel, hasLeft, statusDef, type AnimalDetailData, type BreedingHistory,
 } from '../../modules/porcsShared';
 import { MODULES } from '../../modules/registry';
 import { WithdrawalNotice } from '../../modules/santeShared';
@@ -100,8 +100,9 @@ export function AnimalDetail({ id }: { id: string }) {
   const left = animal.exitDate !== null || hasLeft(animal.status);
   const canManage = can('porcs', 'update') && farmId !== 'all';
   const health = can('sante', 'read') ? MODULES.sante : undefined;
-  const weighings = animalWeighings(id, left);
-  const heats = animalHeats(id, left);
+  const weighings = animalWeighings(id);
+  const heats = animalHeats(id);
+  const readOnly = left ? ANIMAL_LEFT : false;
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
 
   return (
@@ -119,10 +120,10 @@ export function AnimalDetail({ id }: { id: string }) {
           { label: 'Statut', value: status.label },
         ]}
         tabs={[
-          { key: 'weighings', label: 'Pesées', content: <ModuleList config={weighings} noCreate={left} /> },
+          { key: 'weighings', label: 'Pesées', content: <ModuleList config={weighings} readOnly={readOnly} /> },
           ...(breeding ? [{ key: 'breeding', label: 'Reproduction', content: <BreedingTab animalId={id} /> }] : []),
-          ...(breeding ? [{ key: 'heats', label: 'Chaleurs', content: <ModuleList config={heats} noCreate={left} /> }] : []),
-          ...(health ? [{ key: 'health', label: 'Santé', content: <ModuleList config={health} scope={{ animalId: id }} readOnly={left} /> }] : []),
+          ...(breeding ? [{ key: 'heats', label: 'Chaleurs', content: <ModuleList config={heats} readOnly={readOnly} /> }] : []),
+          ...(health ? [{ key: 'health', label: 'Santé', content: <ModuleList config={health} scope={{ animalId: id }} readOnly={readOnly} /> }] : []),
         ]}
       />
       {exiting && <ExitDialog animal={animal} onClose={() => setExiting(false)} onDone={() => { setExiting(false); refresh(); }} />}

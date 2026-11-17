@@ -530,6 +530,15 @@ describe('animal detail', () => {
       expect(writes()[1]).toMatchObject({ method: 'DELETE', url: '/api/animals/a1/heats/h1' });
     });
 
+    it('offers the export of the weighings and of the heats (their endpoints export)', async () => {
+      mountDetail('a1', { perms: ['read', 'create'], modules: { reproduction: ['read', 'create'] } });
+      await rowOf('205.5');
+      expect(screen.getByRole('button', { name: 'Exporter' })).toBeInTheDocument();
+      await userEvent.setup().click(screen.getByRole('tab', { name: 'Chaleurs' }));
+      await rowOf('Nette');
+      expect(screen.getByRole('button', { name: 'Exporter' })).toBeInTheDocument();
+    });
+
     it('shows no icon without create permission', async () => {
       mountDetail('a1', { perms: ['read'], modules: { reproduction: ['read'] } });
       const row = await rowOf('205.5');

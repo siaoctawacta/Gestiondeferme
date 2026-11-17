@@ -107,9 +107,11 @@ export const EVENT_LABELS: Record<string, { label: string; tone: PillTone }> = {
 const MANUAL_EVENTS = ['MORTALITE', 'VENTE', 'REFORME', 'ENTREE', 'NAISSANCE'] as const;
 
 /** Why a lot cannot be edited or deleted (an open lot that lost animals or sold some has history: the API answers 409 for it). */
-export const lotLocked = (b: { status: string }): string | true => (b.status === 'CLOTURE' ? 'Lot clôturé' : true);
+/** Why the rows of a closed lot are locked. */
+export const LOT_CLOSED = 'Lot clôturé';
+export const lotLocked = (b: { status: string }): string | true => (b.status === 'CLOTURE' ? LOT_CLOSED : true);
 export const lotHasHistory = (b: Pick<Batch, 'deaths' | 'alive' | 'initialCount'> & { status: string }): string | true =>
-  b.status === 'CLOTURE' ? 'Lot clôturé' : b.deaths === 0 && b.alive === b.initialCount ? true : 'Lot avec historique — clôturez-le';
+  b.status === 'CLOTURE' ? LOT_CLOSED : b.deaths === 0 && b.alive === b.initialCount ? true : 'Lot avec historique — clôturez-le';
 
 export const text = (v: unknown) => String(v ?? '').trim();
 export const num = (v: unknown) => (text(v) === '' ? '' : Number(v));
@@ -118,7 +120,6 @@ export const num = (v: unknown) => (text(v) === '' ? '' : Number(v));
 export function batchEvents(batchId: string, slug: ModuleKey = 'lots'): ModuleConfig<BatchEvent> {
   return {
     slug,
-    exportable: false,
     group: 'Production',
     title: 'Mouvements',
     subtitle: 'Mouvements du lot.',
@@ -172,7 +173,6 @@ export function batchWeighings(batchId: string, slug: ModuleKey = 'lots', specie
   const pig = species === 'PORCIN';
   return {
     slug,
-    exportable: false,
     group: 'Production',
     title: 'Pesées',
     subtitle: 'Pesées du lot.',

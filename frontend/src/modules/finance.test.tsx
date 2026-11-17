@@ -206,11 +206,12 @@ describe('finance list', () => {
     await user.selectOptions(screen.getByLabelText('Toutes les activités'), 'Avicole');
     await user.selectOptions(screen.getByLabelText('Toutes les catégories'), 'Salaires');
     fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-10-01' } });
+    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-10-31' } });
     await waitFor(() => {
-      const last = calls.filter((c) => c.url.startsWith('/api/finance/entries')).at(-1)!.url;
+      const last = calls.filter((c) => c.url.startsWith('/api/finance/entries') && !c.url.endsWith('pageSize=1')).at(-1)!.url;
       expect(last).toContain('activity=AVICOLE');
       expect(last).toContain('category=SALAIRES');
-      expect(last).toContain('from=2026-10-01');
+      expect(last).toContain('from=2026-10-01&to=2026-10-31');
     });
   });
 
@@ -413,19 +414,33 @@ describe('Synthèse', () => {
     expect(screen.getByText(/« Marge du lot »/)).toBeInTheDocument();
   });
 
-  it('shares ONE period across the three tabs, month to date by default, and keeps it when switching', async () => {
+  it('opens the entries list on all dates, and Synthèse on the month to date, which the three tabs then share', async () => {
     mountPage();
     await screen.findByText('Salaires septembre');
     const start = `${todayIso().slice(0, 8)}01`;
+    expect(screen.getByLabelText('Du')).toHaveValue('');
+    expect(screen.getByLabelText('Au')).toHaveValue('');
+    expect(calls.find((c) => c.url.startsWith('/api/finance/entries'))!.url).not.toMatch(/[?&](from|to)=/);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Synthèse' }));
+    await screen.findByText("Chiffre d'affaires");
     expect(screen.getByLabelText('Du')).toHaveValue(start);
     expect(screen.getByLabelText('Au')).toHaveValue(todayIso());
-    expect(calls.find((c) => c.url.startsWith('/api/finance/entries'))!.url).toContain(`from=${start}`);
+    const requests = calls.filter((c) => c.url.startsWith('/api/finance/summary'));
+    expect(requests).toHaveLength(1);
+    expect(requests[0].url).toContain(`from=${start}&to=${todayIso()}`);
+  });
+
+  it('shares ONE period across the three tabs and keeps it when switching', async () => {
+    mountPage();
+    await screen.findByText('Salaires septembre');
     const user = userEvent.setup();
     fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-10-01' } });
+    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-10-31' } });
     await user.click(screen.getByRole('tab', { name: 'Synthèse' }));
     await screen.findByText("Chiffre d'affaires");
     expect(screen.getByLabelText('Du')).toHaveValue('2026-10-01');
-    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-10-31' } });
+    expect(screen.getByLabelText('Au')).toHaveValue('2026-10-31');
     await user.click(screen.getByRole('tab', { name: 'Rentabilité par lot' }));
     await screen.findByText('LC-2026-14');
     expect(screen.getByLabelText('Du')).toHaveValue('2026-10-01');
@@ -441,6 +456,7 @@ describe('Synthèse', () => {
     mountPage();
     await screen.findByText('Salaires septembre');
     const user = userEvent.setup();
+    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-10-31' } });
     fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2999-01-01' } });
     expect(await screen.findByText('La date de début est après la date de fin')).toBeInTheDocument();
     // The list of the period that was valid is not left under the banner.
@@ -453,12 +469,12 @@ describe('Synthèse', () => {
     await screen.findByText("Chiffre d'affaires");
   });
 
-  it('refuses an emptied bound on every tab with « Indiquez les deux dates », so the three tabs always send both dates', async () => {
+  it('refuses half a period on every tab with « Indiquez les deux dates », so the tabs never send one bound alone', async () => {
     mountPage();
     await screen.findByText('Salaires septembre');
     const user = userEvent.setup();
     const before = calls.length;
-    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-10-31' } });
     expect(await screen.findByText('Indiquez les deux dates')).toBeInTheDocument();
     expect(screen.queryByText('Salaires septembre')).not.toBeInTheDocument();
     await user.click(screen.getByRole('tab', { name: 'Synthèse' }));
@@ -466,11 +482,8 @@ describe('Synthèse', () => {
     await user.click(screen.getByRole('tab', { name: 'Rentabilité par lot' }));
     expect(await screen.findByText('Indiquez les deux dates')).toBeInTheDocument();
     // Nothing was requested for the open period.
-    expect(calls.slice(before).filter((c) => c.url.startsWith('/api/finance/') && !/from=[^&]+&to=[^&]+/.test(c.url))).toEqual([]);
+    expect(calls.slice(before).filter((c) => c.url.startsWith('/api/finance/') && /[?&](from|to)=/.test(c.url) && !/from=[^&]+&to=[^&]+/.test(c.url))).toEqual([]);
     expect(calls.some((c) => c.url.startsWith('/api/finance/summary'))).toBe(false);
-    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '' } });
-    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-10-31' } });
-    expect(await screen.findByText('Indiquez les deux dates')).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-10-01' } });
     await waitFor(() => expect(screen.queryByText('Indiquez les deux dates')).not.toBeInTheDocument());
     await screen.findByText('LC-2026-14');

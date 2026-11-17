@@ -282,7 +282,6 @@ export const stockMovements: ModuleConfig<MovementRow> = {
   title: 'Mouvements',
   subtitle: 'Entrées, sorties et ajustements de stock.',
   endpoint: '/stock/movements',
-  exportable: false,
   columns: [
     { key: 'date', header: 'DATE' },
     { key: 'itemName', header: 'ARTICLE' },

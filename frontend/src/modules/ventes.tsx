@@ -11,16 +11,19 @@ import { formatDate, formatMoney, formatNumber, todayIso } from '../lib/format';
 import { linesTotal } from '../lib/money';
 import { farmKey } from '../lib/query';
 import { useDocumentSettings } from '../lib/documentSettings';
-import { InvoiceDetail } from '../pages/details/InvoiceDetail';
 import { PAYMENT_METHODS } from './purchasingShared';
 import { useCustomerField } from './customerField';
-import { CreditNotePrintDialog } from '../pages/print/CreditNotePrintDialog';
 import { devis } from './devis';
 import { INVOICE_ACTIONS } from './saleActions';
 import { saleLineLabels, saleLinesField, saleLinesToForm, saleLinesToPayload } from './saleLines';
 import {
   DuePill, addDays, draftGate, type CreditNoteRow, type InvoiceData, type InvoiceRow,
 } from './salesShared';
+import { lazyRetry } from '../components/lazyRetry';
+
+// Loaded when the page opens, so the main bundle does not hold it (the config itself stays eager: the registry needs it).
+const InvoiceDetail = lazyRetry(() => import('../pages/details/InvoiceDetail').then((m) => ({ default: m.InvoiceDetail })));
+const CreditNotePrintDialog = lazyRetry(() => import('../pages/print/CreditNotePrintDialog').then((m) => ({ default: m.CreditNotePrintDialog })));
 
 /* ----------------------------------------------------------------------------------------------
  * The invoice form: a draft is a daily entry (`create`). Issuing needs `update`, so the `Émettre la facture` box (and

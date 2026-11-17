@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
-import { Check, ChevronsUpDown, LogOut, UserRound } from 'lucide-react';
+import { Check, ChevronsUpDown, LogOut, ScanLine, UserRound } from 'lucide-react';
 import { ALL_FARMS, useAuth } from '../../lib/auth';
 import { useMenu } from '../ui/useMenu';
 
@@ -71,6 +71,10 @@ export function FarmSwitcher() {
             </button>
           ))}
           <div className="my-1 border-t border-border" />
+          <Link to="/scan" role="menuitem" className={item} onClick={() => setOpen(false)}>
+            <ScanLine aria-hidden className="size-4" />
+            Scanner un QR code
+          </Link>
           <Link to="/compte" role="menuitem" className={item} onClick={() => setOpen(false)}>
             <UserRound aria-hidden className="size-4" />
             Mon compte

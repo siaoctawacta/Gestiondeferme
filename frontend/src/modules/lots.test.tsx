@@ -283,9 +283,13 @@ describe('row icons follow the kind of list', () => {
 
   it('keeps the row gates on top: a closed lot has no editable movement for the daily role either', async () => {
     mountDetail('l2', { perms: ['read', 'create'] });
-    // The movement rows are rendered, and carry no icon: closed lots are read-only.
+    // The movement rows are rendered with their icons disabled by the reason: closed lots are read-only.
     const movement = (await screen.findByText('Chaleur')).closest('tr')!;
-    expect(rowIcons(movement)).toEqual([false, false]);
+    expect(rowIcons(movement)).toEqual([true, true]);
+    for (const name of ['Modifier', 'Supprimer']) {
+      expect(within(movement).getByRole('button', { name })).toHaveAttribute('aria-disabled', 'true');
+      expect(within(movement).getByRole('button', { name })).toHaveAttribute('title', 'Lot clôturé');
+    }
     expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
   });
 });
@@ -307,7 +311,8 @@ describe('lot detail', () => {
     expect(headerButton('Modifier')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Clôturer' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Transférer' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Exporter' })).not.toBeInTheDocument();
+    // The lot's movements now export (`/batches/:id/events?format=`).
+    expect(screen.getByRole('button', { name: 'Exporter' })).toBeInTheDocument();
     expect(await screen.findByText('Chaleur')).toBeInTheDocument();
     expect(calls.some((c) => c.url.startsWith('/api/batches/l1/events'))).toBe(true);
   });
@@ -381,8 +386,10 @@ describe('lot detail', () => {
     expect(screen.getAllByText('Clôturé').length).toBeGreaterThan(0);
     await screen.findByText('Chaleur');
     expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Modifier' })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Supprimer' })).not.toBeInTheDocument();
+    // The lists keep their row icons, disabled with the reason; the lot's own header buttons are gone.
+    for (const name of ['Modifier', 'Supprimer']) {
+      for (const b of screen.queryAllByRole('button', { name })) expect(b).toHaveAttribute('aria-disabled', 'true');
+    }
     expect(screen.queryByRole('button', { name: 'Transférer' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Clôturer' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Rouvrir' })).toBeInTheDocument();
@@ -499,7 +506,7 @@ describe('lot detail of a pig lot', () => {
     expect(await screen.findByRole('button', { name: 'Clôturer' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Transférer' })).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Exporter' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Exporter' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: /Cheptel porcin/ })).toHaveAttribute('href', '/m/porcs');
   });
 

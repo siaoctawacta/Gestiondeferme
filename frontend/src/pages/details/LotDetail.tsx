@@ -19,7 +19,7 @@ import { Pill } from '../../components/ui/Pill';
 import { LotForm } from '../../modules/lotForm';
 import { MODULES } from '../../modules/registry';
 import {
-  STATUSES, TYPE_LABELS, batchEvents, batchWeighings, type BatchDetail, type Weighing,
+  LOT_CLOSED, STATUSES, TYPE_LABELS, batchEvents, batchWeighings, type BatchDetail, type Weighing,
 } from '../../modules/lotsShared';
 import { useBuildingOptions, type Species } from '../../modules/productionShared';
 import { WithdrawalNotice } from '../../modules/santeShared';
@@ -54,7 +54,7 @@ function TransferDialog({ batch, species, onClose, onDone }: { batch: BatchDetai
   );
 }
 
-function WeighingsTab({ batch, species, readOnly, moduleKey }: { batch: BatchDetail; species: Species; readOnly: boolean; moduleKey: ModuleKey }) {
+function WeighingsTab({ batch, species, readOnly, moduleKey }: { batch: BatchDetail; species: Species; readOnly: string | false; moduleKey: ModuleKey }) {
   const config = useMemo(() => batchWeighings(batch.id, moduleKey, species), [batch.id, moduleKey, species]);
   const points = useFarmQuery<ListResponse<Weighing>>(
     [`/batches/${batch.id}/weighings`, 'curve'],
@@ -105,6 +105,7 @@ export function LotDetail({ id }: { id: string }) {
   const moduleKey: ModuleKey = species === 'PORCIN' ? 'porcs' : 'lots';
   const events = batchEvents(id, moduleKey);
   const closed = batch.status === 'CLOTURE';
+  const readOnly = closed ? LOT_CLOSED : false;
   const canManage = can(moduleKey, 'update') && farmId !== 'all';
   const perf = batch.performance;
   const refresh = () => void queryClient.invalidateQueries({ queryKey: farmKey(farmId) });
@@ -129,16 +130,16 @@ export function LotDetail({ id }: { id: string }) {
   const laying = can('ponte', 'read') && (batch.type === 'PONDEUSE' || batch.type === 'REPRODUCTEUR') ? MODULES.ponte : undefined;
 
   const tabs = [
-    { key: 'events', label: 'Mouvements', content: <ModuleList config={events} readOnly={closed} /> },
-    { key: 'weighings', label: 'Pesées', content: <WeighingsTab batch={batch} species={species} readOnly={closed} moduleKey={moduleKey} /> },
+    { key: 'events', label: 'Mouvements', content: <ModuleList config={events} readOnly={readOnly} /> },
+    { key: 'weighings', label: 'Pesées', content: <WeighingsTab batch={batch} species={species} readOnly={readOnly} moduleKey={moduleKey} /> },
     ...(feeding
-      ? [{ key: 'feeding', label: 'Alimentation', content: <ModuleList config={feeding} scope={{ batchId: id }} readOnly={closed} /> }]
+      ? [{ key: 'feeding', label: 'Alimentation', content: <ModuleList config={feeding} scope={{ batchId: id }} readOnly={readOnly} /> }]
       : []),
     ...(laying
-      ? [{ key: 'laying', label: 'Ponte', content: <ModuleList config={laying} scope={{ batchId: id }} readOnly={closed} /> }]
+      ? [{ key: 'laying', label: 'Ponte', content: <ModuleList config={laying} scope={{ batchId: id }} readOnly={readOnly} /> }]
       : []),
     ...(health
-      ? [{ key: 'health', label: 'Santé', content: <ModuleList config={health} scope={{ batchId: id }} readOnly={closed} /> }]
+      ? [{ key: 'health', label: 'Santé', content: <ModuleList config={health} scope={{ batchId: id }} readOnly={readOnly} /> }]
       : []),
     // Money figures need `finance` read and nothing else (ruling Q25), whatever the species module grants. A tab keeps
     // the reference layout of the page intact for the roles without it, and shifts nothing while it loads.

@@ -7,7 +7,8 @@ import { useAuth } from '../../lib/auth';
 import { useFarmQuery } from '../../lib/query';
 import type { CreditNoteData } from '../../modules/salesShared';
 import { CreditNoteSheet } from './SaleSheets';
-import { PrintOverlay, useLegal, usePrintWhenReady } from './SheetFrame';
+import { PrintOverlay } from '../../components/ui/PrintOverlay';
+import { useLegal, usePrintWhenReady } from './SheetFrame';
 
 /** Printing a credit note (from the `Avoirs` tab or from an invoice): a dialog that loads it, prints it and offers to print again. */
 export function CreditNotePrintDialog({ row, onClose }: { row: { id: string; number: string }; onClose: () => void }) {

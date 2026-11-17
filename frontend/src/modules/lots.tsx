@@ -1,9 +1,12 @@
 import type { ModuleConfig } from '../components/module/types';
 import { Pill, type PillTone } from '../components/ui/Pill';
 import { formatNumber, formatPct, orDash } from '../lib/format';
-import { LotDetail } from '../pages/details/LotDetail';
 import { LotForm } from './lotForm';
 import { STATUSES, TYPE_LABELS, lotHasHistory, lotLocked, type Batch } from './lotsShared';
+import { lazyRetry } from '../components/lazyRetry';
+
+// Loaded when the page opens, so the main bundle does not hold it (the config itself stays eager: the registry needs it).
+const LotDetail = lazyRetry(() => import('../pages/details/LotDetail').then((m) => ({ default: m.LotDetail })));
 
 /** Mortality pill tone: under 3 % success, 3 to 6 % warning, above 6 % danger. */
 export const mortalityTone = (rate: number): PillTone => (rate < 3 ? 'success' : rate <= 6 ? 'warning' : 'danger');
@@ -40,6 +43,7 @@ export const lots: ModuleConfig<Batch> = {
   statusKey: 'status',
   rowLabel: (b) => b.code,
   detail: LotDetail,
+  qr: 'lot',
   createPermission: 'update',
   canEdit: lotLocked,
   canDelete: lotHasHistory,

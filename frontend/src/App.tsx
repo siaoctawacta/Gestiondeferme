@@ -1,25 +1,31 @@
-import type { ReactNode } from 'react';
+import { Suspense, type ReactNode } from 'react';
 import { BrowserRouter, Route, Routes, useLocation, useParams } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useAlerts } from './lib/alerts';
 import { AuthProvider, useAuth } from './lib/auth';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { lazyRetry } from './components/lazyRetry';
 import { AppLayout } from './components/shell/AppLayout';
 import { FarmSwitcher } from './components/shell/FarmSwitcher';
 import { MessageCard, RequireAuth, RequirePermission } from './components/shell/guards';
 import Account from './pages/Account';
 import Alerts from './pages/Alerts';
-import Audit from './pages/Audit';
 import Dashboard from './pages/Dashboard';
-import Reports from './pages/Reports';
 import Login from './pages/Login';
 import NotFound from './pages/NotFound';
 import { ModuleRoute } from './pages/ModuleRoute';
-import { QuoteDetail } from './pages/details/QuoteDetail';
-import Farms from './pages/admin/Farms';
-import Settings from './pages/admin/Settings';
-import Users from './pages/admin/Users';
+import QrResolve from './pages/QrResolve';
 import ResetPassword from './pages/ResetPassword';
+import ScanQr from './pages/ScanQr';
+import { Skeleton } from './pages/PageParts';
+
+// Screens that are not the first one seen are fetched when opened, so the main bundle stays small.
+const Audit = lazyRetry(() => import('./pages/Audit'));
+const Reports = lazyRetry(() => import('./pages/Reports'));
+const QuoteDetail = lazyRetry(() => import('./pages/details/QuoteDetail').then((m) => ({ default: m.QuoteDetail })));
+const Farms = lazyRetry(() => import('./pages/admin/Farms'));
+const Settings = lazyRetry(() => import('./pages/admin/Settings'));
+const Users = lazyRetry(() => import('./pages/admin/Users'));
 
 const queryClient = new QueryClient({
   defaultOptions: { queries: { retry: false, refetchOnWindowFocus: false } },
@@ -37,7 +43,9 @@ export function Shell({ children }: { children: ReactNode }) {
       {noFarm ? (
         <MessageCard title="Aucune ferme">Aucune ferme ne vous est attribuée. Contactez un administrateur.</MessageCard>
       ) : (
-        <ErrorBoundary resetKey={pathname}>{children}</ErrorBoundary>
+        <ErrorBoundary resetKey={pathname}>
+          <Suspense fallback={<Skeleton aria-busy="true" aria-label="Chargement" className="h-64" />}>{children}</Suspense>
+        </ErrorBoundary>
       )}
     </AppLayout>
   );
@@ -73,6 +81,8 @@ export default function App() {
                       <Route path="/admin/fermes" element={<RequirePermission module="fermes"><Farms /></RequirePermission>} />
                       <Route path="/admin/utilisateurs" element={<RequirePermission module="utilisateurs"><Users /></RequirePermission>} />
                       <Route path="/admin/parametres" element={<RequirePermission module="parametres"><Settings /></RequirePermission>} />
+                      <Route path="/q/:kind/:id" element={<QrResolve />} />
+                      <Route path="/scan" element={<ScanQr />} />
                       <Route path="/compte" element={<Account />} />
                       <Route path="*" element={<NotFound />} />
                     </Routes>

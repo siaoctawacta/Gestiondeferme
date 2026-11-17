@@ -7,9 +7,12 @@ import { AuthProvider } from '../../lib/auth';
 import { setAccessToken, setFarmHeader } from '../../lib/api';
 import { Eye } from 'lucide-react';
 import { api } from '../../lib/api';
-import { batiments, type Building } from '../../modules/batiments';
+import { batiments as batimentsConfig, type Building } from '../../modules/batiments';
 import type { ModuleConfig } from './types';
 import { ModuleList, ModulePage } from './ModulePage';
+
+// The kit tests start from a list without a QR code (the batiments config has one): the QR tests add it.
+const batiments: ModuleConfig<Building> = { ...batimentsConfig, qr: undefined };
 
 function json(status: number, body?: unknown): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -31,7 +34,7 @@ const calls: Call[] = [];
 const fetchMock = vi.fn<typeof fetch>();
 let handler: (c: Call) => Response | undefined;
 
-function setup({ perms = ALL, farm, config = batiments, list = false, scope, readOnly, noCreate }: { perms?: string[]; farm?: string; config?: ModuleConfig<Building>; list?: boolean; scope?: Record<string, string>; readOnly?: boolean; noCreate?: boolean } = {}) {
+function setup({ perms = ALL, farm, config = batiments, list = false, scope, readOnly }: { perms?: string[]; farm?: string; config?: ModuleConfig<Building>; list?: boolean; scope?: Record<string, string>; readOnly?: boolean | string } = {}) {
   if (farm) localStorage.setItem('ap_farm', farm);
   handler = () => undefined;
   fetchMock.mockImplementation(async (input, init) => {
@@ -58,7 +61,7 @@ function setup({ perms = ALL, farm, config = batiments, list = false, scope, rea
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter>
         <AuthProvider>
-          {list ? <ModuleList config={config} scope={scope} readOnly={readOnly} noCreate={noCreate} /> : <ModulePage config={config} />}
+          {list ? <ModuleList config={config} scope={scope} readOnly={readOnly} /> : <ModulePage config={config} />}
         </AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
@@ -261,12 +264,17 @@ describe('ModulePage with the batiments config', () => {
   it('shows the QR button only when the config asks for it', async () => {
     setup();
     await screen.findByText('Poulailler A');
-    expect(screen.queryByRole('link', { name: 'QR code' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'QR code' })).not.toBeInTheDocument();
   });
 
-  it('shows the QR button when config.qr is set', async () => {
-    setup({ config: { ...batiments, qr: true, detailPath: (b) => `/m/batiments/${b.id}` } });
-    expect((await screen.findAllByRole('link', { name: 'QR code' }))[0]).toHaveAttribute('href', '/m/batiments/b1');
+  it('shows the QR button on every row when config.qr is a kind, and on the rows the function names', async () => {
+    setup({ config: { ...batiments, qr: 'batiment' } });
+    expect(await screen.findAllByRole('button', { name: 'QR code' })).toHaveLength(2);
+    cleanup();
+    setup({ config: { ...batiments, qr: (b) => (b.id === 'b1' ? 'batiment' : null) } });
+    await screen.findByText('Poulailler A');
+    expect(screen.getAllByRole('button', { name: 'QR code' })).toHaveLength(1);
+    expect(within(screen.getByText('Porcherie 2').closest('tr')!).queryByRole('button', { name: 'QR code' })).toBeNull();
   });
 
   it('renders the second tab with its own list', async () => {
@@ -510,19 +518,7 @@ describe('ModulePage kit extensions', () => {
     expect(listCalls().every((c) => c.url.includes('buildingId=b9'))).toBe(true);
   });
 
-  it('ModuleList noCreate hides Ajouter only: the rows keep their edit and delete icons', async () => {
-    setup({ list: true, noCreate: true });
-    await screen.findByText('Poulailler A');
-    expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
-    const row = within(screen.getByText('Poulailler A').closest('tr')!);
-    expect(row.getByRole('button', { name: 'Modifier' })).toBeInTheDocument();
-    expect(row.getByRole('button', { name: 'Supprimer' })).toBeInTheDocument();
-    cleanup();
-    setup({ list: true });
-    expect(await screen.findByRole('button', { name: 'Ajouter' })).toBeInTheDocument();
-  });
-
-  it('ModuleConfig.noCreate is the same flag as the ModuleList prop: no Ajouter on the page, in a list, with the rows kept', async () => {
+  it('ModuleConfig.noCreate hides Ajouter only: on the page and in a list, the rows keep their icons', async () => {
     setup({ config: { ...batiments, noCreate: true } });
     await screen.findByText('Poulailler A');
     expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
@@ -583,6 +579,66 @@ describe('ModulePage kit extensions', () => {
       await screen.findByText('Poulailler A');
       expect(names('Poulailler A')).toEqual([]);
       expect(names('Porcherie 2')).toEqual(['Clore']);
+    });
+  });
+
+  describe('a read-only list with a reason (closed lot, exited animal)', () => {
+    const run = vi.fn();
+    const REASON = 'Lot clôturé';
+    const withGates = (whenReadOnly?: ModuleConfig<Building>['whenReadOnly']): ModuleConfig<Building> => ({
+      ...batiments,
+      actions: [
+        { key: 'view', label: 'Voir détail', icon: Eye, run },
+        { key: 'close', label: 'Clore', icon: Eye, run },
+      ],
+      whenReadOnly,
+    });
+    const icon = (row: string, name: string) => within(screen.getByText(row).closest('tr')!).getByRole('button', { name });
+
+    it('keeps every row icon visible but disabled with the reason, and hides Ajouter', async () => {
+      setup({ list: true, readOnly: REASON, config: withGates() });
+      await screen.findByText('Poulailler A');
+      expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+      for (const name of ['Modifier', 'Supprimer', 'Voir détail', 'Clore']) {
+        expect(icon('Poulailler A', name)).toHaveAttribute('aria-disabled', 'true');
+        expect(icon('Poulailler A', name)).toHaveAttribute('title', REASON);
+      }
+    });
+
+    it('does nothing when a disabled icon is clicked', async () => {
+      run.mockReset();
+      setup({ list: true, readOnly: REASON, config: withGates() });
+      await screen.findByText('Poulailler A');
+      const user = userEvent.setup();
+      await user.click(icon('Poulailler A', 'Clore'));
+      await user.click(icon('Poulailler A', 'Supprimer'));
+      await user.click(icon('Poulailler A', 'Modifier'));
+      expect(run).not.toHaveBeenCalled();
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    });
+
+    it('lets through what whenReadOnly names, row by row, the rest staying disabled', async () => {
+      run.mockReset();
+      setup({ list: true, readOnly: REASON, config: withGates({ actions: { close: (b) => b.id === 'b1' }, canDelete: (b) => b.id === 'b2' }) });
+      await screen.findByText('Poulailler A');
+      expect(icon('Poulailler A', 'Clore')).not.toHaveAttribute('aria-disabled');
+      expect(icon('Porcherie 2', 'Clore')).toHaveAttribute('aria-disabled', 'true');
+      expect(icon('Porcherie 2', 'Supprimer')).not.toHaveAttribute('aria-disabled');
+      expect(icon('Poulailler A', 'Supprimer')).toHaveAttribute('aria-disabled', 'true');
+      expect(icon('Poulailler A', 'Modifier')).toHaveAttribute('title', REASON);
+      await userEvent.setup().click(icon('Poulailler A', 'Clore'));
+      expect(run).toHaveBeenCalledTimes(1);
+    });
+
+    it('still hides what the config hides (a final record) and what the permission refuses', async () => {
+      setup({ list: true, readOnly: REASON, config: { ...withGates(), canEdit: (b) => (b.id === 'b1' ? false : true) } });
+      await screen.findByText('Poulailler A');
+      expect(within(screen.getByText('Poulailler A').closest('tr')!).queryByRole('button', { name: 'Modifier' })).toBeNull();
+      expect(icon('Porcherie 2', 'Modifier')).toHaveAttribute('title', REASON);
+      cleanup();
+      setup({ list: true, readOnly: REASON, perms: ['read'], config: withGates() });
+      await screen.findByText('Poulailler A');
+      expect(within(screen.getByText('Poulailler A').closest('tr')!).queryAllByRole('button')).toEqual([]);
     });
   });
 

@@ -2,7 +2,7 @@ import { ActionDialog } from '../components/module/ActionDialog';
 import type { Field, ModuleConfig } from '../components/module/types';
 import { api } from '../lib/api';
 import { formatDate, todayIso } from '../lib/format';
-import { monthToDate, periodError } from '../pages/finance/period';
+import { periodError } from '../pages/finance/period';
 import { FinanceSummary } from '../pages/finance/FinanceSummary';
 import { LotProfitabilityTab } from '../pages/finance/LotProfitability';
 import {
@@ -97,7 +97,8 @@ export const finance: ModuleConfig<FinanceEntryRow> = {
     { param: 'activity', allLabel: 'Toutes les activités', options: ACTIVITIES },
     { param: 'category', allLabel: 'Toutes les catégories', options: [...EXPENSE_CATEGORIES, ...REVENUE_CATEGORIES] },
   ],
-  sharedFilters: { params: ['from', 'to'], defaults: monthToDate, validate: periodError },
+  // The period is shared by the three tabs; the entries list opens on all dates (no period), `Synthèse` fills in the month to date.
+  sharedFilters: { params: ['from', 'to'], defaults: () => ({ from: '', to: '' }), validate: periodError },
   form: FinanceForm,
   rowLabel: (r) => r.label,
   // A manual entry is a daily entry: whoever may enter it (`create`) corrects and withdraws it.

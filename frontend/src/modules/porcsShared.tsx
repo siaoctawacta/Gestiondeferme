@@ -135,11 +135,10 @@ export function ageLabel(birthDate: string | null | undefined, now: Date = new D
 /** Why the rows of an animal that left the herd are locked. */
 export const ANIMAL_LEFT = 'Animal sorti du cheptel';
 
-/** Weighings of one animal. `left`: the animal left the herd, so its rows keep disabled icons with the reason. */
-export function animalWeighings(animalId: string, left = false): ModuleConfig<AnimalWeighing> {
+/** Weighings of one animal. An animal that left the herd shows the list `readOnly={ANIMAL_LEFT}` (disabled icons with the reason). */
+export function animalWeighings(animalId: string): ModuleConfig<AnimalWeighing> {
   return {
     slug: 'porcs',
-    exportable: false,
     group: 'Production',
     title: 'Pesées',
     subtitle: "Pesées de l'animal.",
@@ -155,18 +154,15 @@ export function animalWeighings(animalId: string, left = false): ModuleConfig<An
     rowLabel: (w) => `Pesée du ${w.date}`,
     editPermission: 'create',
     deletePermission: 'create',
-    canEdit: () => (left ? ANIMAL_LEFT : true),
-    canDelete: () => (left ? ANIMAL_LEFT : true),
     toPayload: (v) => ({ date: v.date, weightKg: num(v.weightKg) }),
   };
 }
 
-/** Heats of one sow. */
-export function animalHeats(animalId: string, left = false): ModuleConfig<Heat> {
+/** Heats of one sow; `readOnly={ANIMAL_LEFT}` once the animal left the herd. */
+export function animalHeats(animalId: string): ModuleConfig<Heat> {
   return {
     // The API serves heats and breeding history under the `reproduction` module.
     slug: 'reproduction',
-    exportable: false,
     group: 'Production',
     title: 'Chaleurs',
     subtitle: 'Chaleurs de la truie.',
@@ -182,8 +178,6 @@ export function animalHeats(animalId: string, left = false): ModuleConfig<Heat> 
     rowLabel: (h) => `Chaleurs du ${h.date}`,
     editPermission: 'create',
     deletePermission: 'create',
-    canEdit: () => (left ? ANIMAL_LEFT : true),
-    canDelete: () => (left ? ANIMAL_LEFT : true),
     toPayload: (v) => ({ date: v.date, note: text(v.note) }),
   };
 }

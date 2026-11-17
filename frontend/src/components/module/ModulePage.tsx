@@ -1,4 +1,4 @@
-import { useContext, useEffect, useId, useState, type ReactNode } from 'react';
+import { Suspense, useContext, useEffect, useId, useState, type ReactNode } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Plus } from 'lucide-react';
 import { api } from '../../lib/api';
@@ -18,11 +18,14 @@ import { ErrorRetry } from './ErrorRetry';
 import { errorMessage } from './errorMessage';
 import { ExportMenu } from './ExportMenu';
 import { PageHeader } from './PageHeader';
+import { QrDialog } from './QrDialog';
+import { QrLabelSheet, type LabelRow } from './QrLabelSheet';
 import { Pagination, pageCount } from './Pagination';
 import { RecordDialog } from './RecordDialog';
 import { canRunAction } from './rowActions';
 import { StatTiles, type StatTile } from './StatTiles';
 import { TabBar, panelId, tabId } from './TabBar';
+import type { QrKind } from '../../lib/qr';
 import type { FilterDef, ListResponse, ModuleConfig, RowAction } from './types';
 import { useEndpointOptions } from './useEndpointOptions';
 import { useListState } from './useListState';
@@ -54,26 +57,27 @@ export interface ModuleListProps<T extends { id: string }> {
   config: ModuleConfig<T>;
   /** Fixed query parameters (merged over `config.scope`) for the list and the create payloads; never shown as filters. */
   scope?: Record<string, string>;
-  /** Hides the add, edit and delete controls and the writing row actions (e.g. the embedded lists of a closed lot). */
-  readOnly?: boolean;
-  /** Hides `Ajouter` only: the rows keep their icons (disabled by `canEdit` / `canDelete` when the config says so). The same flag as `ModuleConfig.noCreate`; either one hides it. */
-  noCreate?: boolean;
+  /** The list is read-only: `true` hides every write control, a reason keeps the row icons disabled with it. The gating model is in `types.ts`. */
+  readOnly?: boolean | string;
 }
 
 /**
  * The list of a module without its page header, tiles and tabs, for embedding in a detail page: search, filters,
  * table, pagination, and the export / add buttons at the top right of the card.
  */
-export function ModuleList<T extends { id: string }>({ config, scope, readOnly, noCreate }: ModuleListProps<T>) {
-  return <ModuleView config={config} layout="list" scope={scope} readOnly={readOnly} noCreate={noCreate} />;
+export function ModuleList<T extends { id: string }>({ config, scope, readOnly }: ModuleListProps<T>) {
+  return <ModuleView config={config} layout="list" scope={scope} readOnly={readOnly} />;
 }
 
 /** `page`: header, tiles and tabs; `tab`: a further tab of a page (buttons above the card); `list`: card only. */
 type Layout = 'page' | 'tab' | 'list';
 
 function ModuleView<T extends { id: string }>({
-  config, layout, scope: scopeProp, readOnly = false, noCreate = false,
-}: { config: ModuleConfig<T>; layout: Layout; scope?: Record<string, string>; readOnly?: boolean; noCreate?: boolean }) {
+  config, layout, scope: scopeProp, readOnly: readOnlyProp = false,
+}: { config: ModuleConfig<T>; layout: Layout; scope?: Record<string, string>; readOnly?: boolean | string }) {
+  // `true`: no write control at all; a reason: the icons stay, disabled with it; `false` / empty: writable.
+  const readOnly = readOnlyProp !== false && readOnlyProp !== '';
+  const reason = typeof readOnlyProp === 'string' && readOnlyProp !== '' ? readOnlyProp : undefined;
   const embedded = layout !== 'page';
   const scope = config.scope || scopeProp ? { ...config.scope, ...scopeProp } : undefined;
   const { can, farmId, reload } = useAuth();
@@ -95,6 +99,8 @@ function ModuleView<T extends { id: string }>({
   const [deleting, setDeleting] = useState<T | null>(null);
   const [acting, setActing] = useState<{ action: RowAction<T>; row: T } | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
+  const [qrOf, setQrOf] = useState<{ id: string; kind: QrKind } | null>(null);
+  const [labels, setLabels] = useState<LabelRow[] | null>(null);
   const onMain = tab === 'main';
 
   useEffect(() => {
@@ -135,11 +141,12 @@ function ModuleView<T extends { id: string }>({
 
   const scoped = config.farmScoped !== false;
   const writable = !scoped || farmId !== 'all';
-  const hideAdd = noCreate || config.noCreate === true;
-  const canCreate = !readOnly && !hideAdd && can(config.slug, config.createPermission ?? 'create') && writable;
-  const canEditRows = !readOnly && can(config.slug, config.editPermission ?? 'update') && writable;
+  const canCreate = !readOnly && config.noCreate !== true && can(config.slug, config.createPermission ?? 'create') && writable;
+  // A reason keeps the icons (disabled); `true` removes them, but for what `whenReadOnly` lets through.
+  const hidden = readOnly && !reason;
+  const canEditRows = !hidden && can(config.slug, config.editPermission ?? 'update') && writable;
   const closedGates = readOnly ? config.whenReadOnly : undefined;
-  const canDeleteRows = (!readOnly || Boolean(closedGates?.canDelete)) && can(config.slug, config.deletePermission ?? 'delete') && writable;
+  const canDeleteRows = (!hidden || Boolean(closedGates?.canDelete)) && can(config.slug, config.deletePermission ?? 'delete') && writable;
   const readOnlyBecauseAllFarms =
     !writable && (can(config.slug, 'create') || can(config.slug, 'update') || can(config.slug, 'delete'));
 
@@ -150,12 +157,13 @@ function ModuleView<T extends { id: string }>({
   };
 
   const tableActions: TableAction<T>[] = (config.actions ?? [])
-    .filter((a) => (!readOnly || closedGates?.actions?.[a.key]) && canRunAction(a.permission, config.slug, can, writable && !(a.needsFarm && farmId === 'all')))
+    .filter((a) => (!hidden || closedGates?.actions?.[a.key]) && canRunAction(a.permission, config.slug, can, writable && !(a.needsFarm && farmId === 'all')))
     .map((a) => ({
       key: a.key,
       label: a.label,
       icon: a.icon,
-      visible: (row: T) => (a.visible?.(row, { can }) ?? true) && (!readOnly || closedGates!.actions![a.key](row)),
+      visible: (row: T) => (a.visible?.(row, { can }) ?? true) && (!hidden || closedGates!.actions![a.key](row)),
+      disabled: (row: T) => (reason && !closedGates?.actions?.[a.key]?.(row) ? reason : undefined),
       run: (row) => {
         if (a.dialog) {
           setActing({ action: a, row });
@@ -190,6 +198,22 @@ function ModuleView<T extends { id: string }>({
       : []),
   ];
 
+  // Built-in edit / delete gates: the config's per-row answer, then the list's reason on top (a `false` stays hidden).
+  const gateWith = (own: ((row: T) => boolean | string) | undefined, letThrough?: (row: T) => boolean) =>
+    reason || (hidden && letThrough)
+      ? (row: T) => {
+          const g = own?.(row) ?? true;
+          if (g === false) return false;
+          if (reason) return letThrough?.(row) ? g : reason;
+          return letThrough!(row) ? g : false;
+        }
+      : own;
+  const qrKind = (row: T): QrKind | null => (typeof config.qr === 'function' ? config.qr(row) : (config.qr ?? null));
+  const labelRows: LabelRow[] = (list.data?.items ?? []).flatMap((row) => {
+    const kind = qrKind(row);
+    return kind ? [{ id: row.id, kind }] : [];
+  });
+
   const actions: ReactNode = (
     <>
       {readOnlyBecauseAllFarms && (
@@ -201,6 +225,7 @@ function ModuleView<T extends { id: string }>({
           filename={config.slug}
           params={{ ...params, ...scope }}
           onError={(message) => setNotice({ tone: 'error', message })}
+          onLabels={config.qr ? () => (labelRows.length > 0 ? setLabels(labelRows) : setNotice({ tone: 'error', message: 'Aucune étiquette à imprimer sur cette page' })) : undefined}
         />
       )}
       {canCreate && (
@@ -256,12 +281,12 @@ function ModuleView<T extends { id: string }>({
               sort={sort}
               onSort={toggleSort}
               detailPath={detailPath}
-              qr={config.qr}
+              qr={config.qr ? { kindOf: qrKind, open: (row, kind) => setQrOf({ id: row.id, kind }) } : undefined}
               actions={tableActions}
               onEdit={canEditRows ? setEditing : undefined}
               onDelete={canDeleteRows ? setDeleting : undefined}
-              canEdit={config.canEdit}
-              canDelete={closedGates?.canDelete ? (row) => (closedGates.canDelete!(row) ? (config.canDelete?.(row) ?? true) : false) : config.canDelete}
+              canEdit={gateWith(config.canEdit)}
+              canDelete={gateWith(config.canDelete, closedGates?.canDelete)}
             />
           </div>
         )}
@@ -286,12 +311,17 @@ function ModuleView<T extends { id: string }>({
           onSaved={() => { setEditing(null); afterWrite(); }}
         />
       )}
+      {qrOf && <QrDialog kind={qrOf.kind} id={qrOf.id} onClose={() => setQrOf(null)} />}
+      {labels && <QrLabelSheet title={config.title} rows={labels} onClose={() => setLabels(null)} />}
       {acting?.action.dialog && (
-        <acting.action.dialog
-          row={acting.row}
-          onClose={() => setActing(null)}
-          onDone={() => { setActing(null); afterWrite(); }}
-        />
+        // A dialog may be a lazy component (a print sheet): the page stays while it loads.
+        <Suspense fallback={null}>
+          <acting.action.dialog
+            row={acting.row}
+            onClose={() => setActing(null)}
+            onDone={() => { setActing(null); afterWrite(); }}
+          />
+        </Suspense>
       )}
       {deleting && (
         <ConfirmDialog
