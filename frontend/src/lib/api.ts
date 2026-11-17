@@ -178,6 +178,20 @@ export function saveBlob(blob: Blob, filename: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 30_000);
 }
 
+/** The filename of a `Content-Disposition: attachment; filename="…"` header, when the server announces one. */
+function announcedFilename(res: Response): string | null {
+  const header = res.headers.get('content-disposition') ?? '';
+  const encoded = /filename\*=UTF-8''([^;]+)/i.exec(header)?.[1];
+  if (encoded) {
+    try {
+      return decodeURIComponent(encoded);
+    } catch {
+      /* fall through to the plain filename */
+    }
+  }
+  return /filename="?([^";]+)"?/i.exec(header)?.[1] ?? null;
+}
+
 export const api = {
   get: <T>(path: string, params?: Params, opts?: RequestOptions) =>
     request<T>('GET', path, { params, ...opts }),
@@ -196,6 +210,6 @@ export const api = {
   async download(path: string, params: Params | undefined, filename: string): Promise<void> {
     const res = await sendWithRetry('GET', path, { params });
     if (!res.ok) throw await toError(res);
-    saveBlob(await res.blob(), filename);
+    saveBlob(await res.blob(), announcedFilename(res) ?? filename);
   },
 };

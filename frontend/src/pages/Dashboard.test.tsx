@@ -10,8 +10,6 @@ import Alerts from './Alerts';
 import Audit from './Audit';
 import Dashboard from './Dashboard';
 import '../modules';
-import Reports from './Reports';
-import { buildCsv } from './reportCsv';
 import { EggChart, niceDomain } from './dashboard/EggChart';
 import { Shell } from '../App';
 import { RequireAuth } from '../components/shell/guards';
@@ -210,34 +208,6 @@ describe('Dashboard without finance access', () => {
     expect(layout('farm-alerts-row')).toContain('lg:grid-cols-3');
   });
 
-  it('makes no /finance request from the report and shows no activity placeholder while loading for a role without finance', async () => {
-    mount(<Reports />, (u) => (u === '/api/dashboard' ? (new Promise<Response>(() => {}) as unknown as Response) : undefined));
-    const busy = await screen.findByLabelText('Chargement');
-    expect(busy.querySelectorAll('.h-28')).toHaveLength(0);
-    expect(urls.some((u) => u.includes('/finance'))).toBe(false);
-  });
-
-  it('leaves the financial rows and the activity blocks out of the report', async () => {
-    mount(<Reports />, (u) => (u === '/api/dashboard' ? json(200, { ...FULL, profitability: null, revenueVsExpenses: null }) : undefined));
-    const rows = await screen.findAllByRole('row');
-    expect(rows).toHaveLength(9); // header + 8 operational indicators
-    for (const label of ["Chiffre d'affaires", 'Dépenses', 'Marge indicative', 'Créances clients']) expect(screen.queryByText(label)).not.toBeInTheDocument();
-    expect(screen.getByText('Alertes ouvertes')).toBeInTheDocument();
-    expect(screen.queryByText(/^Activité /)).not.toBeInTheDocument();
-  });
-
-  it('exports a CSV without the financial rows', async () => {
-    let blob: Blob | undefined;
-    URL.createObjectURL = vi.fn((b: Blob | MediaSource) => { blob = b as Blob; return 'blob:x'; });
-    URL.revokeObjectURL = vi.fn();
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    mount(<Reports />, (u) => (u === '/api/dashboard' ? json(200, { ...FULL, profitability: null, revenueVsExpenses: null }) : undefined));
-    await userEvent.click(await screen.findByRole('button', { name: 'CSV' }));
-    const text = await blob!.text();
-    expect(text).toContain('"Volailles vivantes"');
-    expect(text).not.toContain('Marge indicative');
-    expect(text).not.toContain("Chiffre d'affaires");
-  });
 });
 
 describe('Alerts', () => {
@@ -251,22 +221,6 @@ describe('Alerts', () => {
   it('shows an empty state', async () => {
     mount(<Alerts />, (u) => (u === '/api/alerts' ? json(200, { total: 0, items: [] }) : undefined));
     expect(await screen.findByText('Aucune alerte pour le moment.')).toBeInTheDocument();
-  });
-});
-
-describe('Reports', () => {
-  it('builds the indicator table and activity cards from the dashboard', async () => {
-    mount(<Reports />, (u) => (u === '/api/dashboard' ? json(200, FULL) : undefined));
-    const rows = await screen.findAllByRole('row');
-    expect(rows).toHaveLength(13); // header + 12 indicators
-    expect(within(rows[11]).getByText('Créances clients')).toBeInTheDocument();
-    expect(within(rows[11]).getByText('400 000 FCFA')).toBeInTheDocument();
-    expect(within(rows[12]).getByText('14')).toBeInTheDocument();
-    expect(screen.getByText('Activité Avicole')).toBeInTheDocument();
-    expect(screen.getByText('910 000 FCFA')).toBeInTheDocument();
-    expect(screen.getByText('−1 135 000 FCFA')).toBeInTheDocument();
-    expect(screen.getByText('Recettes 2 050 000 FCFA · Dépenses 1 140 000 FCFA')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /Imprimer/ })).toBeInTheDocument();
   });
 });
 
@@ -353,55 +307,6 @@ describe('EggChart', () => {
   it('draws a visible dot for a one-point series', () => {
     const { container } = renderChart([{ date: '2026-10-22', eggs: 2480 }]);
     expect(container.querySelector('.recharts-dot')).not.toBeNull();
-  });
-});
-
-describe('Reports actions', () => {
-  it('prints with window.print', async () => {
-    const print = vi.fn();
-    vi.stubGlobal('print', print);
-    mount(<Reports />, (u) => (u === '/api/dashboard' ? json(200, FULL) : undefined));
-    await userEvent.click(await screen.findByRole('button', { name: /Imprimer/ }));
-    expect(print).toHaveBeenCalledOnce();
-  });
-
-  it('exports plain numbers with the unit in its own column', async () => {
-    let blob: Blob | undefined;
-    URL.createObjectURL = vi.fn((b: Blob | MediaSource) => { blob = b as Blob; return 'blob:x'; });
-    URL.revokeObjectURL = vi.fn();
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
-    const dto = { ...FULL, profitability: { ...FULL.profitability, margin: -1135000 } };
-    mount(<Reports />, (u) => (u === '/api/dashboard' ? json(200, dto) : undefined));
-    await userEvent.click(await screen.findByRole('button', { name: 'CSV' }));
-    const text = await blob!.text();
-    expect(text).toContain('"Marge indicative";-1135000;"FCFA"');
-    expect(text).toContain('"Volailles vivantes";11570;""');
-  });
-});
-
-describe('buildCsv', () => {
-  it('writes BOM, ; separator, CRLF, doubled quotes and neutralised formulas', () => {
-    const csv = buildCsv([
-      { label: 'Marge "nette"', display: '', value: -1135000, unit: 'FCFA' },
-      { label: '=SOMME(A1)', display: '', value: null, unit: '' },
-    ]);
-    expect(csv.startsWith('\uFEFF"Indicateur";"Valeur";"Unité"\r\n')).toBe(true);
-    const lines = csv.slice(1).split('\r\n');
-    expect(lines[1]).toBe('"Marge ""nette""";-1135000;"FCFA"');
-    expect(lines[2]).toBe('"\'=SOMME(A1)";"";""');
-    expect(csv.endsWith('\r\n')).toBe(true);
-  });
-
-  it('writes non-integers with a decimal comma and integers bare', () => {
-    const csv = buildCsv([
-      { label: 'Taux de mortalité', display: '', value: 3.6, unit: '%' },
-      { label: 'Marge', display: '', value: -2.5, unit: 'FCFA' },
-      { label: 'Œufs', display: '', value: 2480, unit: '' },
-    ]);
-    const lines = csv.slice(1).split('\r\n');
-    expect(lines[1]).toBe('"Taux de mortalité";3,6;"%"');
-    expect(lines[2]).toBe('"Marge";-2,5;"FCFA"');
-    expect(lines[3]).toBe('"Œufs";2480;""');
   });
 });
 

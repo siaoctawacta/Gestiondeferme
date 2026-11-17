@@ -174,4 +174,20 @@ describe('api client: files', () => {
     fetchMock.mockResolvedValueOnce(json(404, { message: 'Introuvable' }));
     await expect(api.blob('/tasks/t2/proof')).rejects.toMatchObject({ status: 404, message: 'Introuvable' });
   });
+  it('downloads with the filename the server announces, the given one when it announces none', async () => {
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    const names: string[] = [];
+    URL.createObjectURL = vi.fn(() => 'blob:x');
+    URL.revokeObjectURL = vi.fn();
+    const append = vi.spyOn(document.body, 'appendChild').mockImplementation((n) => { names.push((n as HTMLAnchorElement).download); return n; });
+    const file = (headers: Record<string, string>) =>
+      Object.assign(new Response(null, { status: 200, headers }), { blob: async () => new Blob(['x']) });
+    fetchMock.mockResolvedValueOnce(file({ 'content-disposition': 'attachment; filename="rapport-synthese-2026-11-01_2026-11-14.csv"' }));
+    await api.download('/reports/synthese', { format: 'csv' }, 'fallback.csv');
+    fetchMock.mockResolvedValueOnce(file({}));
+    await api.download('/reports/synthese', { format: 'csv' }, 'fallback.csv');
+    expect(names).toEqual(['rapport-synthese-2026-11-01_2026-11-14.csv', 'fallback.csv']);
+    click.mockRestore();
+    append.mockRestore();
+  });
 });

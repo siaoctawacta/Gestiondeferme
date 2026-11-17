@@ -1,0 +1,18 @@
+/* The printed report (Rapports): shell and controls are hidden elsewhere (`print:hidden`); rows never split, a section moves to the next page only when it would not fit. */
+@media print {
+  .report tr {
+    break-inside: avoid;
+  }
+  .report thead {
+    display: table-header-group;
+  }
+  .report-section {
+    break-inside: auto;
+  }
+  .report-section > h2 {
+    break-after: avoid;
+  }
+  .report-section:has(> .grid) {
+    break-inside: avoid;
+  }
+}
