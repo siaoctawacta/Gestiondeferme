@@ -14,7 +14,9 @@ generator client {
 // The finance ledger is a SQL view, "FinanceLedgerView", created by migration
 // 20261116090000_finance_ledger and not modelled here (nothing writes it). It
 // reads FinanceEntry, Purchase, PurchaseItem, Supplier, AnimalBatch, Invoice,
-// InvoiceLine, Customer, CreditNote and CreditNoteLine (each carries a note).
+// InvoiceLine, Customer, CreditNote, CreditNoteLine, Maintenance, Equipment and
+// Building (each carries a note). Migration 20261117150000_slice5_equipment
+// replaced it in place (CREATE OR REPLACE) to add the MAINTENANCE branch.
 // Migration convention: a migration that renames, retypes or drops a column the
 // view reads must DROP VIEW first, change the table, then CREATE VIEW again with
 // the same text; `finance-ledger.spec.ts` reads the LAST migration that defines it.
@@ -195,6 +197,9 @@ model Farm {
   employees         Employee[]
   attendances       Attendance[]
   tasks             Task[]
+  equipment         Equipment[]
+  maintenances      Maintenance[]
+  breakdowns        Breakdown[]
 }
 
 model Site {
@@ -205,6 +210,7 @@ model Site {
   createdAt DateTime   @default(now())
   updatedAt DateTime   @updatedAt
   buildings Building[]
+  equipment Equipment[]
 
   @@unique([farmId, name])
 }
@@ -230,6 +236,7 @@ model Building {
   tasks             Task[]
   healthIncidents   HealthIncident[]
   biosecurityLogs   BiosecurityLog[]
+  equipment         Equipment[]
 
   @@unique([farmId, name])
   @@index([siteId])
@@ -299,6 +306,8 @@ model User {
   customerPayments     CustomerPayment[]
   creditNotes          CreditNote[]
   financeEntries       FinanceEntry[]
+  maintenancesCreated  Maintenance[]
+  breakdownsReported   Breakdown[]
 }
 
 model UserFarm {
@@ -979,6 +988,7 @@ model Supplier {
   createdAt      DateTime     @default(now())
   updatedAt      DateTime     @updatedAt
   purchases      Purchase[]
+  maintenances   Maintenance[]
 
   @@unique([organizationId, name])
 }
@@ -1727,8 +1737,8 @@ model Task {
   batch          AnimalBatch?   @relation(fields: [batchId], references: [id], onDelete: Restrict)
   buildingId     String?
   building       Building?      @relation(fields: [buildingId], references: [id], onDelete: Restrict)
-  /// The foreign key to Equipment is added with that table (equipment module).
   equipmentId    String?
+  equipment      Equipment?     @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
   startedAt      DateTime?
   /// Set exactly while TERMINEE.
   completedDate  DateTime?      @db.Date
@@ -1755,4 +1765,110 @@ model Task {
   @@index([equipmentId])
   @@index([completedById])
   @@index([createdById])
+}
+
+enum EquipmentType {
+  COUVEUSE
+  BALANCE
+  POMPE
+  GROUPE_ELECTROGENE
+  VENTILATEUR
+  CHAUFFAGE
+  ABREUVOIR
+  MANGEOIRE
+  VEHICULE
+  AUTRE
+}
+
+/// `EN_PANNE` is entered only by declaring a breakdown and left only by a corrective intervention that repairs it.
+enum EquipmentCondition {
+  BON
+  A_SURVEILLER
+  EN_PANNE
+}
+
+enum MaintenanceKind {
+  PREVENTIVE
+  CORRECTIVE
+}
+
+/// A piece of equipment of a farm, at a site or in a building (or nowhere yet). Never deleted once it has history: it is retired.
+model Equipment {
+  id                      String             @id @default(cuid())
+  farmId                  String
+  farm                    Farm               @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  name                    String
+  type                    EquipmentType
+  siteId                  String?
+  site                    Site?              @relation(fields: [siteId], references: [id], onDelete: Restrict)
+  buildingId              String?
+  building                Building?          @relation(fields: [buildingId], references: [id], onDelete: Restrict)
+  brand                   String?
+  serialNumber            String?
+  purchaseDate            DateTime?          @db.Date
+  maintenanceIntervalDays Int?
+  firstMaintenanceDate    DateTime?          @db.Date
+  /// Cache of `nextMaintenance()` (equipment-state.ts), recomputed under the row lock on every intervention write.
+  nextMaintenanceDate     DateTime?          @db.Date
+  condition               EquipmentCondition @default(BON)
+  retiredAt               DateTime?          @db.Date
+  note                    String?
+  createdAt               DateTime           @default(now())
+  updatedAt               DateTime           @updatedAt
+  maintenances            Maintenance[]
+  breakdowns              Breakdown[]
+  tasks                   Task[]
+
+  @@unique([farmId, name])
+  @@index([farmId, condition])
+  @@index([farmId, nextMaintenanceDate])
+  @@index([siteId])
+  @@index([buildingId])
+}
+
+/// An intervention on a piece of equipment. Its cost is a finance expense (`Entretien`) read through the finance view, never a lot cost.
+model Maintenance {
+  id          String          @id @default(cuid())
+  farmId      String
+  farm        Farm            @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  equipmentId String
+  equipment   Equipment       @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
+  kind        MaintenanceKind
+  date        DateTime        @db.Date
+  description String
+  performedBy String?
+  supplierId  String?
+  supplier    Supplier?       @relation(fields: [supplierId], references: [id], onDelete: Restrict)
+  cost        Decimal         @default(0) @db.Decimal(14, 2)
+  nextDate    DateTime?       @db.Date
+  createdById String
+  createdBy   User            @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt   DateTime        @default(now())
+  repairs     Breakdown?
+
+  @@index([farmId])
+  @@index([equipmentId, date])
+  @@index([supplierId])
+  @@index([createdById])
+}
+
+/// A declared failure; resolved by the corrective intervention that repairs it. One open breakdown per equipment (partial unique index in the migration).
+model Breakdown {
+  id           String       @id @default(cuid())
+  farmId       String
+  farm         Farm         @relation(fields: [farmId], references: [id], onDelete: Restrict)
+  equipmentId  String
+  equipment    Equipment    @relation(fields: [equipmentId], references: [id], onDelete: Restrict)
+  date         DateTime     @db.Date
+  description  String
+  reportedById String
+  reportedBy   User         @relation(fields: [reportedById], references: [id], onDelete: Restrict)
+  repairId     String?      @unique
+  repair       Maintenance? @relation(fields: [repairId], references: [id], onDelete: Restrict)
+  resolvedDate DateTime?    @db.Date
+  createdAt    DateTime     @default(now())
+
+  @@index([farmId])
+  @@index([equipmentId])
+  @@index([reportedById])
 }

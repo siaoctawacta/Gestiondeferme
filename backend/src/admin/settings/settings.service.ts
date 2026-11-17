@@ -26,6 +26,25 @@ const positiveInteger =
     return value;
   };
 
+/** A whole number of days that may be 0 (0, 1, 2...). */
+const nonNegativeInteger =
+  (label: string, max?: number) =>
+  (value: unknown): number => {
+    if (
+      typeof value !== 'number' ||
+      !Number.isSafeInteger(value) ||
+      value < 0
+    ) {
+      throw new BadRequestException(
+        `${label} doit être un nombre entier supérieur ou égal à 0`,
+      );
+    }
+    if (max !== undefined && value > max) {
+      throw new BadRequestException(`${label} ne peut pas dépasser ${max}`);
+    }
+    return value;
+  };
+
 /** A percentage in ]0, 100]. */
 const percentage =
   (label: string) =>
@@ -105,6 +124,10 @@ const SETTINGS: Record<string, SettingDefinition> = {
     default: 3,
     parse: positiveInteger("Le délai d'alerte de vaccination"),
   },
+  maintenanceWarningDays: {
+    default: 0,
+    parse: nonNegativeInteger("Le délai d'alerte de maintenance", 365),
+  },
   gestationDays: {
     default: 114,
     parse: positiveInteger('La durée de gestation'),
@@ -133,6 +156,9 @@ export interface DocumentSettings {
 /** The settings the sales documents snapshot (days to pay an invoice, eggs in a tray). */
 export type SaleSetting = 'invoiceDueDays' | 'eggsPerTray';
 
+/** The whole-number settings `number()` reads. */
+export type NumberSetting = SaleSetting | 'maintenanceWarningDays';
+
 @Injectable()
 export class SettingsService {
   constructor(private readonly prisma: PrismaService) {}
@@ -154,7 +180,7 @@ export class SettingsService {
   /** One whole-number setting of the organisation (its stored value or the default); inside `tx` when given. */
   async number(
     organizationId: string,
-    key: SaleSetting,
+    key: NumberSetting,
     tx?: Prisma.TransactionClient,
   ): Promise<number> {
     const stored = await (tx ?? this.prisma).setting.findUnique({

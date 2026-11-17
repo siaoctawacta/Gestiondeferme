@@ -277,9 +277,12 @@ export class TasksService {
       });
       if (!building) throw new BadRequestException(BUILDING_INVALID);
     }
-    // The equipment table arrives with the equipment module: until then no id is one of the farm's.
     if (next.equipmentId && next.equipmentId !== before?.equipmentId) {
-      throw new BadRequestException(EQUIPMENT_INVALID);
+      const equipment = await tx.equipment.findFirst({
+        where: { id: next.equipmentId, farmId, retiredAt: null },
+        select: { id: true },
+      });
+      if (!equipment) throw new BadRequestException(EQUIPMENT_INVALID);
     }
   }
 
@@ -506,7 +509,7 @@ export class TasksService {
    * (taken by `advance`), then the assignee's employee row, the same as
    * `assertAssignee`, so a departure date entered meanwhile either waits for
    * this write or is seen by it: the occurrence is never left due after the
-   * departure. A lot closed since is left out of the occurrence (it must never
+   * departure. A lot closed or an equipment retired since is left out of the occurrence (it must never
    * fail the completion).
    */
   private async occurrence(
@@ -535,6 +538,14 @@ export class TasksService {
       });
       if (!open) batchId = null;
     }
+    let equipmentId = from.equipmentId;
+    if (equipmentId) {
+      const inService = await tx.equipment.findFirst({
+        where: { id: equipmentId, farmId: from.farmId, retiredAt: null },
+        select: { id: true },
+      });
+      if (!inService) equipmentId = null;
+    }
     const created = await tx.task.create({
       data: {
         farmId: from.farmId,
@@ -548,7 +559,7 @@ export class TasksService {
         recurrenceDay: from.recurrence === 'MENSUELLE' ? anchorDay : null,
         batchId,
         buildingId: from.buildingId,
-        equipmentId: from.equipmentId,
+        equipmentId,
         previousTaskId: from.id,
         createdById: ctx.user.id,
       },

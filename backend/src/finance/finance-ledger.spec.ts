@@ -42,7 +42,14 @@ describe('finance ledger SQL', () => {
   });
 
   it('defines one branch per origin', () => {
-    for (const origin of ['MANUEL', 'ACHAT', 'LOT', 'FACTURE', 'AVOIR']) {
+    for (const origin of [
+      'MANUEL',
+      'ACHAT',
+      'LOT',
+      'FACTURE',
+      'AVOIR',
+      'MAINTENANCE',
+    ]) {
       expect(view.split(`'${origin}'`).length - 1).toBe(1);
     }
   });
@@ -55,6 +62,7 @@ describe('finance ledger helpers', () => {
       'lot:b',
       'facture:i:AVICOLE:X',
       'avoir:c:A:B',
+      'maintenance:m',
     ]) {
       expect(isDerivedId(id)).toBe(true);
     }

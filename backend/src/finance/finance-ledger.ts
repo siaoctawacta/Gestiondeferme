@@ -38,6 +38,8 @@ export interface LedgerFilter {
   activity?: Activity;
   category?: FinanceCategory;
   origin?: Origin;
+  /** Only the maintenance expenses of this equipment (its interventions' rows). */
+  equipmentId?: string;
   /** Calendar days, both bounds inclusive. */
   from?: Date;
   to?: Date;
@@ -74,6 +76,11 @@ function where(f: LedgerFilter): Prisma.Sql {
   if (f.activity) parts.push(Prisma.sql`v."activity"::text = ${f.activity}`);
   if (f.category) parts.push(Prisma.sql`v."category"::text = ${f.category}`);
   if (f.origin) parts.push(Prisma.sql`v."origin" = ${f.origin}`);
+  if (f.equipmentId) {
+    parts.push(
+      Prisma.sql`v."origin" = 'MAINTENANCE' AND EXISTS (SELECT 1 FROM "Maintenance" m WHERE m."id" = v."sourceId" AND m."equipmentId" = ${f.equipmentId})`,
+    );
+  }
   if (f.from) parts.push(Prisma.sql`v."date" >= ${formatDay(f.from)}::date`);
   if (f.to) parts.push(Prisma.sql`v."date" <= ${formatDay(f.to)}::date`);
   if (f.search) {

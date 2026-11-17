@@ -14,6 +14,7 @@ export const taskInclude = {
   },
   batch: { select: { code: true } },
   building: { select: { name: true } },
+  equipment: { select: { name: true } },
 } satisfies Prisma.TaskInclude;
 export type TaskRecord = Prisma.TaskGetPayload<{
   include: typeof taskInclude;
@@ -57,10 +58,7 @@ export const RECURRENCE_LABELS: Record<TaskRecurrenceValue, string> = {
   MENSUELLE: 'Chaque mois',
 };
 
-/**
- * The lot, building or equipment a task is about. The equipment label comes
- * with the equipment table (its relation joins `taskInclude`).
- */
+/** The lot, building or equipment a task is about. */
 function targetOf(row: TaskRecord): TaskItem['target'] {
   if (row.batchId && row.batch) {
     return { kind: 'LOT', id: row.batchId, label: row.batch.code };
@@ -68,8 +66,12 @@ function targetOf(row: TaskRecord): TaskItem['target'] {
   if (row.buildingId && row.building) {
     return { kind: 'BATIMENT', id: row.buildingId, label: row.building.name };
   }
-  if (row.equipmentId) {
-    return { kind: 'EQUIPEMENT', id: row.equipmentId, label: '' };
+  if (row.equipmentId && row.equipment) {
+    return {
+      kind: 'EQUIPEMENT',
+      id: row.equipmentId,
+      label: row.equipment.name,
+    };
   }
   return null;
 }

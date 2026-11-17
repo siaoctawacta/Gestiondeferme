@@ -746,6 +746,7 @@ describe('Users and settings (e2e)', () => {
         expiryWarningDays: 30,
         farrowingWarningDays: 7,
         vaccinationWarningDays: 3,
+        maintenanceWarningDays: 0,
         gestationDays: 114,
         invoiceDueDays: 15,
         eggsPerTray: 30,

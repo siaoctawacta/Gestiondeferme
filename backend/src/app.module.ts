@@ -7,6 +7,7 @@ import { BreedingModule } from './breeding/breeding.module';
 import { CustomersModule } from './customers/customers.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { EggsModule } from './eggs/eggs.module';
+import { EquipmentModule } from './equipment/equipment.module';
 import { FeedModule } from './feed/feed.module';
 import { FinanceModule } from './finance/finance.module';
 import { HerdModule } from './herd/herd.module';
@@ -45,6 +46,7 @@ import { TasksModule } from './tasks/tasks.module';
     DashboardModule,
     PersonnelModule,
     TasksModule,
+    EquipmentModule,
   ],
   controllers: [HealthController],
 })
