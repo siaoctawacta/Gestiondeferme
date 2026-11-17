@@ -1,35 +1,40 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { LONG_SUITE } from './suites.ts';
 import type { Browser, Locator, Page } from 'playwright';
 import {
   api, enrollAdmin, enrollUser, launch, newPage, PASSWORD, uiLoginWithBackupCode, uiLoginWithPassword, WEB_URL,
   type EnrolledAdmin, type EnrolledUser,
 } from './helpers.ts';
+import { API_URL } from './config.ts';
 
 /** Text with every kind of space (thin, no-break) turned into a plain one, so `1 050 000` matches however it is grouped. */
 const flat = (text: string) => text.replace(/\s+/g, ' ').trim();
 const day = (offset: number) => new Date(Date.now() + offset * 86_400_000).toISOString().slice(0, 10);
 /** An amount as the UI prints it, spaces flattened (`1 420 000 FCFA`). */
 const money = (n: number) => flat(`${new Intl.NumberFormat('fr-FR').format(n)} FCFA`);
+/** The legal identity the printed sheets must carry. */
+const LEGAL = { name: 'Ferme Commerce SARL', address: 'Route de Kpalimé, Lomé', nif: '1001234567', rccm: 'TG-LOM-2026-B-0042' };
 
 // The flow of the slice, one role per step, through the real UI; set-up that is not the point of a step goes through
 // the API. The tests below run in order and SHARE STATE (one farm, one customer, one invoice...), as in logistics.spec.ts.
-// The overdue invoice (FA-4) is dated and due YESTERDAY, so it is overdue on any day; on the first day of a month
+// Invoice numbers, in order of issue: FA-0001 chickens, FA-0002 eggs, FA-0003 a sale of the treated lot dated before its
+// treatment (cancelled at once), FA-0004 feed, FA-0005 the cancelled sale of the Propriétaire, FA-0006 the invoice made from a quote (cancelled),
+// FA-0007 the overdue invoice. Cancelled invoices weigh on no figure below.
+// The overdue invoice (the last one) is dated and due YESTERDAY, so it is overdue on any day; on the first day of a month
 // yesterday is in the previous month, and the month-to-date figures below then leave its 400 000 out (`overdueInMonth`).
 //
 // The figures are worked out here:
-// - FA-1: 300 chickens at 3 500 = 1 050 000; paid 600 000 at issue -> due 450 000 (Partielle); lot 5 000 -> 4 700.
-// - FA-2: 10 plateaux of eggs (30 each = 300 eggs) at 2 500 = 25 000; the laying lot had 3 x 2 000 = 6 000 eggs -> 5 700.
-// - FA-3: 100 kg of feed at 500 = 50 000; the article had 1 000 kg -> 900.
-// - FA-1 is then settled (450 000), a credit note of 30 chickens with return = 105 000 -> refund due 105 000, lot 4 730,
+// - FA-0001: 300 chickens at 3 500 = 1 050 000; paid 600 000 at issue -> due 450 000 (Partielle); lot 5 000 -> 4 700.
+// - FA-0002: 10 plateaux of eggs (30 each = 300 eggs) at 2 500 = 25 000; the laying lot had 3 x 2 000 = 6 000 eggs -> 5 700.
+// - FA-0004: 100 kg of feed at 500 = 50 000; the article had 1 000 kg -> 900.
+// - FA-0001 is then settled (450 000), a credit note of 30 chickens with return = 105 000 -> refund due 105 000, lot 4 730,
 //   then refunded.
-// - FA-4 (Mme Afi, a prestation of 400 000 dated yesterday, due yesterday) is overdue.
-// Month to date: revenue 1 050 000 + 25 000 + 50 000 + 400 000 - 105 000 = 1 420 000 (1 020 000 without FA-4 when
+// - the overdue invoice (Mme Afi, a prestation of 400 000 dated yesterday, due yesterday) is overdue.
+// Month to date: revenue 1 050 000 + 25 000 + 50 000 + 400 000 - 105 000 = 1 420 000 (1 020 000 without the overdue invoice when
 // yesterday is in the previous month); expenses 950 000 (salaires) + 40 000 (transport, attributed to the chickens' lot)
 // = 990 000; margin 430 000 (30 000); receivables 25 000 + 50 000 + 400 000 (all time, whatever the month).
 // The lot's margin: revenue 1 050 000 - 105 000 = 945 000, cost 40 000 -> 905 000, 270 sold.
-describe('commerce : devis, facture, paiements, avoir, remboursement, finance et alertes', LONG_SUITE, () => {
+describe('commerce : devis, facture, paiements, avoir, remboursement, finance et alertes', () => {
   let browser: Browser;
   let admin: EnrolledAdmin;
   let farmId = '';
@@ -45,6 +50,7 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
   let overdueNumber = '';
   // Whether the overdue invoice (dated yesterday) falls in the month to date: not on the first day of a month.
   let overdueInMonth = true;
+  let previousLegal: unknown = null;
   const users: Record<string, EnrolledUser | { email: string }> = {};
   const emails = {
     commercial: 'commercial@e2e.test',
@@ -106,6 +112,7 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
   before(async () => {
     browser = await launch();
     admin = await enrollAdmin('commerce');
+    previousLegal = (await api<{ legal: unknown }>('/settings/documents', { token: admin.token })).legal;
     // A farm of its own: the seeded one is shared with the other specs, so the figures below are exactly this flow's.
     farmId = (await api<{ id: string }>('/farms', { method: 'POST', token: admin.token, body: { name: 'Ferme Commerce' } })).id;
 
@@ -146,6 +153,8 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
   });
 
   after(async () => {
+    // The legal identity is an organisation setting shared with the other specs: back to what it was.
+    if (admin && previousLegal) await api('/settings/legal', { method: 'PUT', token: admin.token, body: { value: previousLegal } });
     // The article is shared with the stock list of the visual spec: it is deactivated (it holds nothing in the seeded farm).
     if (admin) {
       const items = await api<{ items: { id: string; name: string; active: boolean }[] }>('/stock-items?pageSize=200', { token: admin.token });
@@ -267,7 +276,7 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     await page.context().close();
   });
 
-  it('Commercial : un lot en délai d’attente n’est plus proposé, et l’émission d’un brouillon antérieur au traitement est refusée avec le message exact', async () => {
+  it('Commercial : un lot en délai d’attente n’est plus proposé, l’émission datée dans la période est refusée avec le message exact, une vente datée avant le traitement passe', async () => {
     const customerId = (await call<{ items: { id: string; name: string }[] }>('/customers')).items.find((c) => c.name === 'Restaurant Le Palmier')!.id;
     // A draft on the lot while it is clear, then the lot is treated (three days of withdrawal): issuing is refused.
     await call('/sales', 'POST', { customerId, date: day(0), lines: [{ kind: 'LOT', batchId: withdrawalId, quantity: 10, unitPrice: 3500 }] });
@@ -300,6 +309,16 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     await confirm.waitFor({ state: 'detached' });
     assert.equal((await call<{ total: number }>('/sales')).total, 2);
     await page.context().close();
+
+    // The withdrawal blocks a sale only when its date falls inside the treatment period (today .. +3 days): a sale dated
+    // BEFORE the treatment (yesterday) goes through, and is cancelled at once so that the figures below stay the flow's.
+    const earlier = await call<{ id: string; number: string }>('/sales/issued', 'POST', {
+      customerId, date: day(-1), lines: [{ kind: 'LOT', batchId: withdrawalId, quantity: 10, unitPrice: 3500 }],
+    });
+    assert.equal(earlier.number, 'FA-0003');
+    assert.equal(await alive(withdrawalId), 190, 'a sale dated before the treatment is not blocked');
+    await call(`/sales/${earlier.id}/cancel`, 'POST', { reason: 'Vente antérieure au traitement : essai de la règle, annulée' });
+    assert.equal(await alive(withdrawalId), 200);
   });
 
   it('Commercial : vend 100 kg d’un article (le stock passe de 1 000 à 900), puis une vente antérieure à un inventaire validé est refusée', async () => {
@@ -312,7 +331,7 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     await line(dialog, 1, { kind: 'Article', source: 'Aliment vendu', quantity: '100', price: '500' });
     await dialog.getByRole('button', { name: 'Enregistrer' }).click();
     await dialog.waitFor({ state: 'detached' });
-    await page.getByRole('row', { name: /FA-0003/ }).waitFor();
+    await page.getByRole('row', { name: /FA-0004/ }).waitFor();
     assert.equal(await stockOf(), 900);
 
     // A validated inventory yesterday (the count equals the theoretical 1 000 kg of that day) closes the past.
@@ -361,6 +380,66 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     assert.equal(await alive(cancelLotId), 1000);
     assert.match(await mainText(owner), /Motif de l'annulation : Commande annulée par le client/);
     await owner.context().close();
+  });
+
+  it('Propriétaire : annule la facture issue d’un devis, le devis est de nouveau facturable (ligne, détail et bouton Facturer)', async () => {
+    const customerId = (await call<{ items: { id: string; name: string }[] }>('/customers')).items.find((c) => c.name === 'Restaurant Le Palmier')!.id;
+    // A quote of 20 chickens of the cancel lot, sent, accepted, invoiced and the invoice issued (through the API: the
+    // conversion itself is the first test's point).
+    const quote = await call<{ id: string; reference: string }>('/quotes', 'POST', { customerId, date: day(0), lines: [{ kind: 'LOT', batchId: cancelLotId, quantity: 20, unitPrice: 3000 }] });
+    for (const step of ['send', 'accept', 'convert']) await call(`/quotes/${quote.id}/${step}`, 'POST');
+    const converted = await call<{ status: string; invoiceId: string; invoiceNumber: string | null }>(`/quotes/${quote.id}`);
+    assert.equal(converted.status, 'FACTURE');
+    const made = await call<{ id: string; number: string }>(`/sales/${converted.invoiceId}/issue`, 'POST', {});
+    assert.equal(made.number, 'FA-0006');
+    assert.equal(await alive(cancelLotId), 980);
+
+    const owner = await asRole(emails.owner);
+    // The quote's list row and its page are read BEFORE the cancellation, so that a stale cache would show.
+    await owner.goto(`${WEB_URL}/m/ventes`);
+    await owner.getByRole('tab', { name: 'Devis' }).click();
+    await mainShows(owner, new RegExp(`${quote.reference} .*Facturé`));
+    await owner.getByRole('link', { name: quote.reference }).click();
+    await owner.getByRole('heading', { name: quote.reference }).waitFor();
+    await owner.getByText('Facturé :').waitFor();
+    assert.equal(await owner.getByRole('button', { name: 'Facturer' }).count(), 0, 'an invoiced quote is not invoiceable');
+    await owner.getByRole('link', { name: 'FA-0006' }).click();
+    await owner.getByRole('heading', { name: 'FA-0006' }).waitFor();
+    await owner.getByRole('button', { name: 'Annuler' }).click();
+    const dialog = owner.getByRole('dialog');
+    await dialog.getByLabel('Motif').fill('Le client reprend son devis');
+    await dialog.getByRole('button', { name: "Confirmer l'annulation" }).click();
+    await dialog.waitFor({ state: 'detached' });
+    await owner.getByText('Annulée', { exact: true }).first().waitFor();
+    assert.equal(await alive(cancelLotId), 1000, 'the 20 chickens are back');
+    // The cancelled invoice no longer points at the quote.
+    assert.equal(await owner.getByText(/Issue du devis/).count(), 0);
+    assert.equal((await invoice(made.id)).quoteId, null);
+
+    // Back to the quote through the app (its cached page is refetched, not read stale): accepted again, invoiceable.
+    await owner.getByRole('link', { name: 'Ventes', exact: true }).first().click();
+    await owner.getByRole('tab', { name: 'Devis' }).click();
+    await mainShows(owner, new RegExp(`${quote.reference} .*Accepté`));
+    await owner.getByRole('link', { name: quote.reference }).click();
+    await owner.getByRole('heading', { name: quote.reference }).waitFor();
+    await owner.getByText('Accepté', { exact: true }).first().waitFor();
+    assert.equal(await owner.getByText('Facturé :').count(), 0);
+    // `Facturer` needs `create`, which the Propriétaire does not hold: the Commercial offers it.
+    await owner.context().close();
+    const seller = await asRole(emails.commercial);
+    await seller.goto(`${WEB_URL}/m/ventes/devis/${quote.id}`);
+    await seller.getByRole('button', { name: 'Facturer' }).click();
+    const confirm = seller.getByRole('dialog');
+    await confirm.getByRole('button', { name: 'Facturer' }).click();
+    await confirm.waitFor({ state: 'detached' });
+    await seller.getByText('Facturé :').waitFor();
+    // The new draft goes away again (the quote is given back once more).
+    const again = await call<{ status: string; invoiceId: string }>(`/quotes/${quote.id}`);
+    assert.equal(again.status, 'FACTURE');
+    assert.notEqual(again.invoiceId, made.id);
+    await call(`/sales/${again.invoiceId}`, 'DELETE');
+    assert.equal((await call<{ status: string }>(`/quotes/${quote.id}`)).status, 'ACCEPTE');
+    await seller.context().close();
   });
 
   it('Comptable : encaisse le reste (Soldée), émet un avoir de 30 poulets avec retour (lot +30, À rembourser 105 000) et rembourse', async () => {
@@ -453,7 +532,7 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
       customerId, date: day(-1), dueDate: day(-1), lines: [{ kind: 'SERVICE', designation: 'Prestation de transport', quantity: 1, unitPrice: 400000 }],
     });
     overdueNumber = sold.number;
-    assert.equal(overdueNumber, 'FA-0005');
+    assert.equal(overdueNumber, 'FA-0007');
   });
 
   it('Comptable : la Synthèse, la Rentabilité par lot et la carte du tableau de bord donnent les chiffres calculés', async () => {
@@ -466,7 +545,11 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     await mainShows(page, new RegExp(`Chiffre d'affaires ${money(revenue)}`));
     const text = await mainText(page);
     for (const expected of [new RegExp(`Dépenses ${money(990_000)}`), new RegExp(`Marge ${money(margin)}`), /Créances clients 475 000 FCFA/, /Activité Général/, /Salaires/, /Transport/]) assert.match(text, expected);
-    const summary = await call<{ revenue: number; expenses: number; margin: number; receivables: number }>('/finance/summary');
+    // The period is always explicit: without dates the API answers for ALL TIME. The screen's default period is month to date.
+    const monthStart = `${day(0).slice(0, 8)}01`;
+    assert.equal(await page.getByLabel('Du', { exact: true }).inputValue(), monthStart, 'the Synthèse starts with the first of the month');
+    assert.equal(await page.getByLabel('Au', { exact: true }).inputValue(), day(0), 'and ends today');
+    const summary = await call<{ revenue: number; expenses: number; margin: number; receivables: number }>(`/finance/summary?from=${monthStart}&to=${day(0)}`);
     assert.deepEqual([summary.revenue, summary.expenses, summary.margin, summary.receivables], [revenue, 990000, margin, 475000]);
 
     await page.getByRole('tab', { name: 'Rentabilité par lot' }).click();
@@ -483,6 +566,38 @@ describe('commerce : devis, facture, paiements, avoir, remboursement, finance et
     const home = await mainText(page);
     for (const expected of [money(revenue), money(990_000), money(margin)]) assert.ok(home.includes(expected), `the dashboard shows ${expected}`);
     await page.context().close();
+  });
+
+  it('Commercial et Comptable : impriment la facture, la feuille porte le bloc légal (adresse, NIF, RCCM) alors qu’ils ne lisent pas les paramètres', async () => {
+    // The legal identity is an organisation setting: set here, restored at the end of the file.
+    await api('/settings/legal', { method: 'PUT', token: admin.token, body: { value: LEGAL } });
+    for (const email of [emails.commercial, emails.accountant]) {
+      const page = await asRole(email);
+      // Headless Chromium prints nothing: the sheet is read under `print` media.
+      await page.addInitScript(() => { window.print = () => undefined; });
+      // Neither role reads `/settings`: the legal block comes from `/settings/documents` (the page's own token is reused).
+      const documents = page.waitForRequest((r) => r.url().includes('/api/settings/documents'));
+      await page.goto(`${WEB_URL}/m/ventes/${invoiceId}`);
+      const authorization = (await documents).headers().authorization;
+      const get = async (path: string) => {
+        const res = await fetch(`${API_URL}/api${path}`, { headers: { authorization, 'x-farm-id': farmId } });
+        return { status: res.status, body: res.ok ? await res.json() : null };
+      };
+      assert.equal((await get('/settings')).status, 403, `${email} does not read the settings`);
+      const docs = await get('/settings/documents');
+      assert.deepEqual([docs.status, Object.keys(docs.body).sort()], [200, ['eggsPerTray', 'invoiceDueDays', 'legal']], `${email} reads the document settings`);
+      await page.getByRole('heading', { name: invoiceNumber }).waitFor();
+      await page.getByRole('button', { name: 'Imprimer la facture' }).click();
+      await page.emulateMedia({ media: 'print' });
+      const sheet = page.locator('section[aria-label="Facture"]');
+      await sheet.waitFor();
+      const text = flat(await sheet.innerText());
+      for (const expected of [LEGAL.name, LEGAL.address, `NIF : ${LEGAL.nif}`, `RCCM : ${LEGAL.rccm}`, invoiceNumber, 'Restaurant Le Palmier', 'Total : 1 050 000 FCFA']) {
+        assert.ok(text.includes(expected), `${email}: the printed invoice shows « ${expected} » (got ${text.slice(0, 300)})`);
+      }
+      assert.equal(await page.locator('aside').isVisible(), false, 'the sidebar is hidden when printing');
+      await page.context().close();
+    }
   });
 
   it('Directeur : l’alerte Créance de la facture échue figure dans Alertes ; Propriétaire en lecture seule sur Finance', async () => {

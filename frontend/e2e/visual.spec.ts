@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
-import { LONG_SUITE } from './suites.ts';
 import { fileURLToPath } from 'node:url';
 import type { Browser, Locator, Page } from 'playwright';
-import { api, enrollAdmin, launch, newPage, uiLoginWithBackupCode, WEB_URL, type EnrolledAdmin } from './helpers.ts';
+import { api, enrollAdmin, enrollUser, launch, newPage, PASSWORD, uiLoginWithBackupCode, WEB_URL, type EnrolledAdmin } from './helpers.ts';
 import { PLANNED_VACCINATION_DATE, seedCommerceReferenceData, seedLogisticsReferenceData, seedReferenceData } from './referenceData.ts';
 
 const BUILT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'reference', 'built');
@@ -280,7 +279,7 @@ async function settle(page: Page): Promise<void> {
 // Precondition: the server's date is after 2026-10-22, because the reference rows are dated October 2026 (no future
 // dates are accepted). The overdue-farrowing alert counts days from today, so it is matched with a regex and
 // home.png differs by that one number from day to day.
-describe('rendu : captures et comparaison avec la référence', LONG_SUITE, () => {
+describe('rendu : captures et comparaison avec la référence', () => {
   let browser: Browser;
   let page: Page;
   let admin: EnrolledAdmin;
@@ -943,5 +942,146 @@ describe('rendu : captures et comparaison avec la référence', LONG_SUITE, () =
     await phone.getByRole('button', { name: 'Imprimer' }).click();
     await expectPrinted('devis_impression', 'Devis', /DV-/);
     await context.close();
+  });
+
+  it('facture et finance : cinq tuiles à 1440, 1024 et 375, pastille Échue, périodes refusées, feuilles imprimées avec le bloc légal pour un rôle sans paramètres', async () => {
+    const LEGAL = { name: 'Ferme du Golfe SARL', address: 'Route de Kpalimé, Lomé', nif: '1001234567', rccm: 'TG-LOM-2026-B-0042' };
+    const call = <T = { id: string }>(path: string, method = 'GET', body?: unknown) => api<T>(path, { method, token: admin.token, farmId: admin.farmId, body });
+    const report = (what: string, values: unknown) => {
+      const line = `[measure] ${what}: ${JSON.stringify(values)}`;
+      console.log(line);
+      if (process.env.E2E_MEASURES) appendFileSync(process.env.E2E_MEASURES, `${line}\n`);
+    };
+    const previousLegal = (await call<{ legal: unknown }>('/settings/documents')).legal;
+    await call('/settings/legal', 'PUT', { value: LEGAL });
+    const invoices = await call<{ items: { id: string; number: string }[] }>('/sales?pageSize=50');
+    const fa309 = invoices.items.find((i) => i.number === 'FA-0309')!.id;
+    const fa310 = invoices.items.find((i) => i.number === 'FA-0310')!.id;
+    const context = (await newPage(browser, { width: 1440, height: 900 }, 2)).context;
+    const wide = await context.newPage();
+    await context.addInitScript((farm) => localStorage.setItem('ap_farm', farm), admin.farmId);
+    await context.addInitScript(() => { window.print = () => undefined; });
+    await uiLoginWithBackupCode(wide, admin.email, admin.backupCodes[6]);
+    await wide.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
+
+    // 1. The invoice detail: five tiles (Total, Payé, Avoirs, Reste dû, Échéance) and the Échue pill at three widths.
+    await wide.goto(`${WEB_URL}/m/ventes/${fa309}`);
+    await wide.getByRole('heading', { name: 'FA-0309' }).waitFor();
+    await settle(wide);
+    const pill = wide.getByText('Échue', { exact: true });
+    assert.equal(await pill.count(), 1, 'FA-0309 is past its due date: one Échue pill');
+    assert.equal(await pill.getAttribute('data-tone'), 'danger', 'the Échue pill is a danger pill');
+    for (const width of [1440, 1024, 375]) {
+      await wide.setViewportSize({ width, height: 900 });
+      await settle(wide);
+      const tiles = await wide.locator('main .grid > div').evaluateAll((els) => els.map((tile) => {
+        const label = tile.querySelector('p:first-child')!.textContent;
+        const value = tile.querySelector('p:last-child') as HTMLElement;
+        const r = tile.getBoundingClientRect();
+        return { label, value: value.textContent?.replace(/\s+/g, ' '), left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), right: Math.round(r.right), overflow: value.scrollWidth - value.clientWidth, valueLines: Math.round(value.getBoundingClientRect().height / parseFloat(getComputedStyle(value).lineHeight)), font: getComputedStyle(value).fontSize };
+      }));
+      const rows = [...new Set(tiles.map((t) => t.top))].map((top) => tiles.filter((t) => t.top === top).map((t) => t.label));
+      const scrollWidth = await wide.evaluate(() => document.documentElement.scrollWidth);
+      report(`invoice detail tiles @${width}`, { tiles, rows, scrollWidth });
+      assert.deepEqual(tiles.map((t) => t.label), ['Total', 'Payé', 'Avoirs', 'Reste dû', 'Échéance']);
+      // Five in a row from 1280, then 3 + 2, and 2 + 2 + 1 on a phone: never a tile alone next to empty cells, and the lone
+      // phone tile fills its row.
+      assert.deepEqual(rows.map((r) => r.length), width === 1440 ? [5] : width === 1024 ? [3, 2] : [2, 2, 1], `@${width}: the rows of tiles`);
+      if (width === 375) assert.ok(tiles[4].width > 300, '@375: the fifth tile fills the last row');
+      assert.equal(tiles[4].value, '2026-11-04', 'the Échéance tile reads the due date');
+      for (const t of tiles) assert.ok(t.overflow <= 0 && t.right <= width && t.left >= 0, `@${width}: tile « ${t.label} » stays inside its box and the viewport`);
+      assert.ok(scrollWidth <= width, `@${width}: no horizontal page scroll (${scrollWidth})`);
+      await wide.screenshot({ path: join(BUILT, `vente_detail_${width}.png`) });
+    }
+    await wide.setViewportSize({ width: 1440, height: 900 });
+    await wide.goto(`${WEB_URL}/m/ventes/${fa310}`);
+    await wide.getByRole('heading', { name: 'FA-0310' }).waitFor();
+    assert.equal(await wide.getByText('Échue', { exact: true }).count(), 0, 'a settled invoice carries no Échue pill');
+
+    // 2. Finance: an invalid period and an emptied bound are refused on the three tabs, with no request.
+    const finance: string[] = [];
+    wide.on('request', (r) => { if (r.url().includes('/api/finance/')) finance.push(r.url()); });
+    await wide.goto(`${WEB_URL}/m/finance`);
+    await wide.getByLabel('Du', { exact: true }).fill('2026-10-01');
+    await wide.getByLabel('Au', { exact: true }).fill('2026-10-31');
+    await wide.getByRole('row', { name: /Salaires septembre/ }).waitFor();
+    await settle(wide);
+    for (const [what, from, to, message] of [
+      ['inverted period', '2026-12-01', '2026-10-01', 'La date de début est après la date de fin'],
+      ['emptied end', '2026-10-01', '', 'Indiquez les deux dates'],
+      ['emptied start', '', '2026-10-31', 'Indiquez les deux dates'],
+    ] as const) {
+      finance.length = 0;
+      await wide.getByLabel('Du', { exact: true }).fill(from);
+      await wide.getByLabel('Au', { exact: true }).fill(to);
+      for (const tab of ['Dépenses & recettes', 'Synthèse', 'Rentabilité par lot']) {
+        await wide.getByRole('tab', { name: tab }).click();
+        await wide.getByText(message, { exact: true }).waitFor();
+        const banner = await wide.getByText(message, { exact: true }).boundingBox();
+        assert.ok(banner && banner.x >= 0 && banner.x + banner.width <= 1440, `${what} on ${tab}: the banner is on the page`);
+        assert.equal(await wide.getByText('Salaires septembre').count(), 0, `${what} on ${tab}: no stale list under the banner`);
+      }
+      const withoutBoth = finance.filter((u) => !(/[?&]from=[^&]+/.test(u) && /[?&]to=[^&]+/.test(u)));
+      report(`finance ${what}`, { requests: finance.length, withoutBothDates: withoutBoth });
+      assert.deepEqual(withoutBoth, [], `${what}: no finance request without both dates`);
+    }
+    await wide.screenshot({ path: join(BUILT, 'finance_periode_refusee.png') });
+    await wide.getByLabel('Du', { exact: true }).fill('2026-10-01');
+    await wide.getByLabel('Au', { exact: true }).fill('2026-10-31');
+    await wide.getByRole('tab', { name: 'Dépenses & recettes' }).click();
+    await wide.getByRole('row', { name: /Salaires septembre/ }).waitFor();
+    await context.close();
+
+    // 3. A role that reads no settings (the accountant) prints every sheet with the legal block.
+    const accountantEmail = 'comptable-visual@e2e.test';
+    await call('/users', 'POST', { name: 'Comptable Visuel', email: accountantEmail, role: 'COMPTABLE', farmIds: [admin.farmId], password: PASSWORD });
+    const accountant = await enrollUser(accountantEmail);
+    const opened = await newPage(browser, { width: 1440, height: 900 }, 2);
+    await opened.context.addInitScript((farm) => localStorage.setItem('ap_farm', farm), admin.farmId);
+    await opened.context.addInitScript(() => { window.print = () => undefined; });
+    const sheetPage = opened.page;
+    await uiLoginWithBackupCode(sheetPage, accountantEmail, accountant.backupCodes[0]);
+    await sheetPage.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
+    const quote = (await call<{ items: { id: string; reference: string }[] }>('/quotes?pageSize=50')).items[0];
+    const printed = async (what: string, label: string, pattern: RegExp, file: string) => {
+      await sheetPage.emulateMedia({ media: 'print' });
+      const sheet = sheetPage.locator(`section[aria-label="${label}"]`);
+      await sheet.waitFor();
+      const text = flat(await sheet.innerText());
+      const state = await sheetPage.evaluate(() => {
+        const shown = (el: Element | null) => Boolean(el) && (el as Element).getClientRects().length > 0;
+        return { aside: shown(document.querySelector('aside')), topbar: shown(document.querySelector('header')) };
+      });
+      report(`print ${what} (comptable)`, { ...state, head: text.slice(0, 160) });
+      assert.deepEqual(state, { aside: false, topbar: false }, `${what}: the app chrome is hidden when printing`);
+      for (const expected of [LEGAL.name, LEGAL.address, `NIF : ${LEGAL.nif}`, `RCCM : ${LEGAL.rccm}`]) assert.ok(text.includes(expected), `${what}: the legal block shows « ${expected} » (got ${text.slice(0, 200)})`);
+      assert.match(text, pattern, `${what}: the sheet's content`);
+      await sheetPage.screenshot({ path: join(BUILT, `${file}.png`), fullPage: true });
+      await sheetPage.emulateMedia({ media: 'screen' });
+    };
+    await sheetPage.goto(`${WEB_URL}/m/ventes/${fa309}`);
+    await sheetPage.getByRole('heading', { name: 'FA-0309' }).waitFor();
+    await sheetPage.getByRole('button', { name: 'Imprimer la facture' }).click();
+    await printed('invoice', 'Facture', /FA-0309/, 'facture_impression_comptable');
+    await sheetPage.getByRole('button', { name: 'Bon de livraison' }).click();
+    await printed('delivery note', 'Bon de livraison', /Œufs/, 'bon_de_livraison_impression_comptable');
+    await sheetPage.getByRole('tab', { name: 'Paiements' }).click();
+    await sheetPage.getByRole('button', { name: 'Reçu' }).first().click();
+    await printed('receipt', 'Reçu', /RC-/, 'recu_impression_comptable');
+    await sheetPage.getByRole('tab', { name: 'Avoirs' }).click();
+    await sheetPage.getByRole('tabpanel').getByRole('button', { name: 'Imprimer' }).first().click();
+    await sheetPage.getByRole('dialog').getByText(/est prêt à imprimer/).waitFor();
+    await printed('credit note', 'Avoir', /AV-/, 'avoir_impression_comptable');
+    await sheetPage.goto(`${WEB_URL}/m/ventes/devis/${quote.id}`);
+    await sheetPage.getByRole('heading', { name: quote.reference }).waitFor();
+    await sheetPage.getByRole('button', { name: 'Imprimer' }).click();
+    await printed('quote', 'Devis', /DV-/, 'devis_impression_comptable');
+    await sheetPage.goto(`${WEB_URL}/m/achats`);
+    await sheetPage.getByRole('row', { name: /BC-0142/ }).getByRole('link').first().click();
+    await sheetPage.getByRole('heading', { name: 'BC-0142' }).waitFor();
+    await sheetPage.getByRole('button', { name: 'Imprimer' }).click();
+    await printed('purchase order', 'Bon de commande', /BC-0142/, 'bon_de_commande_impression_comptable');
+    await opened.context.close();
+    await call('/settings/legal', 'PUT', { value: previousLegal });
   });
 });

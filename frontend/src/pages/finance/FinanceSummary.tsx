@@ -24,7 +24,7 @@ export function FinanceSummary() {
   const to = values.to ?? '';
   const query = useFarmQuery<FinanceSummaryDto>(
     ['/finance/summary', from, to],
-    () => api.get<FinanceSummaryDto>('/finance/summary', { from: from || undefined, to: to || undefined }),
+    () => api.get<FinanceSummaryDto>('/finance/summary', { from, to }),
     { enabled: !error },
   );
   const d = query.data;

@@ -105,6 +105,13 @@ const DETAILS: Record<string, unknown> = {
     })],
   }),
   i8: detailOf(INVOICES[7], { cancelReason: 'Erreur de client', lines: [line({ creditedQuantity: 0, creditableQuantity: 0 })] }),
+  // Issued from the quote DV-0007; and the same invoice once cancelled, which no longer points at it (the quote is given back).
+  i14: detailOf(inv('i14', 'FA-0340', 'EMISE', { total: 60000, paid: 0, due: 60000 }), {
+    quoteId: 'q7', quoteNumber: 'DV-0007', lines: [line({ quantity: 20, unitPrice: 3000, amount: 60000, creditedQuantity: 0, creditableQuantity: 20 })],
+  }),
+  i15: detailOf(inv('i15', 'FA-0340', 'ANNULEE', { total: 60000, paid: 0, due: 0 }), {
+    quoteId: null, quoteNumber: null, cancelReason: 'Le client reprend son devis', lines: [line({ creditedQuantity: 0, creditableQuantity: 0 })],
+  }),
   // Amounts the API stored differ from quantity × unit price: they are what is shown.
   i9: detailOf(inv('i9', 'FA-0320', 'EMISE', { total: 250, paid: 0, due: 250 }), {
     lines: [line({ quantity: 2, unitPrice: 100, amount: 250, creditedQuantity: 0, creditableQuantity: 2, creditableAmount: 250 })],
@@ -747,6 +754,15 @@ describe('invoice detail', () => {
     mount(<InvoiceDetail id="i8" />);
     expect(await screen.findByText("Motif de l'annulation : Erreur de client")).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Imprimer la facture' })).not.toBeInTheDocument();
+  });
+
+  it('links the quote an invoice was made from, and says nothing of it once the invoice is cancelled (the quote is given back)', async () => {
+    mount(<InvoiceDetail id="i14" />);
+    expect(await screen.findByRole('link', { name: 'DV-0007' })).toHaveAttribute('href', '/m/ventes/devis/q7');
+    cleanup();
+    mount(<InvoiceDetail id="i15" />);
+    expect(await screen.findByText("Motif de l'annulation : Le client reprend son devis")).toBeInTheDocument();
+    expect(screen.queryByText(/Issue du devis/)).not.toBeInTheDocument();
   });
 
   it('prints the invoice: legal block, client block, lines with the API amounts and the API total, no tax line', async () => {

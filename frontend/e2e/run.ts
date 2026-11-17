@@ -101,10 +101,10 @@ try {
     .sort()
     .map((f) => join('e2e', f));
   if (specs.length === 0) throw new Error(`Aucune spec ne correspond à « ${cli.only.join(' ')} » (fichiers : ${readdirSync(here).filter((f) => f.endsWith('.spec.ts')).join(', ')})`);
-  // 120 s per suite and test; the long flows (`suites.ts`: commerce, logistics, production, visual) raise their own to 600 s.
+  // node:test applies --test-timeout to each spec FILE too and a describe cannot lift it: the long flows need 600 s for the file.
   const r = spawnSync(
     'node',
-    ['--disable-warning=ExperimentalWarning', '--test', '--test-concurrency=1', '--test-timeout=120000', ...specs],
+    ['--disable-warning=ExperimentalWarning', '--test', '--test-concurrency=1', '--test-timeout=600000', ...specs],
     { cwd: frontend, env: { ...process.env, E2E_API_PORT: String(API_PORT) }, stdio: 'inherit' },
   );
   code = r.status ?? 1;

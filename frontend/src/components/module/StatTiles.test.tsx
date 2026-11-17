@@ -28,4 +28,20 @@ describe('StatTiles', () => {
     // A percentage is not a unit that wraps.
     expect(screen.getByText(/%/).textContent).toBe('12 %');
   });
+
+  it('lays four tiles in four columns and five in five, never leaving a tile alone on a row at desktop width', () => {
+    const tile = (n: number) => Array.from({ length: n }, (_, i) => ({ label: `T${i}`, value: String(i) }));
+    const four = render(<StatTiles tiles={tile(4)} />).container.firstElementChild!;
+    expect(four.className.split(' ')).toContain('lg:grid-cols-4');
+    four.parentElement!.remove();
+    const five = render(<StatTiles tiles={tile(5)} />).container.firstElementChild!;
+    const classes = five.className.split(' ');
+    // Three columns up to xl (3 + 2), five from xl; two on a phone, where the fifth tile spans both columns.
+    for (const c of ['grid-cols-2', 'lg:grid-cols-3', 'xl:grid-cols-5']) expect(classes).toContain(c);
+    expect(classes).not.toContain('lg:grid-cols-4');
+    const last = five.lastElementChild!.className.split(' ');
+    expect(last).toContain('col-span-2');
+    expect(last).toContain('lg:col-span-1');
+    expect(five.firstElementChild!.className.split(' ')).not.toContain('col-span-2');
+  });
 });

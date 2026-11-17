@@ -275,10 +275,14 @@ journal d'audit (`batiments.spec.ts`), comparaison de rendu avec la référence 
 (`visual.spec.ts`), parcours de production de bout en bout (`production.spec.ts`), parcours logistique : achats,
 stocks, inventaire, santé et alertes, un rôle par étape (`logistics.spec.ts`, `npm run e2e -- logistics`), parcours commercial :
 devis, facture, paiements, avoir, remboursement, finance, rentabilité et alertes de créance (`commerce.spec.ts`,
-`npm run e2e -- commerce`). Les specs commerce et logistique tournent avant le spec de rendu : ils partagent la même organisation, donc les articles, fournisseurs et clients de
+`npm run e2e -- commerce` ; il couvre aussi une vente datée avant un traitement, l'annulation d'une facture issue d'un devis
+et l'impression de la facture par un Commercial et un Comptable). Les specs commerce et logistique tournent avant le spec de rendu : ils partagent la même organisation, donc les articles, fournisseurs et clients de
 référence (« Aliment ponte », « Agro Provende SA », « Restaurant Le Palmier »…) sont créés une seule fois, par celui qui passe le premier.
 `npm run e2e -- --serve` laisse seulement les serveurs e2e démarrés ; `npm run e2e -- production` n'exécute que les
 specs dont le nom contient le mot donné (erreur s'il n'y en a aucune).
+
+Le lanceur donne 10 minutes à chaque fichier de scénarios (`--test-timeout=600000`) : un scénario de bout en bout est un
+seul parcours de nombreuses étapes, et node:test applique ce délai au fichier entier.
 
 Précondition : la date du serveur est postérieure au 2026-10-22, car les lignes de référence des captures sont
 datées d'octobre 2026 (aucune date future n'est acceptée). Le parcours commercial date sa facture échue de la veille : il
@@ -446,7 +450,9 @@ Le paiement des fournisseurs par le Comptable reste une question ouverte (voir l
 - Tests : parcours de bout en bout `commerce.spec.ts` (un rôle par étape, chiffres calculés) ; captures de Clients, Ventes et
   Finance comparées à la maquette (`m_clients.png`, `m_ventes.png`, `m_finance.png`, `finance_synthese.png`, `alertes.png`,
   `rapports.png`) et vérifiées à 375 px (`facture_formulaire_375.png`, `vente_detail_375.png`, `avoir_dialogue_375.png`,
-  `finance_ecritures_375.png`, `finance_synthese_375.png`) ainsi qu'à l'impression (facture, bon de livraison, reçu, avoir, devis).
+  `finance_ecritures_375.png`, `finance_synthese_375.png`) ainsi qu'à l'impression (facture, bon de livraison, reçu, avoir, devis,
+  aussi pour un Comptable : `*_impression_comptable.png`) ; la page d'une facture (cinq tuiles, dont « Échéance », et la pastille
+  « Échue ») est mesurée à 1440, 1024 et 375 px (`vente_detail_1440.png`, `vente_detail_1024.png`, `vente_detail_375.png`).
 - Écarts assumés avec la maquette : la tuile « Total enregistrements » de Finance n'est pas 5 (les écritures dérivées des
   factures et de l'achat reçu s'ajoutent aux cinq saisies) et la liste s'ouvre sur le mois en cours (la capture règle la
   période sur octobre) ; les chiffres du tableau de bord suivent le mois civil en cours, pas ceux de la maquette ; FA-0309
@@ -474,14 +480,30 @@ Les règles à connaître :
 
 - Un brouillon (facture ou devis) ne touche à rien : ni lot, ni œufs, ni stock. L'émission d'une facture sort les animaux du
   lot (effectif), les œufs du solde d'œufs du lot et les articles du stock ; l'annulation remet tout.
-- Un lot, un animal ou des œufs en délai d'attente (après un traitement) ne peuvent pas être vendus, le dernier jour du délai
-  compris ; il n'y a pas de dérogation.
+- Un lot, un animal ou des œufs en délai d'attente (après un traitement) ne peuvent pas être vendus quand la date de la vente
+  tombe dans la période : du jour du traitement jusqu'au dernier jour du délai, ces deux jours compris ; il n'y a pas de
+  dérogation. Une vente datée avant le traitement reste possible.
 - Un inventaire validé ferme le passé de l'article : une vente de cet article antérieure à l'inventaire est refusée.
 - On ne peut pas vendre plus que l'effectif vivant du lot : « Effectif insuffisant ». Un lot de stock périmé est refusé à la
   vente, comme à la sortie de stock.
 - Un avoir se fait par quantité de ligne, avec ou sans retour des marchandises ; il est définitif. Un animal suivi
   individuellement ne peut pas être retourné au lot ; un retour dans un lot clôturé est refusé ; des marchandises périmées ne
-  reviennent pas en stock (faites un avoir sans retour).
+  reviennent pas en stock (faites un avoir sans retour). Des marchandises rendues par un avoir rentrent en stock au coût
+  constaté à la date de l'avoir : une correction ou une entrée antidatée faite ensuite ne les revalorise pas. Seuls les avoirs
+  avec retour réduisent la quantité vendue d'un lot (et ses kilos) ; sans retour, ils réduisent seulement les recettes.
+- Annuler une facture faite à partir d'un devis rend le devis facturable de nouveau (il revient à « Accepté » s'il l'avait été,
+  sinon à « Envoyé ») ; la facture annulée n'y est plus rattachée. Un devis en brouillon dont la date de validité est dépassée
+  ne peut pas être envoyé (« La date de validité est dépassée »).
+- L'unité d'une ligne d'article est celle de l'article lui-même : elle ne se choisit pas. Seules les lignes d'œufs ont une
+  unité (plateau ou œuf) ; une unité sur une ligne de lot, d'animal ou de prestation est refusée.
+- Une dépense saisie à la main et attribuée à un lot est comptée dans la colonne « Autres » de ce lot, quelle que soit sa
+  catégorie (même « Aliment » ou « Santé ») : l'aliment et la santé d'un lot sont les seules consommations du stock.
+- La synthèse, la liste des écritures et la rentabilité par lot partagent une même période, toujours avec les deux dates (par
+  défaut, du 1er du mois à aujourd'hui) : effacer une date est refusé (« Indiquez les deux dates »). Sans dates, l'API
+  répondrait pour toute la vie de la ferme ; la fiche d'un lot affiche d'ailleurs ses chiffres depuis son entrée.
+- Les feuilles imprimées lisent l'identité légale (nom, adresse, NIF, RCCM), l'échéance par défaut et le nombre d'œufs par
+  plateau par une route ouverte à tout utilisateur connecté, qui ne rend que ces champs : un Commercial ou un Comptable
+  imprime donc une facture complète sans avoir le droit de lire les paramètres.
 - L'échéance d'une facture est sa date plus 15 jours (réglage « Échéance des factures (jours) »), sauf si elle est saisie ; le formulaire
   affiche la date par défaut, et une facture échue avec un reste dû déclenche l'alerte « Créance FA-… ».
 - Le « Prix d'achat » d'un lot est le total payé pour le lot (pas un prix unitaire) : il est enregistré comme une dépense
@@ -496,6 +518,12 @@ Les règles à connaître :
   jamais en finance.
 - La « Marge » de la ferme (recettes − dépenses de la période) et la « Marge du lot » de la rentabilité par lot (recettes du lot −
   ce qu'il a consommé) sont deux vues différentes : leurs sommes ne sont pas censées concorder.
+
+Pour les développeurs : les chiffres de la finance (écritures, synthèse, rentabilité, tableau de bord) viennent d'une vue SQL,
+`FinanceLedgerView`, créée par une migration et absente du schéma Prisma (rien n'y écrit). Une migration qui renomme, change
+le type ou supprime une colonne lue par cette vue (achats, lots, factures, avoirs, clients, écritures) doit d'abord supprimer la
+vue (`DROP VIEW`), modifier la table, puis recréer la vue avec le même texte. La convention est rappelée dans l'en-tête de
+`backend/prisma/schema.prisma`, et un test (`finance-ledger.spec.ts`) relit la dernière migration qui définit la vue.
 
 **À venir**
 

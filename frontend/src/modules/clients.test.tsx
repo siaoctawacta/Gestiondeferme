@@ -523,6 +523,22 @@ describe('quote refusals and detail under all farms', () => {
     expect(await screen.findByText('Seul un devis envoyé ou accepté peut être facturé')).toBeInTheDocument();
   });
 
+  it('shows the 400 of sending a draft past its validity in the dialog, and leaves the quote a draft', async () => {
+    failWith = { url: /\/send$/, status: 400, message: 'La date de validité est dépassée' };
+    mountList(devis);
+    await screen.findByText('DV-0001');
+    const user = userEvent.setup();
+    await user.click(rowOf('DV-0001').getByRole('button', { name: 'Envoyer' }));
+    const dialog = await screen.findByRole('dialog');
+    await user.click(within(dialog).getByRole('button', { name: 'Envoyer' }));
+    expect(await within(dialog).findByText('La date de validité est dépassée')).toBeInTheDocument();
+    // The dialog stays open (the action did not happen) and can be cancelled.
+    expect(screen.getByRole('dialog')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Annuler' }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(rowOf('DV-0001').getByRole('button', { name: 'Envoyer' })).toBeInTheDocument();
+  });
+
   it('shows the API refusal of a creation in the form', async () => {
     failWith = { url: /\/quotes$/, status: 400, message: 'Ce client est inactif' };
     mountList(devis);

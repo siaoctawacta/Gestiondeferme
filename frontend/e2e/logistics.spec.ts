@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
-import { LONG_SUITE } from './suites.ts';
 import type { Browser, Page } from 'playwright';
 import {
   api, apiLogin, enrollAdmin, enrollUser, launch, newPage, PASSWORD, uiLoginWithBackupCode, uiLoginWithPassword, WEB_URL,
@@ -23,7 +22,7 @@ const mainShows = (page: Page, re: RegExp) =>
 // The figures are worked out here: 1 000 kg of `Aliment ponte` at 280 (stock already there) + 3 000 kg received at 310
 // give a weighted average of (280 000 + 930 000) / 4 000 = 302.5; a distribution of 500 kg costs 500 x 302.5 = 151 250
 // and leaves 3 500 kg; a count of 3 400 adjusts by -100.
-describe('logistique : achat, réception, stock, distribution, inventaire, santé et alertes', LONG_SUITE, () => {
+describe('logistique : achat, réception, stock, distribution, inventaire, santé et alertes', () => {
   let browser: Browser;
   let admin: EnrolledAdmin;
   let farmId = '';

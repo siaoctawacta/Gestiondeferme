@@ -453,6 +453,32 @@ describe('Synthèse', () => {
     await screen.findByText("Chiffre d'affaires");
   });
 
+  it('refuses an emptied bound on every tab with « Indiquez les deux dates », so the three tabs always send both dates', async () => {
+    mountPage();
+    await screen.findByText('Salaires septembre');
+    const user = userEvent.setup();
+    const before = calls.length;
+    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '' } });
+    expect(await screen.findByText('Indiquez les deux dates')).toBeInTheDocument();
+    expect(screen.queryByText('Salaires septembre')).not.toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Synthèse' }));
+    expect(await screen.findByText('Indiquez les deux dates')).toBeInTheDocument();
+    await user.click(screen.getByRole('tab', { name: 'Rentabilité par lot' }));
+    expect(await screen.findByText('Indiquez les deux dates')).toBeInTheDocument();
+    // Nothing was requested for the open period.
+    expect(calls.slice(before).filter((c) => c.url.startsWith('/api/finance/') && !/from=[^&]+&to=[^&]+/.test(c.url))).toEqual([]);
+    expect(calls.some((c) => c.url.startsWith('/api/finance/summary'))).toBe(false);
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '' } });
+    fireEvent.change(screen.getByLabelText('Au'), { target: { value: '2026-10-31' } });
+    expect(await screen.findByText('Indiquez les deux dates')).toBeInTheDocument();
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-10-01' } });
+    await waitFor(() => expect(screen.queryByText('Indiquez les deux dates')).not.toBeInTheDocument());
+    await screen.findByText('LC-2026-14');
+    // The error of a start after the end keeps its own message.
+    fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2999-01-01' } });
+    expect(await screen.findByText('La date de début est après la date de fin')).toBeInTheDocument();
+  });
+
   it('sends the chosen period to the summary endpoint', async () => {
     await openSummary();
     fireEvent.change(screen.getByLabelText('Du'), { target: { value: '2026-10-01' } });
