@@ -21,7 +21,7 @@
     "postinstall": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "build:demo": "tsc -p tsconfig.demo.json",
-    "seed:demo": "node -e \"require('fs').rmSync('dist-demo', { recursive: true, force: true })\" && npm run build:demo && node dist-demo/prisma/demo/seed-demo.js",
+    "seed:demo": "node -e \"if (process.env.NODE_ENV !== 'production') { require('fs').rmSync('dist-demo', { recursive: true, force: true }); require('child_process').execSync('npm run build:demo', { stdio: 'inherit' }) }\" && node dist-demo/prisma/demo/seed-demo.js",
     "demo:reset": "npm run build:demo && node dist-demo/prisma/demo/demo-reset-guard.js && prisma migrate reset --force && prisma db seed && npm run seed:demo"
   },
   "dependencies": {

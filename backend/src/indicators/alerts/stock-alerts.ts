@@ -39,8 +39,6 @@ export interface StockAlertData {
 const byLevel = (a: AlertItem, b: AlertItem): number =>
   ALERT_LEVEL_ORDER.indexOf(a.level) - ALERT_LEVEL_ORDER.indexOf(b.level);
 
-/** Under several farms the detail ends with the farm's name. */
-
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 
 /**

@@ -51,11 +51,12 @@ export function appUrl(env: NodeJS.ProcessEnv = process.env): string {
 export function configureApp(app: INestApplication): void {
   assertJwtSecret(process.env.JWT_SECRET);
   assertEncryptionKey();
-  appUrl();
   const webOrigin = process.env.WEB_ORIGIN;
   if (!webOrigin) {
     throw new Error('WEB_ORIGIN must be set (CORS never allows any origin)');
   }
+  // After the WEB_ORIGIN check: APP_URL falls back to it.
+  appUrl();
   const trustProxy = process.env.TRUST_PROXY;
   if (trustProxy) {
     const value =

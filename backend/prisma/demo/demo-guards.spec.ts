@@ -16,14 +16,34 @@ describe('demo:reset guard (it drops the whole database)', () => {
       resetRefusal({ DATABASE_URL: LOCAL, ALLOW_DEMO_RESET: 'true' }),
     ).toContain('ALLOW_DEMO_RESET=1');
   });
-  it('allows a local database', () => {
-    for (const host of ['localhost', '127.0.0.1', 'db']) {
+  it('allows a local database, `db` only inside a container, host case ignored', () => {
+    for (const host of ['localhost', '127.0.0.1', 'LOCALHOST', '[::1]']) {
       expect(
         resetRefusal({
           ALLOW_DEMO_RESET: '1',
           DATABASE_URL: `postgresql://u:p@${host}:5432/x`,
         }),
       ).toBeNull();
+    }
+    const compose = {
+      ALLOW_DEMO_RESET: '1',
+      DATABASE_URL: 'postgresql://u:p@DB:5432/x',
+    };
+    expect(resetRefusal(compose, () => true)).toBeNull();
+    expect(resetRefusal(compose, () => false)).toContain('hôte « db »');
+  });
+  it('refuses a host or hostaddr query parameter, whatever the URL host says', () => {
+    const base = { ALLOW_DEMO_RESET: '1' };
+    for (const query of [
+      '?host=db.prod.example.com',
+      '?sslmode=require&hostaddr=10.0.0.5',
+      '?HOST=x',
+    ]) {
+      const refusal = resetRefusal({
+        ...base,
+        DATABASE_URL: `postgresql://u:p@localhost:5432/x${query}`,
+      });
+      expect(refusal).toContain('host ou hostaddr');
     }
   });
   it('refuses a remote or missing database, and production', () => {

@@ -12,6 +12,8 @@ COPY tsconfig.json tsconfig.build.json tsconfig.demo.json nest-cli.json ./
 COPY src ./src
 RUN npm run build
 # The demo seed (`node dist-demo/prisma/demo/seed-demo.js`) is compiled into the image.
+# `npm run seed:demo` skips the dist-demo clean and the rebuild when NODE_ENV=production (this image):
+# the runtime stage has no tsconfig.demo.json, it runs the compiled copy as it is.
 RUN npm run build:demo
 
 FROM node:22-bookworm-slim AS runtime

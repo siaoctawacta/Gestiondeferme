@@ -271,9 +271,29 @@ describe('QR codes (e2e)', () => {
 
     it('takes one to sixty ids', async () => {
       await labels(admin, 'lot', []).expect(400);
-      const ids = Array.from({ length: 61 }, (_, i) => `id${i}`);
-      await labels(admin, 'lot', ids).expect(400);
-      await labels(admin, 'lot', ids.slice(0, 60)).expect(400);
+      // Real ids, so the only thing that can refuse the 61st is the limit itself.
+      await prisma.equipment.createMany({
+        data: Array.from({ length: 61 }, (_, i) => ({
+          farmId: world.farmId,
+          name: `Équipement ${i}`,
+          type: 'AUTRE' as const,
+        })),
+      });
+      const ids = (
+        await prisma.equipment.findMany({
+          select: { id: true },
+          orderBy: { name: 'asc' },
+        })
+      ).map((e) => e.id);
+      expect(ids).toHaveLength(61);
+      const tooMany = await labels(admin, 'equipement', ids).expect(400);
+      expect((tooMany.body as Msg).message).toEqual([
+        'Au plus 60 étiquettes à la fois',
+      ]);
+      const sixty = await labels(admin, 'equipement', ids.slice(0, 60)).expect(
+        200,
+      );
+      expect((sixty.body as { labels: Target[] }).labels).toHaveLength(60);
       await labels(admin, 'facture', ['x']).expect(400);
       await labels(admin, 'lot', ['x', 'x']).expect(400);
       await http()

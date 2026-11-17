@@ -81,4 +81,29 @@ describe('toXlsx', () => {
     expect(ws.getRow(1).values).toEqual([undefined, 'Nom', 'Quantité', 'Note']);
     expect(ws.getRow(2).values).toEqual([undefined, 'Poule', 12, 'x']);
   });
+
+  it('writes a calendar day (YYYY-MM-DD) as a real date cell shown dd/mm/yyyy, in any column', async () => {
+    const buf = await toXlsx(
+      [
+        { name: 'Poule', qty: 12, note: '2026-11-14' },
+        { name: '2026-02-30', qty: null, note: '2026-11-14 matin' },
+      ],
+      cols,
+      'Dates',
+    );
+    const wb = new Workbook();
+    await wb.xlsx.load(buf as unknown as ArrayBuffer);
+    const ws = wb.getWorksheet('Dates')!;
+    const day = ws.getRow(2).getCell(3);
+    expect(day.value).toEqual(new Date(Date.UTC(2026, 10, 14)));
+    expect(day.numFmt).toBe('dd/mm/yyyy');
+    // Not a calendar day, or more than a day: the text stays.
+    expect(ws.getRow(3).getCell(1).value).toBe('2026-02-30');
+    expect(ws.getRow(3).getCell(3).value).toBe('2026-11-14 matin');
+  });
+
+  it('leaves the CSV of the same rows as the text it always was', () => {
+    const csv = toCsv([{ name: 'Poule', qty: 12, note: '2026-11-14' }], cols);
+    expect(csv.split('\r\n')[1]).toBe('Poule;12;2026-11-14');
+  });
 });

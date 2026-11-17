@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, type OnApplicationBootstrap } from '@nestjs/common';
 import type { RequestContext } from '../../access/decorators';
 import { SourceRegistry } from '../../common/source-registry';
 import { can } from '../../access/permissions';
@@ -17,15 +17,23 @@ interface RankedRule {
 
 /** Modules add their alert rules here; `dashboard` reads the open alerts without importing them. */
 @Injectable()
-export class AlertsRegistry extends SourceRegistry<RankedRule> {
-  constructor() {
-    super('alertes');
+export class AlertsRegistry implements OnApplicationBootstrap {
+  /** Held, not extended: `addRule` is the only way in (a bare `register` would skip the rank). */
+  private readonly rules = new SourceRegistry<RankedRule>('alertes');
+
+  /** The registered rules, in registration order. */
+  all(): RankedRule[] {
+    return this.rules.all();
+  }
+
+  onApplicationBootstrap(): void {
+    this.rules.onApplicationBootstrap();
   }
 
   /** A rule and its module's place among the others (`ALERT_RANK`); registering a rule twice keeps one entry. */
   addRule(rule: AlertRule, rank: AlertRank): void {
-    const known = this.all().find((e) => e.rule === rule);
-    if (!known) super.register({ rule, rank });
+    const known = this.rules.all().find((e) => e.rule === rule);
+    if (!known) this.rules.register({ rule, rank });
   }
 
   /**
@@ -41,7 +49,7 @@ export class AlertsRegistry extends SourceRegistry<RankedRule> {
     ctx: RequestContext,
     settings: AlertSettings,
   ): Promise<AlertItem[]> {
-    const rules = this.all();
+    const rules = this.rules.all();
     const perRule = await Promise.all(rules.map((e) => e.rule(ctx, settings)));
     const flat = perRule.flatMap((items, order) =>
       items

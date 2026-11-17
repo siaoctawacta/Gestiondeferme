@@ -1,7 +1,7 @@
-import { ascending } from '../common/ascending';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
+import { ascending } from '../common/ascending';
 import { EggStockService } from '../eggs/egg-stock';
 import type { Prisma } from '../generated/prisma/client';
 import type { SaleLineKind } from '../generated/prisma/enums';

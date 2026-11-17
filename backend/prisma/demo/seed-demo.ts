@@ -18,7 +18,7 @@
 //
 // WARNING: the demo creates 12 accounts sharing one password, among them a SUPER ADMINISTRATOR
 // (super.admin@kpalime.demo) with no second factor enrolled. Delete them before any real use, and never load the
-// demo on an installation that can be reached. A warning is printed at the end of every successful run.
+// demo on an installation that can be reached. A warning is printed at the end of every run that created the accounts, failed or not.
 //
 // Dates: every date is relative to the day the demo is loaded (demo-dates.ts). The reference screens date from
 // 2026-11-14; its dates are moved forward by the days elapsed since, so the alerts, the stock days and the receivables
@@ -165,6 +165,8 @@ export async function runDemoSeed(): Promise<number> {
     logger: ['error', 'warn'],
   });
   let lock: Client | undefined;
+  // The demo accounts exist from the `seedUsers` step on: a run that stops later still leaves them.
+  let usersCreated = false;
   try {
     try {
       configureApp(app);
@@ -272,6 +274,7 @@ export async function runDemoSeed(): Promise<number> {
     await step('identité légale, utilisateurs', async () => {
       await seedLegalIdentity(ctx);
       await seedUsers(ctx, password);
+      usersCreated = true;
     });
     await step('sites et bâtiments', () => seedPremises(ctx));
     const customers = await seedCustomers(ctx);
@@ -324,6 +327,7 @@ export async function runDemoSeed(): Promise<number> {
         error instanceof Error ? (error.stack ?? error.message) : error,
       );
     }
+    if (usersCreated) console.error(WARNING);
     return 1;
   } finally {
     await lock?.end().catch(() => undefined);

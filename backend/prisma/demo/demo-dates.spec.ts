@@ -87,16 +87,27 @@ describe('demo dates', () => {
   });
 
   describe('DEMO_TODAY (tests only)', () => {
-    it('replaces today', () => {
-      expect(runDay({ DEMO_TODAY: '2026-12-01' }).toISOString()).toBe(
+    const CLOCK = new Date('2026-12-01T12:00:00Z');
+    it('replaces today when the process clock is on that day (the fake clock)', () => {
+      expect(runDay({ DEMO_TODAY: '2026-12-01' }, CLOCK).toISOString()).toBe(
         '2026-12-01T00:00:00.000Z',
+      );
+    });
+    it("is refused when it differs from the process clock's day", () => {
+      expect(() => runDay({ DEMO_TODAY: '2026-12-02' }, CLOCK)).toThrow(
+        'horloge du processus',
+      );
+      expect(() => runDay({ DEMO_TODAY: '2020-01-01' })).toThrow(
+        'horloge du processus',
       );
     });
     it('is refused in production and when malformed', () => {
       expect(() =>
-        runDay({ DEMO_TODAY: '2026-12-01', NODE_ENV: 'production' }),
+        runDay({ DEMO_TODAY: '2026-12-01', NODE_ENV: 'production' }, CLOCK),
       ).toThrow('DEMO_TODAY est refusé en production');
-      expect(() => runDay({ DEMO_TODAY: 'demain' })).toThrow('AAAA-MM-JJ');
+      expect(() => runDay({ DEMO_TODAY: 'demain' }, CLOCK)).toThrow(
+        'AAAA-MM-JJ',
+      );
     });
     it('defaults to the real day', () => {
       expect(runDay({}).getTime()).toBeLessThanOrEqual(Date.now());

@@ -65,8 +65,15 @@ export function demoDates(day: Date): DemoDates {
   };
 }
 
-/** The day of the run: `DEMO_TODAY` (tests only) or today. */
-export function runDay(env: NodeJS.ProcessEnv = process.env): Date {
+/**
+ * The day of the run: `DEMO_TODAY` (tests only) or today. `DEMO_TODAY` is refused when it differs from the
+ * process clock's day: it only works together with the fake clock (test/fake-clock.js), so the seed and the
+ * API it writes to can never disagree about the day.
+ */
+export function runDay(
+  env: NodeJS.ProcessEnv = process.env,
+  clock: Date = new Date(),
+): Date {
   const override = env.DEMO_TODAY;
   if (!override) return today();
   if (env.NODE_ENV === 'production') {
@@ -74,6 +81,11 @@ export function runDay(env: NodeJS.ProcessEnv = process.env): Date {
   }
   const day = parseDay(override);
   if (!day) throw new Error('DEMO_TODAY doit être une date AAAA-MM-JJ');
+  if (day.getTime() !== today(clock).getTime()) {
+    throw new Error(
+      "DEMO_TODAY diffère du jour de l'horloge du processus : il ne s'utilise qu'avec test/fake-clock.js",
+    );
+  }
   return day;
 }
 

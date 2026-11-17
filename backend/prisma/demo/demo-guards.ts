@@ -1,4 +1,5 @@
 // The refusals of the demo, as pure functions of the environment (unit-tested).
+import { existsSync } from 'fs';
 
 export const MESSAGES = {
   production:
@@ -31,27 +32,44 @@ export function demoPasswordProblem(env: NodeJS.ProcessEnv): string | null {
     : null;
 }
 
-const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', '::1', 'db'];
+const LOCAL_HOSTS = ['localhost', '127.0.0.1', '[::1]', '::1'];
+/** The compose service name: local only inside a container (`/.dockerenv`). */
+const COMPOSE_HOST = 'db';
+
+const insideDocker = (): boolean => existsSync('/.dockerenv');
 
 /**
  * `demo:reset` runs `prisma migrate reset --force`, which drops the WHOLE database: only with
- * `ALLOW_DEMO_RESET=1`, outside production and on a local database (localhost, 127.0.0.1 or the compose `db` host).
+ * `ALLOW_DEMO_RESET=1`, outside production and on a local database (localhost, 127.0.0.1, or the compose `db`
+ * host inside a container). A `host` / `hostaddr` query parameter would override the URL's host (libpq), so it is refused.
  */
-export function resetRefusal(env: NodeJS.ProcessEnv): string | null {
+export function resetRefusal(
+  env: NodeJS.ProcessEnv,
+  inDocker: () => boolean = insideDocker,
+): string | null {
   const refuse = (why: string) =>
     `demo:reset détruit TOUTE la base de données et est refusé : ${why}.`;
   if (env.NODE_ENV === 'production') return refuse('NODE_ENV=production');
   if (env.ALLOW_DEMO_RESET !== '1')
     return refuse('définissez ALLOW_DEMO_RESET=1');
-  let host: string;
+  let url: URL;
   try {
-    host = new URL(env.DATABASE_URL ?? '').hostname;
+    url = new URL(env.DATABASE_URL ?? '');
   } catch {
     return refuse('DATABASE_URL est absente ou invalide');
   }
-  if (!LOCAL_HOSTS.includes(host)) {
+  const overrides = [...url.searchParams.keys()].map((k) => k.toLowerCase());
+  if (overrides.includes('host') || overrides.includes('hostaddr')) {
     return refuse(
-      `la base n'est pas locale (hôte « ${host} », attendu localhost, 127.0.0.1 ou db)`,
+      "DATABASE_URL contient un paramètre host ou hostaddr qui remplace l'hôte de l'URL",
+    );
+  }
+  const host = url.hostname.toLowerCase();
+  const local =
+    LOCAL_HOSTS.includes(host) || (host === COMPOSE_HOST && inDocker());
+  if (!local) {
+    return refuse(
+      `la base n'est pas locale (hôte « ${host} », attendu localhost, 127.0.0.1, ou db dans un conteneur)`,
     );
   }
   return null;

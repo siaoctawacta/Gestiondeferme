@@ -1,4 +1,5 @@
 import { INestApplication } from '@nestjs/common';
+import { Workbook } from 'exceljs';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { daysAgo, Headers, Id, World } from './fixtures';
 import { createTestApp } from './setup';
@@ -93,6 +94,31 @@ describe('Remaining list exports (e2e)', () => {
       expect(filtered.total).toBe(1);
       // The totals follow every filter but the status.
       expect(filtered.statusCounts).toEqual({ EN_COURS: 1, LEVEE: 1 });
+    });
+
+    it('writes the days of a list workbook as real date cells, the CSV staying text', async () => {
+      const lot = await world.lot(admin);
+      await world.post(admin, '/quarantines', {
+        batchId: lot.id,
+        startDate: daysAgo(5),
+        reason: 'Toux suspecte',
+      });
+      const res = await http()
+        .get('/api/quarantines?format=xlsx')
+        .set(admin)
+        .buffer(true)
+        .parse((r, cb) => {
+          const chunks: Buffer[] = [];
+          r.on('data', (c: Buffer) => chunks.push(c));
+          r.on('end', () => cb(null, Buffer.concat(chunks)));
+        })
+        .expect(200);
+      const wb = new Workbook();
+      await wb.xlsx.load(res.body as ArrayBuffer);
+      const cell = wb.worksheets[0].getRow(2).getCell(1);
+      expect(cell.value).toEqual(new Date(`${daysAgo(5)}T00:00:00Z`));
+      expect(cell.numFmt).toBe('dd/mm/yyyy');
+      expect((await csv('/quarantines')).rows[0][0]).toBe(daysAgo(5));
     });
 
     it('incidents: header, rows, statusCounts, and a role without sante is refused', async () => {

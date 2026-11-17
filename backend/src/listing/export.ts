@@ -28,6 +28,23 @@ export function toCsv<T>(rows: T[], cols: ExportColumn<T>[]): string {
   return '﻿' + lines.map((l) => l + '\r\n').join('');
 }
 
+const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
+
+/** `2026-11-14` → that day at 00:00 UTC; any other text (or a day that does not exist) stays as it is. */
+function asDay(value: string | number | null): string | number | Date | null {
+  if (typeof value !== 'string') return value;
+  const m = DAY.exec(value);
+  if (!m) return value;
+  const date = new Date(Date.UTC(+m[1], +m[2] - 1, +m[3]));
+  return date.getUTCMonth() === +m[2] - 1 && date.getUTCDate() === +m[3]
+    ? date
+    : value;
+}
+
+/**
+ * The workbook of a list. Every list gives its days as `YYYY-MM-DD`: in the sheet they are real
+ * date cells (sortable, formattable) shown `dd/mm/yyyy`; the CSV keeps the text.
+ */
 export async function toXlsx<T>(
   rows: T[],
   cols: ExportColumn<T>[],
@@ -36,7 +53,12 @@ export async function toXlsx<T>(
   const wb = new Workbook();
   const ws = wb.addWorksheet(sheetName.slice(0, 31));
   ws.addRow(cols.map((c) => c.header)).font = { bold: true };
-  for (const r of rows) ws.addRow(cols.map((c) => c.value(r)));
+  for (const r of rows) {
+    const added = ws.addRow(cols.map((c) => asDay(c.value(r))));
+    added.eachCell((cell) => {
+      if (cell.value instanceof Date) cell.numFmt = 'dd/mm/yyyy';
+    });
+  }
   return Buffer.from(await wb.xlsx.writeBuffer());
 }
 
