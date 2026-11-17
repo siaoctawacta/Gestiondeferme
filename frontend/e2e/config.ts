@@ -14,6 +14,7 @@ export const ADMINS = {
   batiments: 'admin-batiments@e2e.test',
   commerce: 'admin-commerce@e2e.test',
   logistics: 'admin-logistics@e2e.test',
+  operations: 'admin-operations@e2e.test',
   production: 'admin-production@e2e.test',
   visual: 'admin-visual@e2e.test',
 } as const;
