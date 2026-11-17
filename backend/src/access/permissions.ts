@@ -44,6 +44,7 @@ export const ALL_MODULES = [
   'finance',
   'taches',
   'equipements',
+  'personnel',
   'audit',
 ] as const;
 
@@ -86,19 +87,23 @@ const ROLE_GRANTS: Record<Role, Grants> = {
       'achats',
       'taches',
       'equipements',
+      'personnel',
     ]),
     ...grant(R, ['clients', 'ventes', 'finance', 'rapports', 'audit']),
   },
   RESP_AVICOLE: {
     ...grant(W, ['lots', 'ponte', 'alimentation', 'sante', 'taches']),
+    ...grant(['read', 'create'], ['personnel', 'equipements']),
     ...grant(R, ['batiments', 'stocks', 'rapports']),
   },
   RESP_PORCIN: {
     ...grant(W, ['porcs', 'reproduction', 'alimentation', 'sante', 'taches']),
+    ...grant(['read', 'create'], ['personnel', 'equipements']),
     ...grant(R, ['batiments', 'stocks', 'rapports']),
   },
   VETERINAIRE: {
     ...grant(W, ['sante']),
+    taches: ['read', 'update'],
     ...grant(R, [
       'lots',
       'ponte',
@@ -115,13 +120,14 @@ const ROLE_GRANTS: Record<Role, Grants> = {
     ...grant(V, ['stocks']),
     ...grant(W, ['fournisseurs']),
     achats: ['read', 'create', 'update'],
+    taches: ['read', 'update'],
     ...grant(R, ['alimentation', 'rapports']),
   },
   COMPTABLE: {
     ...grant(W, ['finance']),
     // Issues invoices and records payments (`update`), credit notes (`validate`); never creates a quote.
     ventes: ['read', 'update', 'validate'],
-    ...grant(R, ['achats', 'clients', 'fournisseurs', 'rapports']),
+    ...grant(R, ['achats', 'clients', 'fournisseurs', 'rapports', 'personnel']),
   },
   COMMERCIAL: {
     ...grant(W, ['clients', 'ventes']),
@@ -133,12 +139,14 @@ const ROLE_GRANTS: Record<Role, Grants> = {
       ['lots', 'ponte', 'porcs', 'alimentation', 'sante'],
     ),
     taches: ['read', 'update'],
+    equipements: ['read', 'create'],
     batiments: R,
   },
   MAGASINIER: {
     stocks: ['read', 'create'],
     achats: ['read', 'update'],
     fournisseurs: R,
+    taches: ['read', 'update'],
   },
   AUDITEUR: everyModule(R),
 };

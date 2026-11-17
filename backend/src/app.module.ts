@@ -13,6 +13,7 @@ import { HerdModule } from './herd/herd.module';
 import { HealthController } from './health/health.controller';
 import { HealthModule } from './health/health.module';
 import { IndicatorsModule } from './indicators/indicators.module';
+import { PersonnelModule } from './personnel/personnel.module';
 import { PigsModule } from './pigs/pigs.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PurchasesModule } from './purchases/purchases.module';
@@ -41,6 +42,7 @@ import { SuppliersModule } from './suppliers/suppliers.module';
     FinanceModule,
     IndicatorsModule,
     DashboardModule,
+    PersonnelModule,
   ],
   controllers: [HealthController],
 })

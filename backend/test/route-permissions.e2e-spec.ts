@@ -298,13 +298,21 @@ describe('Route permissions walk (e2e)', () => {
       CreditNotesController: ['ventes'],
       FinanceEntriesController: ['finance'],
       FinanceReportsController: ['finance'],
+      EmployeesController: ['personnel', 'finance'],
+      AttendanceController: ['personnel'],
     };
+    /** Open to every user of the farm by design (Q37): the selects of the task form and the day sheet. */
+    const ANY_AUTHENTICATED = ['EmployeesController.options'];
 
     it('states the module of its family on every route, and the guard refuses a role without it', async () => {
       const wrongModule: string[] = [];
       const notRefused: string[] = [];
       const noRole = new Map<ModuleKey, Headers>();
-      for (const r of routes.filter((x) => x.controller in FAMILY)) {
+      for (const r of routes.filter(
+        (x) =>
+          x.controller in FAMILY &&
+          !ANY_AUTHENTICATED.includes(`${x.controller}.${x.handler}`),
+      )) {
         if (!r.module || !FAMILY[r.controller].includes(r.module)) {
           wrongModule.push(
             `${r.controller}.${r.handler} -> ${String(r.module)}`,
@@ -328,6 +336,46 @@ describe('Route permissions walk (e2e)', () => {
           notRefused.push(`${r.method} ${r.path} -> ${res.status}`);
       }
       expect(wrongModule).toEqual([]);
+      expect(notRefused).toEqual([]);
+    });
+
+    it('keeps the staff selects open to any user of the farm, with no module of their own', async () => {
+      for (const id of ANY_AUTHENTICATED) {
+        const route = routes.find((r) => `${r.controller}.${r.handler}` === id);
+        expect(route?.module).toBeNull();
+      }
+      const keeper = await world.actor('MAGASINIER');
+      await world.http().get('/api/employees/options').set(keeper).expect(200);
+    });
+
+    it('refuses a role that only reads the staff on every write route of the personnel families', async () => {
+      const accountant = await world.actor('COMPTABLE');
+      const director = await world.actor('DIRECTEUR_FERME');
+      const writes = routes.filter(
+        (r) =>
+          ['EmployeesController', 'AttendanceController'].includes(
+            r.controller,
+          ) && r.method !== 'get',
+      );
+      expect(writes.length).toBe(7);
+      const notRefused: string[] = [];
+      for (const r of writes) {
+        const res = await world
+          .http()
+          [r.method](`/api${r.path.replace(/:\w+/g, 'x')}`)
+          .set(accountant)
+          .send({});
+        if (res.status !== 403) {
+          notRefused.push(`${r.method} ${r.path} -> ${res.status}`);
+        }
+      }
+      // The staff manager may enter attendance but never reads the payroll (finance:create).
+      await world
+        .http()
+        .get('/api/employees/payroll')
+        .query({ month: '2026-10' })
+        .set(director)
+        .expect(403);
       expect(notRefused).toEqual([]);
     });
 

@@ -108,4 +108,26 @@ describe('permissions', () => {
     expect(p.finance).toEqual([]);
     expect(p.dashboard).toEqual(['read']);
   });
+
+  it('grants personnel, taches and equipements as the slice-5 table says', () => {
+    expect(can('RESP_AVICOLE', 'personnel', 'create')).toBe(true);
+    expect(can('RESP_AVICOLE', 'personnel', 'update')).toBe(false);
+    expect(can('RESP_PORCIN', 'personnel', 'create')).toBe(true);
+    expect(can('AGENT_ELEVAGE', 'personnel', 'read')).toBe(false);
+    expect(can('DIRECTEUR_FERME', 'personnel', 'update')).toBe(true);
+    expect(can('COMPTABLE', 'personnel', 'read')).toBe(true);
+    expect(can('COMPTABLE', 'personnel', 'create')).toBe(false);
+    expect(can('PROPRIETAIRE', 'personnel', 'read')).toBe(true);
+    expect(can('AUDITEUR', 'personnel', 'update')).toBe(false);
+    expect(can('VETERINAIRE', 'taches', 'update')).toBe(true);
+    expect(can('VETERINAIRE', 'taches', 'create')).toBe(false);
+    expect(can('RESP_STOCK', 'taches', 'update')).toBe(true);
+    expect(can('MAGASINIER', 'taches', 'update')).toBe(true);
+    expect(can('COMPTABLE', 'taches', 'read')).toBe(false);
+    expect(can('AGENT_ELEVAGE', 'equipements', 'create')).toBe(true);
+    expect(can('AGENT_ELEVAGE', 'equipements', 'update')).toBe(false);
+    expect(can('RESP_AVICOLE', 'equipements', 'create')).toBe(true);
+    expect(can('RESP_PORCIN', 'equipements', 'update')).toBe(false);
+    expect(can('MAGASINIER', 'equipements', 'read')).toBe(false);
+  });
 });
