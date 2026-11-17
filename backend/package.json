@@ -19,7 +19,10 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
     "postinstall": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "build:demo": "tsc -p tsconfig.demo.json",
+    "seed:demo": "npm run build:demo && node dist-demo/prisma/demo/seed-demo.js",
+    "demo:reset": "node -e \"if (process.env.NODE_ENV === 'production') { console.error('demo:reset est refusé en production'); process.exit(1); }\" && prisma migrate reset --force && prisma db seed && npm run seed:demo"
   },
   "dependencies": {
     "@nestjs/common": "^11.0.1",

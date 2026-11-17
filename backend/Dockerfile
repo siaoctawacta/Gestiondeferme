@@ -8,19 +8,22 @@ COPY package.json package-lock.json ./
 COPY prisma ./prisma
 COPY prisma.config.ts ./
 RUN npm ci
-COPY tsconfig.json tsconfig.build.json nest-cli.json ./
+COPY tsconfig.json tsconfig.build.json tsconfig.demo.json nest-cli.json ./
 COPY src ./src
 RUN npm run build
+# The demo seed (`node dist-demo/prisma/demo/seed-demo.js`) is compiled into the image.
+RUN npm run build:demo
 
 FROM node:22-bookworm-slim AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
+COPY --from=build --chown=node:node /app/dist-demo ./dist-demo
 # Needed by `prisma migrate deploy` and `prisma db seed` (the seed imports ../src/auth/password).
 COPY --from=build --chown=node:node /app/src ./src
 COPY --from=build --chown=node:node /app/prisma ./prisma
-COPY --from=build --chown=node:node /app/prisma.config.ts /app/package.json /app/tsconfig.json ./
+COPY --from=build --chown=node:node /app/prisma.config.ts /app/package.json /app/tsconfig.json /app/tsconfig.demo.json ./
 RUN mkdir -p /app/uploads && chown node:node /app/uploads
 USER node
 EXPOSE 3000

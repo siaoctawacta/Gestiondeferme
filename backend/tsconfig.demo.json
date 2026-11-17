@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "outDir": "./dist-demo",
+    "rootDir": ".",
+    "incremental": true,
+    "tsBuildInfoFile": "./dist-demo/.tsbuildinfo",
+    "declaration": false,
+    "sourceMap": false
+  },
+  "include": ["src/**/*.ts", "prisma/demo/**/*.ts"],
+  "exclude": ["node_modules", "dist", "dist-demo", "**/*.spec.ts"]
+}

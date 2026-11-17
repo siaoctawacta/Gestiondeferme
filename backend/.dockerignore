@@ -8,3 +8,4 @@ uploads
 test
 *.log
 src/generated
+dist-demo
