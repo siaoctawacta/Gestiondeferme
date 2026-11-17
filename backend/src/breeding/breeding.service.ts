@@ -11,6 +11,7 @@ import type { Prisma } from '../generated/prisma/client';
 import type { BreedingStatus } from '../generated/prisma/enums';
 import { BatchesService } from '../herd/batches.service';
 import { addDays, assertNotFuture, requireDay } from '../common/days';
+import { ascending } from '../common/ascending';
 import { lockRow } from '../common/lock-row';
 import { EXITED } from '../common/messages';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
@@ -317,9 +318,7 @@ export class BreedingService implements LitterWeaningSource {
       // The sow and the boar (the boar keeps leaving the herd from under this
       // record) are locked in ASCENDING id order, as every other path that
       // takes two animals does: a sale of the pair cannot deadlock with us.
-      for (const id of [dto.sowId, dto.boarId]
-        .filter((v): v is string => !!v)
-        .sort())
+      for (const id of ascending([dto.sowId, dto.boarId]))
         await lockRow(tx, 'Animal', id, [farmId]);
       const sow = await tx.animal.findFirst({
         where: { id: dto.sowId, farmId },

@@ -20,8 +20,9 @@ import {
   UpdateFeedDistributionDto,
 } from './dto/feed-distribution.dto';
 import {
-  DISTRIBUTION_COLUMNS,
+  columnsFor,
   FeedDistributionsService,
+  hideCost,
 } from './feed-distributions.service';
 
 @ApiTags('feed-distributions')
@@ -41,26 +42,29 @@ export class FeedDistributionsController {
       res,
       q,
       'alimentation-eau',
-      DISTRIBUTION_COLUMNS,
-      find,
+      columnsFor(ctx),
+      async (range) => (await find(range)).map((d) => hideCost(ctx, d)),
       count,
     );
   }
 
   @Post()
   @RequireDaily('alimentation')
-  create(@Ctx() ctx: RequestContext, @Body() dto: CreateFeedDistributionDto) {
-    return this.distributions.create(ctx, dto);
+  async create(
+    @Ctx() ctx: RequestContext,
+    @Body() dto: CreateFeedDistributionDto,
+  ) {
+    return hideCost(ctx, await this.distributions.create(ctx, dto));
   }
 
   @Patch(':id')
   @RequireDaily('alimentation')
-  update(
+  async update(
     @Ctx() ctx: RequestContext,
     @Param('id') id: string,
     @Body() dto: UpdateFeedDistributionDto,
   ) {
-    return this.distributions.update(ctx, id, dto);
+    return hideCost(ctx, await this.distributions.update(ctx, id, dto));
   }
 
   @Delete(':id')

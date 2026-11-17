@@ -10,19 +10,22 @@ import {
   type AlertSettings,
 } from './alert.types';
 
+interface RankedRule {
+  rule: AlertRule;
+  rank: AlertRank;
+}
+
 /** Modules add their alert rules here; `dashboard` reads the open alerts without importing them. */
 @Injectable()
-export class AlertsRegistry extends SourceRegistry<AlertRule> {
+export class AlertsRegistry extends SourceRegistry<RankedRule> {
   constructor() {
     super('alertes');
   }
 
-  private readonly ranks = new Map<AlertRule, AlertRank>();
-
-  /** A rule and its module's place among the others (`ALERT_RANK`). */
-  register(rule: AlertRule, rank: AlertRank): void {
-    super.register(rule);
-    this.ranks.set(rule, rank);
+  /** A rule and its module's place among the others (`ALERT_RANK`); registering a rule twice keeps one entry. */
+  addRule(rule: AlertRule, rank: AlertRank): void {
+    const known = this.all().find((e) => e.rule === rule);
+    if (!known) super.register({ rule, rank });
   }
 
   /**
@@ -39,7 +42,7 @@ export class AlertsRegistry extends SourceRegistry<AlertRule> {
     settings: AlertSettings,
   ): Promise<AlertItem[]> {
     const rules = this.all();
-    const perRule = await Promise.all(rules.map((rule) => rule(ctx, settings)));
+    const perRule = await Promise.all(rules.map((e) => e.rule(ctx, settings)));
     const flat = perRule.flatMap((items, order) =>
       items
         .filter(
@@ -50,7 +53,7 @@ export class AlertsRegistry extends SourceRegistry<AlertRule> {
         .map((item) => ({
           item,
           order,
-          rank: this.ranks.get(rules[order]) as AlertRank,
+          rank: rules[order].rank,
         })),
     );
     return flat

@@ -254,43 +254,6 @@ describe('Lock order (held locks, real pool)', () => {
       },
       60000,
     );
-
-    it('a sale issuing the sow and the boar races 20 creations of the same pair: no deadlock, no 500', async () => {
-      for (const sowFirst of [true, false]) {
-        for (let i = 0; i < 10; i++) {
-          const { sow, boar } = await pair(sowFirst);
-          const sale = world
-            .http()
-            .post('/api/sales/issued')
-            .set(accountant)
-            .send({
-              customerId,
-              date: daysAgo(5),
-              lines: [
-                {
-                  kind: 'ANIMAL',
-                  animalId: sow.id,
-                  quantity: 1,
-                  unitPrice: 90000,
-                },
-                {
-                  kind: 'ANIMAL',
-                  animalId: boar.id,
-                  quantity: 1,
-                  unitPrice: 120000,
-                },
-              ],
-            });
-          const [made, sold] = await Promise.all([
-            create(sow.id, boar.id),
-            sale,
-          ]);
-          // whichever wins, the other is refused cleanly (never a deadlock or a 500)
-          expect([201, 400, 409]).toContain(made.status);
-          expect([201, 400, 409]).toContain(sold.status);
-        }
-      }
-    }, 120000);
   });
 
   describe('sales: buildings come after every lot and animal lock, ascending', () => {

@@ -1498,7 +1498,7 @@ describe('Finance (e2e)', () => {
       });
     });
 
-    it('writes are unchanged: a master writer may send a price, the response hides it', async () => {
+    it('create accepts a price (hidden in the response); an update without finance read ignores the field, with it can change and clear it', async () => {
       const resp = await world.actor('RESP_AVICOLE');
       const base = {
         species: 'AVICOLE',
@@ -1515,29 +1515,49 @@ describe('Finance (e2e)', () => {
           .expect(201),
       );
       expect(created.purchasePrice).toBeNull();
-      const edited = asLot(
-        await http()
-          .patch(`/api/batches/${created.id}`)
-          .set(resp)
-          .send({ notes: 'RAS' })
-          .expect(200),
-      );
-      expect(edited.purchasePrice).toBeNull();
+      const stored = async () =>
+        (
+          await prisma.animalBatch.findUniqueOrThrow({
+            where: { id: created.id },
+          })
+        ).purchasePrice?.toNumber();
+      expect(await stored()).toBe(90000);
+      for (const body of [
+        { purchasePrice: null },
+        { purchasePrice: 1 },
+        { purchasePrice: 5, notes: 'RAS' },
+      ]) {
+        const edited = asLot(
+          await http()
+            .patch(`/api/batches/${created.id}`)
+            .set(resp)
+            .send(body)
+            .expect(200),
+        );
+        expect(edited.purchasePrice).toBeNull();
+        expect(await stored()).toBe(90000);
+      }
       expect(
         (
           await prisma.animalBatch.findUniqueOrThrow({
             where: { id: created.id },
           })
-        ).purchasePrice?.toNumber(),
-      ).toBe(90000);
-      expect(
-        asLot(
-          await http()
-            .get(`/api/batches/${created.id}`)
-            .set(director)
-            .expect(200),
-        ).purchasePrice,
-      ).toBe(90000);
+        ).notes,
+      ).toBe('RAS');
+      const changed = asLot(
+        await http()
+          .patch(`/api/batches/${created.id}`)
+          .set(director)
+          .send({ purchasePrice: 95000 })
+          .expect(200),
+      );
+      expect(changed.purchasePrice).toBe(95000);
+      await http()
+        .patch(`/api/batches/${created.id}`)
+        .set(director)
+        .send({ purchasePrice: null })
+        .expect(200);
+      expect(await stored()).toBeUndefined();
     });
   });
 

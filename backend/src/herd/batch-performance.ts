@@ -13,7 +13,8 @@ export interface BatchPerformance {
   dailyGainG: number | null;
   feedKg: number;
   feedConversion: number | null;
-  feedCost: number;
+  /** Null for a caller without `finance:read`. */
+  feedCost: number | null;
 }
 
 /**

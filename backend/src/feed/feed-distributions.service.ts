@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
+import { can } from '../access/permissions';
 import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
 import { formatDay, requireDay } from '../common/days';
@@ -54,15 +55,34 @@ export interface FeedDistributionItem {
    */
   waterEditable: boolean;
   /** Current cost per kg: see `cost`. */
-  unitCost: number;
+  unitCost: number | null;
   /**
    * The CURRENT cost, from the stock ledger (the exits' costs, which a
    * back-dated stock entry re-values) plus the part priced from the catalogue.
    * The columns stored on the row are the snapshot taken at entry.
+   * Null for a caller without `finance:read`.
    */
-  cost: number;
+  cost: number | null;
   note: string | null;
 }
+
+/** What a distribution cost is finance data: null (and no `Coût` column) without `finance:read`. */
+export const hideCost = <
+  T extends { unitCost: number | null; cost: number | null },
+>(
+  ctx: RequestContext,
+  item: T,
+): T =>
+  can(ctx.user.role, 'finance', 'read')
+    ? item
+    : { ...item, unitCost: null, cost: null };
+
+export const columnsFor = (
+  ctx: RequestContext,
+): ExportColumn<FeedDistributionItem>[] =>
+  can(ctx.user.role, 'finance', 'read')
+    ? DISTRIBUTION_COLUMNS
+    : DISTRIBUTION_COLUMNS.filter((c) => c.header !== 'Coût');
 
 export const DISTRIBUTION_COLUMNS: ExportColumn<FeedDistributionItem>[] = [
   { header: 'Date', value: (d) => d.date },

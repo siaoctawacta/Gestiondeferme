@@ -58,7 +58,7 @@ export class HealthAlertsService implements HealthAlertData, OnModuleInit {
 
   onModuleInit(): void {
     for (const rule of healthAlertRules(this, () => this.now()))
-      this.registry.register(rule, ALERT_RANK.HEALTH);
+      this.registry.addRule(rule, ALERT_RANK.HEALTH);
   }
 
   async vaccinations(

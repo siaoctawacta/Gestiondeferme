@@ -50,7 +50,7 @@ export class ProductionAlertsService implements AlertData, OnModuleInit {
 
   onModuleInit(): void {
     for (const rule of productionAlertRules(this))
-      this.registry.register(rule, ALERT_RANK.PRODUCTION);
+      this.registry.addRule(rule, ALERT_RANK.PRODUCTION);
   }
 
   /**

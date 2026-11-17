@@ -1,3 +1,4 @@
+import { ascending } from '../common/ascending';
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { Decimal } from '@prisma/client/runtime/client';
 import type { RequestContext } from '../access/decorators';
@@ -58,10 +59,6 @@ export interface ReturnNote {
 
 const SOURCE = 'SALE';
 const RETURN_SOURCE = 'CREDIT_NOTE';
-
-/** The distinct ids in ascending order: the order every lock is taken in. */
-const ascending = (ids: (string | null)[]): string[] =>
-  [...new Set(ids.filter((id): id is string => !!id))].sort();
 
 /** The quantity of each lot over its LOT lines, in ascending lot id: two lines of one lot make ONE herd event. */
 const quantityByLot = (

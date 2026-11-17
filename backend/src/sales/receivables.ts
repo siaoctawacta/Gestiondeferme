@@ -192,7 +192,10 @@ export async function receivablesTotal(
   farmIds: string[],
   opts: { statuses?: readonly InvoiceStatusValue[]; dueBefore?: Date } = {},
 ): Promise<Decimal> {
-  const statuses = [...(opts.statuses ?? REVENUE_STATUSES)];
+  // Only issued invoices are owed (`standingOf`): a draft or cancelled one never counts.
+  const statuses = (opts.statuses ?? REVENUE_STATUSES).filter((s) =>
+    REVENUE_STATUSES.includes(s),
+  );
   if (farmIds.length === 0 || statuses.length === 0) return new Decimal(0);
   const before = opts.dueBefore
     ? Prisma.sql`AND i."dueDate" < ${formatDay(opts.dueBefore)}::date`

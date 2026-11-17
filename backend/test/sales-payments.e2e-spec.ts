@@ -989,6 +989,14 @@ describe('Client payments and receivables (e2e)', () => {
         ).toNumber(),
       ).toBe(400000);
       expect((await receivablesTotal(prisma, [])).toNumber()).toBe(0);
+      // only issued invoices are owed: a draft or cancelled status filter counts nothing
+      expect(
+        (
+          await receivablesTotal(prisma, farmIds, {
+            statuses: ['BROUILLON', 'ANNULEE'],
+          })
+        ).toNumber(),
+      ).toBe(0);
       expect(
         await countQueries(app, async () => {
           await receivablesTotal(app.get(PrismaService), farmIds);

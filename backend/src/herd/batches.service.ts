@@ -7,6 +7,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
+import { can } from '../access/permissions';
 import { AuditService } from '../audit/audit.service';
 import type { Prisma } from '../generated/prisma/client';
 import type {
@@ -414,7 +415,10 @@ export class BatchesService {
           initialCount,
           breedId: dto.breedId,
           supplierName: dto.supplierName,
-          purchasePrice: dto.purchasePrice,
+          // What a lot cost is finance data: without `finance:read` the field is ignored.
+          purchasePrice: can(ctx.user.role, 'finance', 'read')
+            ? dto.purchasePrice
+            : undefined,
           responsibleId: dto.responsibleId,
           notes: dto.notes,
         },

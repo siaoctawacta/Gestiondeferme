@@ -22,15 +22,15 @@ const item = (key: string, level: AlertItem['level']): AlertItem => ({
 describe('AlertsRegistry', () => {
   it("orders URGENT first, then by rule registration order within a rank, then in each rule's own order", async () => {
     const registry = new AlertsRegistry();
-    registry.register(
+    registry.addRule(
       () => Promise.resolve([item('a:2', 'A_VOIR'), item('a:1', 'A_VOIR')]),
       ALERT_RANK.STOCK,
     );
-    registry.register(
+    registry.addRule(
       () => Promise.resolve([item('b:1', 'URGENT'), item('b:0', 'A_VOIR')]),
       ALERT_RANK.STOCK,
     );
-    registry.register(
+    registry.addRule(
       () => Promise.resolve([item('c:1', 'URGENT')]),
       ALERT_RANK.STOCK,
     );
@@ -40,15 +40,15 @@ describe('AlertsRegistry', () => {
 
   it('orders by level, then by module rank, whatever the registration order', async () => {
     const registry = new AlertsRegistry();
-    registry.register(
+    registry.addRule(
       () => Promise.resolve([item('sales:1', 'A_VOIR')]),
       ALERT_RANK.SALES,
     );
-    registry.register(
+    registry.addRule(
       () => Promise.resolve([item('stock:1', 'A_VOIR')]),
       ALERT_RANK.STOCK,
     );
-    registry.register(
+    registry.addRule(
       () =>
         Promise.resolve([
           item('prod:2', 'A_VOIR'),
@@ -57,15 +57,15 @@ describe('AlertsRegistry', () => {
         ]),
       ALERT_RANK.PRODUCTION,
     );
-    registry.register(
+    registry.addRule(
       () => Promise.resolve([item('sales:u', 'URGENT')]),
       ALERT_RANK.SALES,
     );
-    registry.register(
+    registry.addRule(
       () => Promise.resolve([item('stock:u', 'URGENT')]),
       ALERT_RANK.STOCK,
     );
-    registry.register(
+    registry.addRule(
       () => Promise.resolve([item('health:1', 'A_VOIR')]),
       ALERT_RANK.HEALTH,
     );
@@ -84,11 +84,11 @@ describe('AlertsRegistry', () => {
 
   it('keeps registration order between rules of the same rank', async () => {
     const registry = new AlertsRegistry();
-    registry.register(
+    registry.addRule(
       () => Promise.resolve([item('b', 'A_VOIR')]),
       ALERT_RANK.TASKS,
     );
-    registry.register(
+    registry.addRule(
       () => Promise.resolve([item('a', 'A_VOIR')]),
       ALERT_RANK.TASKS,
     );
@@ -105,7 +105,7 @@ describe('AlertsRegistry', () => {
       module,
       modules: [module],
     });
-    registry.register(
+    registry.addRule(
       () =>
         Promise.resolve([
           of('lots', 'm:1'),
@@ -137,10 +137,7 @@ describe('AlertsRegistry', () => {
       key: 'c:building',
       modules: ['alimentation'],
     };
-    registry.register(
-      () => Promise.resolve([both, building]),
-      ALERT_RANK.STOCK,
-    );
+    registry.addRule(() => Promise.resolve([both, building]), ALERT_RANK.STOCK);
     const as = (role: Role) =>
       registry.run({ user: { role } } as RequestContext, SETTINGS);
     expect((await as('RESP_AVICOLE')).map((i) => i.key)).toEqual([
@@ -154,7 +151,7 @@ describe('AlertsRegistry', () => {
 
   it('shows an alert without any module to no one', async () => {
     const registry = new AlertsRegistry();
-    registry.register(
+    registry.addRule(
       () =>
         Promise.resolve([
           {

@@ -31,7 +31,7 @@ export class ReceivableAlertsService
 
   onModuleInit(): void {
     for (const rule of receivableAlertRules(this, () => this.now()))
-      this.registry.register(rule, ALERT_RANK.SALES);
+      this.registry.addRule(rule, ALERT_RANK.SALES);
   }
 
   async overdue(ctx: RequestContext, day: Date): Promise<OpenReceivable[]> {

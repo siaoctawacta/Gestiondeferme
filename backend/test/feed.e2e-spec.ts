@@ -454,6 +454,56 @@ describe('Feed and water (e2e)', () => {
   });
 
   describe('distributions', () => {
+    it('hides cost and unitCost (list, writes, CSV) from a role without finance read, shows them with it', async () => {
+      const { headers: director } = await actor('DIRECTEUR_FERME');
+      const p = await product(director);
+      const l = await lot(director);
+      await distribute(director, { batchId: l.id, feedProductId: p.id });
+      const { headers: resp } = await actor('RESP_AVICOLE');
+      const list = await http()
+        .get('/api/feed-distributions')
+        .set(resp)
+        .expect(200);
+      expect((list.body as Page<Dist>).items[0]).toMatchObject({
+        quantityKg: 620,
+        unitCost: null,
+        cost: null,
+      });
+      const made = (
+        await distribute(resp, { batchId: l.id, feedProductId: p.id })
+      ).body as Dist;
+      expect(made).toMatchObject({ unitCost: null, cost: null });
+      const edited = await http()
+        .patch(`/api/feed-distributions/${made.id}`)
+        .set(resp)
+        .send({ quantityKg: 100 })
+        .expect(200);
+      expect(edited.body).toMatchObject({ unitCost: null, cost: null });
+      const csv = await http()
+        .get('/api/feed-distributions?format=csv')
+        .set(resp)
+        .expect(200);
+      const head = csv.text.replace(/^\uFEFF/, '').split(/\r?\n/)[0];
+      expect(head).toBe('Date;Lot / Bâtiment;Aliment;Aliment (kg);Eau (L)');
+      for (const role of ['AUDITEUR', 'DIRECTEUR_FERME'] as const) {
+        const { headers } = await actor(role);
+        const seen = await http()
+          .get('/api/feed-distributions')
+          .set(headers)
+          .expect(200);
+        expect(
+          (seen.body as Page<Dist>).items
+            .map((i) => i.cost)
+            .sort((a, b) => a - b),
+        ).toEqual([34000, 210800]);
+        const full = await http()
+          .get('/api/feed-distributions?format=csv')
+          .set(headers)
+          .expect(200);
+        expect(full.text).toContain(';Coût');
+      }
+    });
+
     it('costs a distribution at the product price and keeps it when the price changes', async () => {
       const { headers } = await actor('DIRECTEUR_FERME');
       const p = await product(headers);

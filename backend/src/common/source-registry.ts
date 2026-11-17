@@ -20,9 +20,7 @@ export class SourceRegistry<T> implements OnApplicationBootstrap {
   }
 
   /** Registering the same source twice keeps one entry (a module may be re-initialised). */
-  // `_meta`: a registry whose sources carry a rank or the like (alerts) overrides with more parameters.
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  register(source: T, ..._meta: never[]): void {
+  register(source: T): void {
     if (!this.sources.includes(source)) this.sources.push(source);
   }
 

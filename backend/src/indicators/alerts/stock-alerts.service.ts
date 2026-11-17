@@ -31,7 +31,7 @@ export class StockAlertsService implements StockAlertData, OnModuleInit {
 
   onModuleInit(): void {
     for (const rule of stockAlertRules(this, () => this.now()))
-      this.registry.register(rule, ALERT_RANK.STOCK);
+      this.registry.addRule(rule, ALERT_RANK.STOCK);
   }
 
   /** Every active article with a minimum in the request's farms, with its quantity there (none yet is 0). */
