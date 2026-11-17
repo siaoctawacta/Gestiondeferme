@@ -3,6 +3,7 @@ import { mkdir, rename, rm, writeFile } from 'fs/promises';
 import { dirname, isAbsolute, join, relative, resolve } from 'path';
 import {
   BadRequestException,
+  Logger,
   HttpException,
   Injectable,
   type CallHandler,
@@ -12,6 +13,8 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Observable } from 'rxjs';
+
+const logger = new Logger('Uploads');
 
 /** The folder every uploaded file lives under: `UPLOAD_DIR` (`uploads` under the working directory by default). */
 export const uploadRoot = (): string =>
@@ -92,9 +95,20 @@ export async function saveUpload(
   return stored;
 }
 
-/** Deletes a stored file; one that is already gone is not an error. */
+/**
+ * Deletes a stored file, best effort: one that is already gone is not an
+ * error, and a failure is logged and swallowed (it must never undo the write
+ * the cleanup follows, nor take down the new file).
+ */
 export async function removeUpload(stored: string | null): Promise<void> {
-  if (stored) await rm(uploadPath(stored), { force: true });
+  if (!stored) return;
+  try {
+    await rm(uploadPath(stored), { force: true });
+  } catch (error) {
+    logger.warn(
+      `Fichier non supprimé (${stored}) : ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
 }
 
 /**
@@ -108,7 +122,8 @@ export function singleFileUpload(
   message: string,
 ): Type<NestInterceptor> {
   const Base = FileInterceptor(field, {
-    limits: { fileSize: maxBytes, files: 1 },
+    // Only the file itself: no text field, no second part.
+    limits: { fileSize: maxBytes, files: 1, fields: 0, parts: 1 },
   });
   @Injectable()
   class SingleFileUpload implements NestInterceptor {

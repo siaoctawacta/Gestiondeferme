@@ -53,3 +53,7 @@ export type AlertRule = (
   ctx: RequestContext,
   settings: AlertSettings,
 ) => Promise<AlertItem[]>;
+
+/** An alert detail with the farm's name appended, for requests that span several farms. */
+export const withFarm = (detail: string, farmName?: string): string =>
+  farmName ? `${detail} — ${farmName}` : detail;

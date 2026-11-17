@@ -1,4 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { INestApplication } from '@nestjs/common';
@@ -778,6 +785,60 @@ describe('Tâches: workflow, recurrence, proof, alerts (e2e)', () => {
       expect(await due(monthly.id)).toBe('2026-11-30');
     });
 
+    it('keeps a monthly series on its anchor day: 31 Jan, 28 Feb, 31 Mar, 30 Apr', async () => {
+      let task = await make({
+        title: 'Loyer',
+        recurrence: 'MENSUELLE',
+        dueDate: '2026-01-31',
+      });
+      const dues: string[] = [];
+      for (let i = 0; i < 3; i++) {
+        await act(task.id, 'complete', { date: '2026-11-10' });
+        const next = await prisma.task.findFirstOrThrow({
+          where: { previousTaskId: task.id },
+        });
+        dues.push(next.dueDate.toISOString().slice(0, 10));
+        task = { ...task, id: next.id };
+      }
+      expect(dues).toEqual(['2026-02-28', '2026-03-31', '2026-04-30']);
+    });
+
+    it('re-anchors the series when the due date of an occurrence is edited', async () => {
+      const first = await make({
+        title: 'Loyer',
+        recurrence: 'MENSUELLE',
+        dueDate: '2026-01-31',
+      });
+      await act(first.id, 'complete', { date: '2026-11-10' });
+      const next = await prisma.task.findFirstOrThrow({
+        where: { previousTaskId: first.id },
+      });
+      await patch(next.id, { dueDate: '2026-02-20' });
+      await act(next.id, 'complete', { date: '2026-11-10' });
+      const third = await prisma.task.findFirstOrThrow({
+        where: { previousTaskId: next.id },
+      });
+      expect(third.dueDate.toISOString().slice(0, 10)).toBe('2026-03-20');
+    });
+
+    it('creates the occurrence without its lot when the lot has been closed, and still completes', async () => {
+      const task = await make({
+        title: 'Pesée',
+        recurrence: 'HEBDOMADAIRE',
+        batchId: lot.id,
+      });
+      await prisma.animalBatch.update({
+        where: { id: lot.id },
+        data: { status: 'CLOTURE' },
+      });
+      const done = await act(task.id, 'complete', { date: daysAgo(0) });
+      expect(done.status).toBe('TERMINEE');
+      const next = await prisma.task.findFirstOrThrow({
+        where: { previousTaskId: task.id },
+      });
+      expect(next).toMatchObject({ batchId: null, title: 'Pesée' });
+    });
+
     it('creates the occurrence unassigned when the assignee has left by then', async () => {
       const task = await make({
         title: 'Hebdo',
@@ -948,6 +1009,41 @@ describe('Tâches: workflow, recurrence, proof, alerts (e2e)', () => {
         (await prisma.task.findUniqueOrThrow({ where: { id: task.id } }))
           .proofPath,
       ).toBeNull();
+    });
+
+    it('refuses a text field next to the file', async () => {
+      const task = await make({ title: 'Champ' });
+      const res = await http()
+        .post(`/api/tasks/${task.id}/proof`)
+        .set(poultry)
+        .field('note', 'x')
+        .attach('file', PNG, { filename: 'a.png' })
+        .expect(400);
+      expect((res.body as Msg).message).toBe(PHOTO_REFUSED);
+      expect(files()).toHaveLength(0);
+    });
+
+    it('keeps the new photo when the old file cannot be removed, on replacement and on deletion of the task', async () => {
+      const task = await make({ title: 'Remplacée' });
+      // A directory where the old file should be: its removal fails.
+      const stuck = `tasks/${world.farmId}/stuck`;
+      mkdirSync(join(uploads, stuck), { recursive: true });
+      await prisma.task.update({
+        where: { id: task.id },
+        data: { proofPath: stuck, proofMime: 'image/png' },
+      });
+      const res = await upload(task.id, JPEG, 'b.jpg');
+      expect(res.body).toMatchObject({ hasProof: true });
+      const row = await prisma.task.findUniqueOrThrow({
+        where: { id: task.id },
+      });
+      expect(row.proofPath).toMatch(/\.jpg$/);
+      expect(existsSync(join(uploads, row.proofPath as string))).toBe(true);
+      await prisma.task.update({
+        where: { id: task.id },
+        data: { proofPath: stuck },
+      });
+      await http().delete(`/api/tasks/${task.id}`).set(poultry).expect(200);
     });
 
     it('accepts a photo on a completed task, replaces the previous file, and removes it with DELETE', async () => {
@@ -1126,19 +1222,29 @@ describe('Tâches: workflow, recurrence, proof, alerts (e2e)', () => {
           createdById: user.id,
         },
       });
+      // Due on the last day of the period and still open at its end: overdue at the end.
+      await prisma.task.create({
+        data: {
+          farmId: world.farmId,
+          title: 'Échue le 31',
+          dueDate: parseDay('2026-10-31') as Date,
+          createdAt: new Date('2026-10-12T08:00:00Z'),
+          createdById: user.id,
+        },
+      });
       expect(
         await reads.periodFigures(
           farmIds,
           parseDay('2026-10-01') as Date,
           parseDay('2026-10-31') as Date,
         ),
-      ).toEqual({ completed: 0, overdueAtEnd: 1, created: 1 });
+      ).toEqual({ completed: 0, overdueAtEnd: 2, created: 2 });
       const wide = await reads.periodFigures(
         farmIds,
         parseDay('2026-10-01') as Date,
         now,
       );
-      expect(wide).toEqual({ completed: 1, overdueAtEnd: 4, created: 5 });
+      expect(wide).toEqual({ completed: 1, overdueAtEnd: 5, created: 6 });
     });
 
     it('counts the tasks completed in the last 30 days only, today and 29 days back included', async () => {
@@ -1161,6 +1267,31 @@ describe('Tâches: workflow, recurrence, proof, alerts (e2e)', () => {
       expect(
         await reads.counts([world.farmId], parseDay(daysAgo(0)) as Date),
       ).toEqual({ done: 2, pending: 0 });
+    });
+
+    it("records a real departure date even when a manager completed the leaver's task later", async () => {
+      const task = await make({
+        title: 'Livraison',
+        assigneeId: yawa.id,
+        dueDate: '2026-10-30',
+      });
+      await act(task.id, 'complete', { date: '2026-11-14' });
+      await http()
+        .patch(`/api/employees/${yawa.id}`)
+        .set(director)
+        .send({ endDate: '2026-11-01' })
+        .expect(200);
+      const hire = await make({
+        title: 'Avant',
+        assigneeId: koffi.id,
+        dueDate: '2026-01-10',
+      });
+      await act(hire.id, 'complete', { date: '2026-01-09' });
+      await http()
+        .patch(`/api/employees/${koffi.id}`)
+        .set(director)
+        .send({ hireDate: '2026-02-01' })
+        .expect(200);
     });
 
     it('fills the open tasks of an employee and keeps an employee with tasks from deletion or leaving early', async () => {
@@ -1199,17 +1330,12 @@ describe('Tâches: workflow, recurrence, proof, alerts (e2e)', () => {
         .set(director)
         .send({ endDate: '2026-10-23' })
         .expect(200);
-      // A finished task counts by its completion date.
+      // A finished task never blocks, whatever the day a manager completed it on.
       await http()
         .patch(`/api/employees/${ama.id}`)
         .set(director)
-        .send({ endDate: daysAgo(1) })
+        .send({ endDate: '2026-10-22' })
         .expect(200);
-      await http()
-        .patch(`/api/employees/${ama.id}`)
-        .set(director)
-        .send({ endDate: daysAgo(2) })
-        .expect(409);
       const hired = await http()
         .patch(`/api/employees/${yawa.id}`)
         .set(director)

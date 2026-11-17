@@ -70,8 +70,10 @@ export class TaskReads {
   /**
    * What happened to the tasks between two days (inclusive): `completed` by
    * their completion date, `created` by the day they were entered, and
-   * `overdueAtEnd` the tasks that existed at the end of `to`, were due before
-   * it and were not completed by then.
+   * `overdueAtEnd` the tasks that existed at the end of `to`, were due on or
+   * before it (at the end of the day, a task due that day is late) and were not
+   * completed by then. The live lists and alerts (`isOverdue`) count a task
+   * late only the day after its due date.
    */
   async periodFigures(
     farmIds: string[],
@@ -95,7 +97,7 @@ export class TaskReads {
         where: {
           farmId,
           createdAt: { lt: endOfTo },
-          dueDate: { lt: to },
+          dueDate: { lte: to },
           OR: [
             { status: { in: OPEN_STATUSES } },
             { completedDate: { gt: to } },

@@ -397,6 +397,8 @@ export class TasksService {
             dueTime: dto.dueTime === undefined ? undefined : blank(dto.dueTime),
             priority: dto.priority,
             recurrence: dto.recurrence,
+            // A new due date or recurrence starts a new series: its anchor day is taken again at completion.
+            ...(dueDate || dto.recurrence ? { recurrenceDay: null } : {}),
             ...next,
           },
           include: taskInclude,
@@ -492,32 +494,59 @@ export class TasksService {
         relationLoadStrategy: 'join',
       });
       await this.log(tx, ctx, 'UPDATE', before, updated);
-      const due = nextDueDate(before.dueDate, before.recurrence);
-      if (due) await this.occurrence(tx, ctx, before, due);
+      const anchor = before.recurrenceDay ?? before.dueDate.getUTCDate();
+      const due = nextDueDate(before.dueDate, before.recurrence, anchor);
+      if (due) await this.occurrence(tx, ctx, before, due, anchor);
       return toTaskItem(updated, today(), ctx.user.id);
     });
   }
 
+  /**
+   * The next occurrence of a completed recurring task. Lock order: the task row
+   * (taken by `advance`), then the assignee's employee row, the same as
+   * `assertAssignee`, so a departure date entered meanwhile either waits for
+   * this write or is seen by it: the occurrence is never left due after the
+   * departure. A lot closed since is left out of the occurrence (it must never
+   * fail the completion).
+   */
   private async occurrence(
     tx: Tx,
     ctx: RequestContext,
     from: TaskRecord,
     dueDate: Date,
+    anchorDay: number,
   ): Promise<void> {
-    const left =
-      from.assignee?.endDate &&
-      from.assignee.endDate.getTime() < dueDate.getTime();
+    let assigneeId = from.assigneeId;
+    if (assigneeId) {
+      await lockRow(tx, 'Employee', assigneeId, ctx.farmIds);
+      const employee = await tx.employee.findUniqueOrThrow({
+        where: { id: assigneeId },
+        select: { endDate: true },
+      });
+      if (employee.endDate && employee.endDate.getTime() < dueDate.getTime()) {
+        assigneeId = null;
+      }
+    }
+    let batchId = from.batchId;
+    if (batchId) {
+      const open = await tx.animalBatch.findFirst({
+        where: { id: batchId, farmId: from.farmId, status: 'EN_COURS' },
+        select: { id: true },
+      });
+      if (!open) batchId = null;
+    }
     const created = await tx.task.create({
       data: {
         farmId: from.farmId,
         title: from.title,
         description: from.description,
-        assigneeId: left ? null : from.assigneeId,
+        assigneeId,
         dueDate,
         dueTime: from.dueTime,
         priority: from.priority,
         recurrence: from.recurrence,
-        batchId: from.batchId,
+        recurrenceDay: from.recurrence === 'MENSUELLE' ? anchorDay : null,
+        batchId,
         buildingId: from.buildingId,
         equipmentId: from.equipmentId,
         previousTaskId: from.id,
@@ -530,47 +559,35 @@ export class TasksService {
   }
 
   /** The generated occurrence goes with the reopening, while nobody has touched it. */
-  async reopen(ctx: RequestContext, id: string): Promise<TaskItem> {
-    const { item, removedProof } = await this.advance(
-      ctx,
-      id,
-      'reopen',
-      async (tx, before) => {
-        const next = await tx.task.findUnique({
-          where: { previousTaskId: id },
-          select: { id: true },
-        });
-        let removedProof: string | null = null;
-        if (next) {
-          await lockRow(tx, 'Task', next.id, ctx.farmIds);
-          const occurrence = await this.find(tx, ctx, next.id);
-          if (!isUntouched(occurrence.status) || occurrence.proofPath) {
-            throw new ConflictException(NEXT_STARTED);
-          }
-          await tx.task.delete({ where: { id: next.id } });
-          await this.log(tx, ctx, 'DELETE', occurrence, undefined);
-          removedProof = occurrence.proofPath;
+  reopen(ctx: RequestContext, id: string): Promise<TaskItem> {
+    return this.advance(ctx, id, 'reopen', async (tx, before) => {
+      const next = await tx.task.findUnique({
+        where: { previousTaskId: id },
+        select: { id: true },
+      });
+      if (next) {
+        await lockRow(tx, 'Task', next.id, ctx.farmIds);
+        const occurrence = await this.find(tx, ctx, next.id);
+        if (!isUntouched(occurrence.status) || occurrence.proofPath) {
+          throw new ConflictException(NEXT_STARTED);
         }
-        const updated = await tx.task.update({
-          where: { id },
-          data: {
-            status: statusAfter('reopen') as TaskStatusValue,
-            completedDate: null,
-            completedById: null,
-            startedAt: null,
-          },
-          include: taskInclude,
-          relationLoadStrategy: 'join',
-        });
-        await this.log(tx, ctx, 'UPDATE', before, updated);
-        return {
-          item: toTaskItem(updated, today(), ctx.user.id),
-          removedProof,
-        };
-      },
-    );
-    await removeUpload(removedProof);
-    return item;
+        await tx.task.delete({ where: { id: next.id } });
+        await this.log(tx, ctx, 'DELETE', occurrence, undefined);
+      }
+      const updated = await tx.task.update({
+        where: { id },
+        data: {
+          status: statusAfter('reopen') as TaskStatusValue,
+          completedDate: null,
+          completedById: null,
+          startedAt: null,
+        },
+        include: taskInclude,
+        relationLoadStrategy: 'join',
+      });
+      await this.log(tx, ctx, 'UPDATE', before, updated);
+      return toTaskItem(updated, today(), ctx.user.id);
+    });
   }
 
   /* ------------------------------------------------------ proof photo */
@@ -595,31 +612,29 @@ export class TasksService {
       file.buffer,
       kind.ext,
     );
+    let done: { item: TaskItem; previous: string | null };
     try {
-      const { item, previous } = await this.advance(
-        ctx,
-        id,
-        'proof',
-        async (tx, before) => {
-          const updated = await tx.task.update({
-            where: { id },
-            data: { proofPath: stored, proofMime: kind.mime },
-            include: taskInclude,
-            relationLoadStrategy: 'join',
-          });
-          await this.log(tx, ctx, 'UPDATE', before, updated);
-          return {
-            item: toTaskItem(updated, today(), ctx.user.id),
-            previous: before.proofPath,
-          };
-        },
-      );
-      await removeUpload(previous);
-      return item;
+      done = await this.advance(ctx, id, 'proof', async (tx, before) => {
+        const updated = await tx.task.update({
+          where: { id },
+          data: { proofPath: stored, proofMime: kind.mime },
+          include: taskInclude,
+          relationLoadStrategy: 'join',
+        });
+        await this.log(tx, ctx, 'UPDATE', before, updated);
+        return {
+          item: toTaskItem(updated, today(), ctx.user.id),
+          previous: before.proofPath,
+        };
+      });
     } catch (error) {
+      // Only a failed write deletes the NEW file.
       await removeUpload(stored);
       throw error;
     }
+    // The old file goes after the commit, best effort: its failure never touches the new one.
+    await removeUpload(done.previous);
+    return done.item;
   }
 
   async clearProof(ctx: RequestContext, id: string): Promise<TaskItem> {

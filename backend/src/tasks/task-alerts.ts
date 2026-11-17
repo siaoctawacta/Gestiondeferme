@@ -1,7 +1,11 @@
 import type { RequestContext } from '../access/decorators';
 import { can } from '../access/permissions';
 import { formatDay, today } from '../common/days';
-import type { AlertItem, AlertRule } from '../indicators/alerts/alert.types';
+import {
+  withFarm,
+  type AlertItem,
+  type AlertRule,
+} from '../indicators/alerts/alert.types';
 import { isOverdue, type TaskStatusValue } from './task-workflow';
 
 /** A task as the alert rule reads it. */
@@ -44,7 +48,7 @@ export function taskAlerts(rows: OverdueTask[], now: Date): AlertItem[] {
       return {
         key: `task:${r.id}`,
         title: 'Tâche en retard',
-        detail: r.farmName ? `${detail} — ${r.farmName}` : detail,
+        detail: withFarm(detail, r.farmName),
         level: 'A_VOIR',
         module: 'taches',
         modules: ['taches'],

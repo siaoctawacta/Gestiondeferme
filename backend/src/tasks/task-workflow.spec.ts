@@ -97,8 +97,12 @@ describe('task workflow', () => {
   });
 
   describe('nextDueDate', () => {
-    const next = (d: string, r: Parameters<typeof nextDueDate>[1]) => {
-      const out = nextDueDate(day(d), r);
+    const next = (
+      d: string,
+      r: Parameters<typeof nextDueDate>[1],
+      anchor?: number,
+    ) => {
+      const out = nextDueDate(day(d), r, anchor);
       return out && formatDay(out);
     };
     it('adds a day, a week, or a month clamped to its last day', () => {
@@ -108,6 +112,13 @@ describe('task workflow', () => {
       expect(next('2026-12-15', 'MENSUELLE')).toBe('2027-01-15');
       expect(next('2028-01-31', 'MENSUELLE')).toBe('2028-02-29');
       expect(next('2026-10-31', 'MENSUELLE')).toBe('2026-11-30');
+    });
+    it('keeps a monthly series on its anchor day instead of drifting to the clamped day', () => {
+      expect(next('2026-02-28', 'MENSUELLE', 31)).toBe('2026-03-31');
+      expect(next('2026-03-31', 'MENSUELLE', 31)).toBe('2026-04-30');
+      expect(next('2026-04-30', 'MENSUELLE', 31)).toBe('2026-05-31');
+      expect(next('2026-02-28', 'MENSUELLE', 15)).toBe('2026-03-15');
+      expect(next('2026-02-28', 'MENSUELLE')).toBe('2026-03-28');
     });
     it('has none for a one-off task', () => {
       expect(next('2026-10-23', 'AUCUNE')).toBeNull();

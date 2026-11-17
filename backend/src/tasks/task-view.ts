@@ -125,21 +125,17 @@ export const taskColumns: ExportColumn<TaskItem>[] = [
 ];
 
 /**
- * The tasks of an employee dated after `day`: open ones by their due date,
- * finished ones by the day they were completed (what an employee who leaves on
- * `day` can no longer have on record).
+ * The OPEN tasks of an employee due after `day` (what an employee who leaves
+ * on `day` cannot keep). Finished tasks never count: their completion date is
+ * whatever a manager entered, not a fact about the employee's post.
  */
 export const tasksAfter = (day: Date): Prisma.TaskWhereInput => ({
-  OR: [
-    { status: { in: OPEN_STATUSES }, dueDate: { gt: day } },
-    { status: { notIn: OPEN_STATUSES }, completedDate: { gt: day } },
-  ],
+  status: { in: OPEN_STATUSES },
+  dueDate: { gt: day },
 });
 
-/** The tasks of an employee dated before `day` (an employee hired on `day`), the same way. */
+/** The open tasks of an employee due before `day` (an employee hired on `day`). */
 export const tasksBefore = (day: Date): Prisma.TaskWhereInput => ({
-  OR: [
-    { status: { in: OPEN_STATUSES }, dueDate: { lt: day } },
-    { status: { notIn: OPEN_STATUSES }, completedDate: { lt: day } },
-  ],
+  status: { in: OPEN_STATUSES },
+  dueDate: { lt: day },
 });

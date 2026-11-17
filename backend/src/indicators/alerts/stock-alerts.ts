@@ -2,7 +2,7 @@ import type { RequestContext } from '../../access/decorators';
 import { signedDaysBetween, today } from '../../common/days';
 import { expiryStatus, stockLevel } from '../../stock/stock-level';
 import { quantityText } from '../indicators';
-import { ALERT_LEVEL_ORDER } from './alert.types';
+import { ALERT_LEVEL_ORDER, withFarm } from './alert.types';
 import type { AlertItem, AlertRule, AlertSettings } from './alert.types';
 
 /** One article's quantity and minimum in one farm. */
@@ -40,8 +40,6 @@ const byLevel = (a: AlertItem, b: AlertItem): number =>
   ALERT_LEVEL_ORDER.indexOf(a.level) - ALERT_LEVEL_ORDER.indexOf(b.level);
 
 /** Under several farms the detail ends with the farm's name. */
-const withFarm = (detail: string, farmName?: string): string =>
-  farmName ? `${detail} — ${farmName}` : detail;
 
 const compare = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
 

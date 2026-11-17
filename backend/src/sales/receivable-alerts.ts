@@ -3,7 +3,11 @@ import type { RequestContext } from '../access/decorators';
 import { can } from '../access/permissions';
 import { formatDay, today } from '../common/days';
 import { formatFcfa } from '../common/format-number';
-import type { AlertItem, AlertRule } from '../indicators/alerts/alert.types';
+import {
+  withFarm,
+  type AlertItem,
+  type AlertRule,
+} from '../indicators/alerts/alert.types';
 import { isOverdue, type InvoiceStatusValue } from './sale-workflow';
 
 /** An issued invoice and what is still due on it, as the alert rule reads it. */
@@ -52,7 +56,7 @@ export function receivableAlerts(
       return {
         key: `receivable:${r.invoiceId}`,
         title: `Créance ${r.number}`,
-        detail: r.farmName ? `${detail} — ${r.farmName}` : detail,
+        detail: withFarm(detail, r.farmName),
         level: 'A_VOIR',
         module: 'ventes',
         modules: ['ventes'],

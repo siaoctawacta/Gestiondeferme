@@ -1,4 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+} from 'fs';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import {
@@ -81,5 +88,10 @@ describe('uploads on disk', () => {
     expect(existsSync(uploadPath(stored))).toBe(false);
     await removeUpload(stored);
     await removeUpload(null);
+  });
+
+  it('swallows a failed removal (here a directory in place of the file)', async () => {
+    mkdirSync(join(root, 'tasks', 'f', 'stuck'), { recursive: true });
+    await expect(removeUpload('tasks/f/stuck')).resolves.toBeUndefined();
   });
 });

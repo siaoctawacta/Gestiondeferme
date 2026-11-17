@@ -45,20 +45,21 @@ const FROM: Record<TaskAction, TaskStatusValue[]> = {
 export const can = (status: TaskStatusValue, action: TaskAction): boolean =>
   FROM[action].includes(status);
 
-const REFUSALS: Record<TaskAction, string> = {
+/** `proof` is allowed from every status, so it has no refusal. */
+const REFUSALS: Record<Exclude<TaskAction, 'proof'>, string> = {
   edit: 'Une tâche terminée ne peut plus être modifiée : rouvrez-la',
   delete: 'Une tâche terminée ne peut pas être supprimée',
   start: 'Seule une tâche à faire peut être démarrée',
   complete: 'Cette tâche est déjà terminée',
   reopen: 'Seule une tâche terminée peut être rouverte',
-  proof: 'Cette tâche ne peut pas recevoir de photo',
 };
 
 /** The 409 message of an action the status does not allow, or null when it is allowed. */
 export const refusal = (
   status: TaskStatusValue,
   action: TaskAction,
-): string | null => (can(status, action) ? null : REFUSALS[action]);
+): string | null =>
+  can(status, action) || action === 'proof' ? null : REFUSALS[action];
 
 /** The status an action leads to (null when the status does not change). */
 export function statusAfter(action: TaskAction): TaskStatusValue | null {
@@ -88,11 +89,14 @@ export const isOverdue = (
 /**
  * The due date of the occurrence a recurring task creates when it is
  * completed: a day, a week, or the same day of the next month clamped to its
- * last day; null for a one-off task. Calendar days at 00:00 UTC.
+ * last day; null for a one-off task. A monthly series keeps its `anchorDay`
+ * (default: the day of `dueDate`) so a clamped 28 Feb is followed by 31 Mar, not 28 Mar.
+ * Calendar days at 00:00 UTC.
  */
 export function nextDueDate(
   dueDate: Date,
   recurrence: TaskRecurrenceValue,
+  anchorDay?: number,
 ): Date | null {
   switch (recurrence) {
     case 'QUOTIDIENNE':
@@ -104,7 +108,11 @@ export function nextDueDate(
       const month = dueDate.getUTCMonth() + 1;
       const lastOfNext = new Date(Date.UTC(year, month + 1, 0)).getUTCDate();
       return new Date(
-        Date.UTC(year, month, Math.min(dueDate.getUTCDate(), lastOfNext)),
+        Date.UTC(
+          year,
+          month,
+          Math.min(anchorDay ?? dueDate.getUTCDate(), lastOfNext),
+        ),
       );
     }
     default:

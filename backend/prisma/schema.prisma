@@ -1721,6 +1721,8 @@ model Task {
   priority       TaskPriority   @default(NORMALE)
   status         TaskStatus     @default(A_FAIRE)
   recurrence     TaskRecurrence @default(AUCUNE)
+  /// Day of the month a MENSUELLE series is anchored on (1-31), so 31 Jan, 28 Feb, 31 Mar do not drift to the 28th. Null until the first completion.
+  recurrenceDay  Int?
   batchId        String?
   batch          AnimalBatch?   @relation(fields: [batchId], references: [id], onDelete: Restrict)
   buildingId     String?
