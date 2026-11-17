@@ -12,5 +12,6 @@ import { HeatsService } from './heats.service';
   imports: [HerdModule],
   controllers: [BreedingController, AnimalReproductionController],
   providers: [BreedingService, HeatsService],
+  exports: [BreedingService],
 })
 export class BreedingModule {}

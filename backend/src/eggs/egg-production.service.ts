@@ -67,6 +67,26 @@ export const EGG_COLUMNS: ExportColumn<EggProductionItem>[] = [
   { header: 'Taux de casse', value: (e) => e.breakageRate },
 ];
 
+export interface EggPeriodFigures {
+  collected: number;
+  broken: number;
+  downgraded: number;
+  toIncubation: number;
+  /** collected − broken − downgraded − toIncubation, per record. */
+  marketable: number;
+  /** Hens alive on each (lot, day) that recorded eggs, summed: the denominator of the laying rate. */
+  henDays: number;
+}
+
+const noEggs = (): EggPeriodFigures => ({
+  collected: 0,
+  broken: 0,
+  downgraded: 0,
+  toIncubation: 0,
+  marketable: 0,
+  henDays: 0,
+});
+
 const SORTABLE = ['date', 'collected'];
 export const NO_EGGS = "Ce lot ne produit pas d'œufs";
 const OVER =
@@ -83,6 +103,69 @@ export class EggProductionService implements BatchHistorySource {
     history: BatchHistoryRegistry,
   ) {
     history.register(this);
+  }
+
+  /**
+   * The egg figures of each lot between two days (both inclusive): what was
+   * collected, broken, downgraded and put in incubation, what can be sold
+   * (`marketableOf`) and the hen-days behind the laying rate (the hens alive on
+   * each day that lot recorded eggs, summed). Three queries whatever the lots
+   * and days; `periodFigures` is the sum of these, and `layingRate(collected,
+   * henDays)` the one laying-rate computation of the dashboard and the reports.
+   */
+  async periodFiguresByBatch(
+    farmIds: string[],
+    from: Date,
+    to: Date,
+  ): Promise<Map<string, EggPeriodFigures>> {
+    const rows = await this.prisma.eggProduction.groupBy({
+      by: ['batchId', 'date'],
+      where: { farmId: { in: farmIds }, date: { gte: from, lte: to } },
+      _sum: {
+        collected: true,
+        broken: true,
+        downgraded: true,
+        toIncubation: true,
+      },
+    });
+    const hens = await this.ledger.liveCountsOnDays(
+      rows.map((r) => ({ batchId: r.batchId, date: r.date })),
+    );
+    const result = new Map<string, EggPeriodFigures>();
+    for (const r of rows) {
+      const own = result.get(r.batchId) ?? noEggs();
+      const sum = {
+        collected: r._sum.collected ?? 0,
+        broken: r._sum.broken ?? 0,
+        downgraded: r._sum.downgraded ?? 0,
+        toIncubation: r._sum.toIncubation ?? 0,
+      };
+      own.collected += sum.collected;
+      own.broken += sum.broken;
+      own.downgraded += sum.downgraded;
+      own.toIncubation += sum.toIncubation;
+      own.marketable += marketableOf(sum);
+      own.henDays += hens.get(`${r.batchId}:${r.date.getTime()}`) ?? 0;
+      result.set(r.batchId, own);
+    }
+    return result;
+  }
+
+  /** The egg figures of the farms between two days, all lots together (`periodFiguresByBatch` summed). */
+  async periodFigures(
+    farmIds: string[],
+    from: Date,
+    to: Date,
+  ): Promise<EggPeriodFigures> {
+    const total = noEggs();
+    for (const f of (
+      await this.periodFiguresByBatch(farmIds, from, to)
+    ).values()) {
+      for (const key of Object.keys(total) as (keyof EggPeriodFigures)[]) {
+        total[key] += f[key];
+      }
+    }
+    return total;
   }
 
   /** Earliest egg record of the lot: moving the lot's entry date past it is refused. */

@@ -40,6 +40,7 @@ import { SellablesService } from './sellables.service';
     InvoicesController,
     CreditNotesController,
   ],
+  exports: [PaymentsJournal],
   providers: [
     QuotesService,
     InvoiceReads,

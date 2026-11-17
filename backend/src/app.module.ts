@@ -18,6 +18,7 @@ import { PersonnelModule } from './personnel/personnel.module';
 import { PigsModule } from './pigs/pigs.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { PurchasesModule } from './purchases/purchases.module';
+import { ReportsModule } from './reports/reports.module';
 import { SalesModule } from './sales/sales.module';
 import { StockModule } from './stock/stock.module';
 import { SuppliersModule } from './suppliers/suppliers.module';
@@ -47,6 +48,7 @@ import { TasksModule } from './tasks/tasks.module';
     PersonnelModule,
     TasksModule,
     EquipmentModule,
+    ReportsModule,
   ],
   controllers: [HealthController],
 })

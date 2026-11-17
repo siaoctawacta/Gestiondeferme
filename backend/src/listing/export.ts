@@ -10,9 +10,10 @@ export type ExportFormat = 'csv' | 'xlsx';
 
 const FORMULA_TRIGGER = /^[=+\-@]/;
 
-function csvCell(value: string | number | null): string {
+/** One CSV cell: a number with the decimal comma of the French spreadsheets, a text quoted when it needs it and neutralised when it could be a formula. */
+export function csvCell(value: string | number | null): string {
   if (value === null || value === undefined) return '';
-  if (typeof value === 'number') return String(value);
+  if (typeof value === 'number') return String(value).replace('.', ',');
   const safe = FORMULA_TRIGGER.test(value) ? `'${value}` : value;
   return /[;"\r\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
 }

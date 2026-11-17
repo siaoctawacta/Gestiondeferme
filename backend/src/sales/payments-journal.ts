@@ -76,6 +76,38 @@ const include = {
 export class PaymentsJournal {
   constructor(private readonly prisma: PrismaService) {}
 
+  /** What came in, went back out and the difference over a filter (not a page): one grouped query. */
+  private async totalsOf(
+    where: Prisma.CustomerPaymentWhereInput,
+  ): Promise<PaymentJournalTotals> {
+    const groups = await this.prisma.customerPayment.groupBy({
+      by: ['kind'],
+      where,
+      _sum: { amount: true },
+    });
+    const sum = (kind: CustomerPaymentKind) =>
+      groups.find((g) => g.kind === kind)?._sum.amount ?? zero();
+    const received = sum('ENCAISSEMENT');
+    const refunded = sum('REMBOURSEMENT');
+    return {
+      received: toMoney(received),
+      refunded: toMoney(refunded),
+      net: toMoney(received.sub(refunded)),
+    };
+  }
+
+  /** The journal's totals for the payments dated between two days (both inclusive) on the request's farms: the figures of `GET /sales/payments` for that period. */
+  periodTotals(
+    ctx: RequestContext,
+    from: Date,
+    to: Date,
+  ): Promise<PaymentJournalTotals> {
+    return this.totalsOf({
+      farmId: { in: ctx.farmIds },
+      date: { gte: from, lte: to },
+    });
+  }
+
   listArgs(ctx: RequestContext, q: PaymentsJournalQueryDto) {
     const where: Prisma.CustomerPaymentWhereInput = {
       farmId: { in: ctx.farmIds },
@@ -130,24 +162,9 @@ export class PaymentsJournal {
         }));
       },
       count: () => this.prisma.customerPayment.count({ where }),
-      totals: async (): Promise<{ totals: PaymentJournalTotals }> => {
-        const groups = await this.prisma.customerPayment.groupBy({
-          by: ['kind'],
-          where,
-          _sum: { amount: true },
-        });
-        const sum = (kind: CustomerPaymentKind) =>
-          groups.find((g) => g.kind === kind)?._sum.amount ?? zero();
-        const received = sum('ENCAISSEMENT');
-        const refunded = sum('REMBOURSEMENT');
-        return {
-          totals: {
-            received: toMoney(received),
-            refunded: toMoney(refunded),
-            net: toMoney(received.sub(refunded)),
-          },
-        };
-      },
+      totals: async (): Promise<{ totals: PaymentJournalTotals }> => ({
+        totals: await this.totalsOf(where),
+      }),
     };
   }
 }

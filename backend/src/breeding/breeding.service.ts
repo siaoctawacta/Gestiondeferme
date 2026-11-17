@@ -93,6 +93,46 @@ export class BreedingService implements LitterWeaningSource {
     weanings.register(this);
   }
 
+  /**
+   * What the sows did between two days (both inclusive): services by service
+   * date, farrowings by farrowing date (with the piglets born alive and
+   * stillborn of those litters), piglets weaned by weaning date. Three queries.
+   */
+  async periodFigures(
+    farmIds: string[],
+    from: Date,
+    to: Date,
+  ): Promise<{
+    services: number;
+    farrowings: number;
+    bornAlive: number;
+    stillborn: number;
+    weaned: number;
+  }> {
+    const farmId = { in: farmIds };
+    const [services, farrowings, weanings] = await Promise.all([
+      this.prisma.breedingRecord.count({
+        where: { farmId, serviceDate: { gte: from, lte: to } },
+      }),
+      this.prisma.breedingRecord.aggregate({
+        where: { farmId, farrowingDate: { gte: from, lte: to } },
+        _count: { _all: true },
+        _sum: { bornAlive: true, stillborn: true },
+      }),
+      this.prisma.breedingRecord.aggregate({
+        where: { farmId, weaningDate: { gte: from, lte: to } },
+        _sum: { weanedCount: true },
+      }),
+    ]);
+    return {
+      services,
+      farrowings: farrowings._count._all,
+      bornAlive: farrowings._sum.bornAlive ?? 0,
+      stillborn: farrowings._sum.stillborn ?? 0,
+      weaned: weanings._sum.weanedCount ?? 0,
+    };
+  }
+
   /** The weaning of a litter, for the herd ledger: which animals it may no longer lose. */
   async weaningOf(tx: Prisma.TransactionClient, batchId: string) {
     const row = await tx.breedingRecord.findFirst({

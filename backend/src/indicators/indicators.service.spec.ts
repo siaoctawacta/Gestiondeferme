@@ -19,16 +19,22 @@ describe('IndicatorsService.batchPerformance', () => {
     costs = new LotCostRegistry(),
   ) {
     const prisma = {
-      weighing: { findMany: () => Promise.resolve(weighings) },
+      weighing: {
+        findMany: () =>
+          Promise.resolve(weighings.map((w) => ({ batchId: 'b1', ...w }))),
+      },
     } as unknown as PrismaService;
     const batches = {
-      get: () =>
-        Promise.resolve({
-          ageDays: 10,
-          alive: 100,
-          deaths: 0,
-          mortalityRate: 0,
-        }),
+      getMany: () =>
+        Promise.resolve([
+          {
+            id: 'b1',
+            ageDays: 10,
+            alive: 100,
+            deaths: 0,
+            mortalityRate: 0,
+          },
+        ]),
     } as unknown as BatchesService;
     return new IndicatorsService(
       prisma,
@@ -86,6 +92,19 @@ describe('IndicatorsService.batchPerformance', () => {
   it('reports no feed when no source knows the lot', async () => {
     const p = await service([]).batchPerformance(ctx, 'b1');
     expect(p).toMatchObject({ feedKg: 0, feedCost: 0, feedConversion: null });
+  });
+
+  it('is a 404 for a lot outside the caller farms, and absent from the many', async () => {
+    const empty = new IndicatorsService(
+      {} as PrismaService,
+      { getMany: () => Promise.resolve([]) } as unknown as BatchesService,
+      new LotCostRegistry(),
+      {} as BatchPerformanceRegistry,
+    );
+    await expect(empty.batchPerformance(ctx, 'x')).rejects.toThrow(
+      'Lot introuvable',
+    );
+    expect((await empty.batchPerformanceMany(ctx, ['x'])).size).toBe(0);
   });
 
   it('has no daily gain with a single weighing', async () => {

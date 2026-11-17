@@ -5,7 +5,7 @@ import type {
   AnimalStatus,
   BatchType,
 } from '../generated/prisma/enums';
-import { formatDay } from '../common/days';
+import { addDays, formatDay } from '../common/days';
 import { HerdLedgerService } from '../herd/herd-ledger.service';
 import type { ExportColumn } from '../listing/export';
 import { PrismaService } from '../prisma/prisma.service';
@@ -108,28 +108,85 @@ export class HerdListService {
     private readonly ledger: HerdLedgerService,
   ) {}
 
-  /** Pigs housed in `farmIds`: live animals plus the live count of open pig lots (the "cheptel porcin" total). */
-  async totalPigs(farmIds: string[]): Promise<number> {
+  /**
+   * Pigs housed in `farmIds` (the "cheptel porcin" total): the live animals plus
+   * the live count of the pig lots. Without `at` it is today's headcount (open
+   * lots only). With `at`, the headcount at the end of that day: animals born by
+   * then (an unknown birth date counts as born) and not yet gone (`exitDate`
+   * after `at`), and the pig lots open that day at the count they had.
+   */
+  async totalPigs(farmIds: string[], at?: Date): Promise<number> {
     const farmId = { in: farmIds };
     const [animals, lots] = await Promise.all([
-      this.prisma.animal.groupBy({
-        by: ['status'],
-        where: { farmId },
-        _count: { _all: true },
-      }),
+      at
+        ? this.prisma.animal.count({
+            where: {
+              farmId,
+              AND: [
+                { OR: [{ birthDate: null }, { birthDate: { lte: at } }] },
+                {
+                  OR: [
+                    { exitDate: null, status: { in: LIVE_STATUSES } },
+                    { exitDate: { gt: at } },
+                  ],
+                },
+              ],
+            },
+          })
+        : this.prisma.animal
+            .groupBy({
+              by: ['status'],
+              where: { farmId },
+              _count: { _all: true },
+            })
+            .then((groups) =>
+              groups.reduce(
+                (n, g) => n + animalHeadcount(g.status) * g._count._all,
+                0,
+              ),
+            ),
       this.prisma.animalBatch.findMany({
-        where: { farmId, species: 'PORCIN', status: 'EN_COURS' },
-        select: { id: true, status: true },
+        where: {
+          farmId,
+          species: 'PORCIN',
+          ...(at
+            ? {
+                entryDate: { lte: at },
+                OR: [
+                  { status: 'EN_COURS' },
+                  { closedAt: { gte: addDays(at, 1) } },
+                ],
+              }
+            : { status: 'EN_COURS' }),
+        },
+        select: { id: true },
       }),
     ]);
-    const alive = await this.ledger.liveCounts(lots.map((l) => l.id));
-    return (
-      animals.reduce(
-        (n, g) => n + animalHeadcount(g.status) * g._count._all,
-        0,
-      ) +
-      lots.reduce((n, l) => n + lotHeadcount(l.status, alive.get(l.id) ?? 0), 0)
+    const alive = await this.ledger.liveCounts(
+      lots.map((l) => l.id),
+      at,
     );
+    return animals + lots.reduce((n, l) => n + (alive.get(l.id) ?? 0), 0);
+  }
+
+  /** The animals (not the lots) that left the herd between two days (both inclusive), by reason. One query. */
+  async animalExits(
+    farmIds: string[],
+    from: Date,
+    to: Date,
+  ): Promise<{ dead: number; sold: number; culled: number }> {
+    const groups = await this.prisma.animal.groupBy({
+      by: ['exitReason'],
+      where: { farmId: { in: farmIds }, exitDate: { gte: from, lte: to } },
+      _count: { _all: true },
+    });
+    const count = (reason: 'MORT' | 'VENDU' | 'REFORME') =>
+      groups.find((g) => g.exitReason === reason)?._count._all ?? 0;
+    return {
+      dead: count('MORT'),
+      sold: count('VENDU'),
+      culled: count('REFORME'),
+    };
   }
 
   private async rows(ctx: RequestContext): Promise<Internal[]> {

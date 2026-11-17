@@ -1,10 +1,11 @@
-import { Injectable, OnModuleInit } from '@nestjs/common';
+import { Injectable, NotFoundException, OnModuleInit } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import {
   BatchPerformanceRegistry,
   type BatchPerformance,
 } from '../herd/batch-performance';
 import { BatchesService } from '../herd/batches.service';
+import { BATCH_NOT_FOUND } from '../common/messages';
 import { daysBetween } from '../common/days';
 import { sumAmounts, toMoney } from '../common/money';
 import { PrismaService } from '../prisma/prisma.service';
@@ -33,37 +34,70 @@ export class IndicatorsService implements OnModuleInit {
     ctx: RequestContext,
     batchId: string,
   ): Promise<BatchPerformance> {
-    const batch = await this.batches.get(ctx, batchId);
-    const weighings = await this.prisma.weighing.findMany({
-      where: { batchId, farmId: { in: ctx.farmIds } },
-      orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
-      select: { date: true, averageWeightG: true },
-    });
-    const first = weighings[0];
-    const last = weighings[weighings.length - 1];
-    const hasRange = weighings.length >= 2;
-    const firstWeightG = first?.averageWeightG ?? null;
-    const lastWeightG = last?.averageWeightG ?? null;
-    const days = hasRange ? daysBetween(first.date, last.date) : null;
-    const feed = (
-      (await this.costs.costsFor([batchId])).get(batchId) ?? []
-    ).filter((c) => c.category === FEED_COST);
-    const feedKg = feed.reduce((sum, c) => sum + (c.quantity ?? 0), 0);
-    const feedCost = toMoney(sumAmounts(feed.map((c) => c.amount)));
-    const lotGainKg = hasRange
-      ? ((lastWeightG - firstWeightG) / 1000) * batch.alive
-      : null;
-    return {
-      ageDays: batch.ageDays,
-      alive: batch.alive,
-      deaths: batch.deaths,
-      mortalityRate: batch.mortalityRate,
-      firstWeightG,
-      lastWeightG,
-      dailyGainG: hasRange ? dailyGain(firstWeightG, lastWeightG, days) : null,
-      feedKg,
-      feedConversion: feedKg > 0 ? feedConversion(feedKg, lotGainKg) : null,
-      feedCost,
-    };
+    const found = (await this.batchPerformanceMany(ctx, [batchId])).get(
+      batchId,
+    );
+    if (!found) throw new NotFoundException(BATCH_NOT_FOUND);
+    return found;
+  }
+
+  /**
+   * `batchPerformance` for many lots: the same figures through a fixed number
+   * of queries (lots, headcounts, deaths and last weights, weighings, costs)
+   * whatever the number of lots. A lot outside the caller's farms is absent
+   * from the map; the caller checks the species permission itself.
+   */
+  async batchPerformanceMany(
+    ctx: RequestContext,
+    batchIds: string[],
+  ): Promise<Map<string, BatchPerformance>> {
+    const result = new Map<string, BatchPerformance>();
+    const lots = await this.batches.getMany(ctx, batchIds);
+    if (lots.length === 0) return result;
+    const ids = lots.map((l) => l.id);
+    const [weighings, costs] = await Promise.all([
+      this.prisma.weighing.findMany({
+        where: { batchId: { in: ids }, farmId: { in: ctx.farmIds } },
+        orderBy: [{ date: 'asc' }, { createdAt: 'asc' }],
+        select: { batchId: true, date: true, averageWeightG: true },
+      }),
+      this.costs.costsFor(ids),
+    ]);
+    const byLot = new Map<string, typeof weighings>();
+    for (const w of weighings) {
+      byLot.set(w.batchId, [...(byLot.get(w.batchId) ?? []), w]);
+    }
+    for (const batch of lots) {
+      const own = byLot.get(batch.id) ?? [];
+      const first = own[0];
+      const last = own[own.length - 1];
+      const hasRange = own.length >= 2;
+      const firstWeightG = first?.averageWeightG ?? null;
+      const lastWeightG = last?.averageWeightG ?? null;
+      const days = hasRange ? daysBetween(first.date, last.date) : null;
+      const feed = (costs.get(batch.id) ?? []).filter(
+        (c) => c.category === FEED_COST,
+      );
+      const feedKg = feed.reduce((sum, c) => sum + (c.quantity ?? 0), 0);
+      const feedCost = toMoney(sumAmounts(feed.map((c) => c.amount)));
+      const lotGainKg = hasRange
+        ? ((lastWeightG - firstWeightG) / 1000) * batch.alive
+        : null;
+      result.set(batch.id, {
+        ageDays: batch.ageDays,
+        alive: batch.alive,
+        deaths: batch.deaths,
+        mortalityRate: batch.mortalityRate,
+        firstWeightG,
+        lastWeightG,
+        dailyGainG: hasRange
+          ? dailyGain(firstWeightG, lastWeightG, days)
+          : null,
+        feedKg,
+        feedConversion: feedKg > 0 ? feedConversion(feedKg, lotGainKg) : null,
+        feedCost,
+      });
+    }
+    return result;
   }
 }

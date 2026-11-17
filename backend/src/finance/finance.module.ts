@@ -26,6 +26,6 @@ import { ManualLotCosts } from './manual-lot-costs';
     LotProfitabilityService,
     ManualLotCosts,
   ],
-  exports: [FinanceSummaryService, FinanceLedger],
+  exports: [FinanceSummaryService, FinanceLedger, LotProfitabilityService],
 })
 export class FinanceModule {}

@@ -208,6 +208,34 @@ export class StockOverviewService {
     });
   }
 
+  /** The rows of the list before its level filter and sort: the caller's farms, a deactivated article only while it holds something. */
+  private async listed(
+    ctx: RequestContext,
+    filter: Prisma.StockItemWhereInput,
+  ): Promise<StockRow[]> {
+    const items = await this.prisma.stockItem.findMany({
+      where: { organizationId: ctx.user.organizationId, ...filter },
+      orderBy: [{ name: 'asc' }, { id: 'asc' }],
+    });
+    return (await this.rows(ctx.farmIds, items))
+      .map((r) => r.row)
+      .filter((r) => r.active || r.quantity > 0);
+  }
+
+  /**
+   * How many articles are low or critical today: the same rows and the same
+   * level function as the stock list's `levelCounts` (the reports read this).
+   */
+  async levelCounts(
+    ctx: RequestContext,
+  ): Promise<{ faible: number; critique: number }> {
+    const rows = await this.listed(ctx, {});
+    return {
+      faible: rows.filter((r) => r.level === 'faible').length,
+      critique: rows.filter((r) => r.level === 'critique').length,
+    };
+  }
+
   /** Arguments for `sendList`: the page, the export and the level counts share one computation. */
   listArgs(ctx: RequestContext, q: StockListQueryDto) {
     const order = orderBy(q, SORTABLE, { name: 'asc' });
@@ -216,19 +244,10 @@ export class StockOverviewService {
       'asc' | 'desc',
     ];
     const computed = (async () => {
-      const where: Prisma.StockItemWhereInput = {
-        organizationId: ctx.user.organizationId,
+      const rows = await this.listed(ctx, {
         ...(q.category ? { category: q.category } : {}),
         ...(q.search ? { name: containsInsensitive(q.search) } : {}),
-      };
-      const items = await this.prisma.stockItem.findMany({
-        where,
-        orderBy: [{ name: 'asc' }, { id: 'asc' }],
       });
-      // A deactivated article drops out of the list once it holds nothing.
-      const rows = (await this.rows(ctx.farmIds, items))
-        .map((r) => r.row)
-        .filter((r) => r.active || r.quantity > 0);
       const counts = Object.fromEntries(
         STOCK_LEVELS.map((l) => [l, rows.filter((r) => r.level === l).length]),
       );

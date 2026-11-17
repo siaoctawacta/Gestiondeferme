@@ -4,6 +4,7 @@ import { FinanceModule } from '../finance/finance.module';
 import { IndicatorsModule } from '../indicators/indicators.module';
 import { EquipmentAlertsService } from './equipment-alerts.service';
 import { EquipmentController } from './equipment.controller';
+import { EquipmentReads } from './equipment-reads.service';
 import { EquipmentService } from './equipment.service';
 import { MaintenanceController } from './maintenance.controller';
 import { MaintenanceService } from './maintenance.service';
@@ -17,6 +18,12 @@ import { MaintenanceService } from './maintenance.service';
 @Module({
   imports: [AdminModule, FinanceModule, IndicatorsModule],
   controllers: [EquipmentController, MaintenanceController],
-  providers: [EquipmentService, MaintenanceService, EquipmentAlertsService],
+  providers: [
+    EquipmentService,
+    MaintenanceService,
+    EquipmentAlertsService,
+    EquipmentReads,
+  ],
+  exports: [EquipmentReads],
 })
 export class EquipmentModule {}

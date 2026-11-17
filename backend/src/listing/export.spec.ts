@@ -1,5 +1,5 @@
 import { Workbook } from 'exceljs';
-import { ExportColumn, toCsv, toXlsx } from './export';
+import { csvCell, ExportColumn, toCsv, toXlsx } from './export';
 
 interface Row {
   name: string;
@@ -39,6 +39,23 @@ describe('toCsv', () => {
     const lines = csv.split('\r\n');
     expect(lines[1]).toBe("'+1;;'-2");
     expect(lines[2]).toBe("'@x;5;ok");
+  });
+});
+
+describe('csvCell', () => {
+  it('writes a decimal with a comma and leaves integers, negatives and exponents alone', () => {
+    expect(csvCell(3.6)).toBe('3,6');
+    expect(csvCell(-12.25)).toBe('-12,25');
+    expect(csvCell(1000)).toBe('1000');
+    expect(csvCell(-1135000)).toBe('-1135000');
+    expect(csvCell(0)).toBe('0');
+    expect(csvCell(null)).toBe('');
+  });
+
+  it('keeps the text rules: quotes, doubled quotes, formula neutralising', () => {
+    expect(csvCell('a;b')).toBe('"a;b"');
+    expect(csvCell('1.5')).toBe('1.5');
+    expect(csvCell('-x')).toBe("'-x");
   });
 });
 

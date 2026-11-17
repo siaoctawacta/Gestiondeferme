@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import type { RequestContext } from '../access/decorators';
 import { lockRow } from '../common/lock-row';
+import { BATCH_NOT_FOUND } from '../common/messages';
 import { AuditService } from '../audit/audit.service';
 import type {
   AnimalBatch,
@@ -26,7 +27,7 @@ type Tx = Prisma.TransactionClient;
 
 export const BATCH_CLOSED = 'Ce lot est clôturé';
 export const NOT_ENOUGH = 'Effectif insuffisant';
-export const BATCH_NOT_FOUND = 'Lot introuvable';
+export { BATCH_NOT_FOUND };
 export const PARTIAL_TRANSFER =
   'Transfert partiel non pris en charge : créez un nouveau lot';
 
@@ -641,6 +642,92 @@ export class HerdLedgerService implements OccupationSource {
       _sum: { quantity: true },
     });
     for (const s of sums) result.set(s.batchId, s._sum.quantity ?? 0);
+    return result;
+  }
+
+  /**
+   * `liveCounts` for many (batch, day) pairs at once: two queries whatever the
+   * number of pairs. The answer for a pair is exactly `liveCounts([batchId],
+   * date)`; it is keyed `${batchId}:${date.getTime()}`.
+   */
+  async liveCountsOnDays(
+    pairs: { batchId: string; date: Date }[],
+  ): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    if (pairs.length === 0) return result;
+    const ids = [...new Set(pairs.map((p) => p.batchId))];
+    const last = Math.max(...pairs.map((p) => p.date.getTime()));
+    const [batches, sums] = await Promise.all([
+      this.prisma.animalBatch.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, initialCount: true, entryDate: true },
+      }),
+      this.prisma.batchEvent.groupBy({
+        by: ['batchId', 'date', 'type'],
+        where: { batchId: { in: ids }, date: { lte: new Date(last) } },
+        _sum: { quantity: true },
+      }),
+    ]);
+    const batch = new Map(batches.map((b) => [b.id, b]));
+    const events = new Map<string, { time: number; delta: number }[]>();
+    for (const s of sums) {
+      const list = events.get(s.batchId) ?? [];
+      list.push({
+        time: s.date.getTime(),
+        delta: EVENT_SIGN[s.type] * (s._sum.quantity ?? 0),
+      });
+      events.set(s.batchId, list);
+    }
+    for (const { batchId, date } of pairs) {
+      const key = `${batchId}:${date.getTime()}`;
+      const b = batch.get(batchId);
+      if (result.has(key)) continue;
+      if (!b || b.entryDate.getTime() > date.getTime()) {
+        result.set(key, 0);
+        continue;
+      }
+      result.set(
+        key,
+        (events.get(batchId) ?? []).reduce(
+          (n, e) => (e.time <= date.getTime() ? n + e.delta : n),
+          b.initialCount,
+        ),
+      );
+    }
+    return result;
+  }
+
+  /**
+   * What each batch's ledger recorded between two days (both inclusive), per
+   * event type: every requested batch is present with all the types at 0. One
+   * query.
+   */
+  async eventTotals(
+    batchIds: string[],
+    from: Date,
+    to: Date,
+    client: Tx = this.prisma,
+  ): Promise<Map<string, Record<BatchEventType, number>>> {
+    const zero = (): Record<BatchEventType, number> => ({
+      ENTREE: 0,
+      NAISSANCE: 0,
+      MORTALITE: 0,
+      VENTE: 0,
+      TRANSFERT_SORTIE: 0,
+      TRANSFERT_ENTREE: 0,
+      REFORME: 0,
+    });
+    const result = new Map(batchIds.map((id) => [id, zero()]));
+    if (batchIds.length === 0) return result;
+    const sums = await client.batchEvent.groupBy({
+      by: ['batchId', 'type'],
+      where: { batchId: { in: batchIds }, date: { gte: from, lte: to } },
+      _sum: { quantity: true },
+    });
+    for (const s of sums) {
+      const totals = result.get(s.batchId);
+      if (totals) totals[s.type] = s._sum.quantity ?? 0;
+    }
     return result;
   }
 

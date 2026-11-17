@@ -42,6 +42,33 @@ export class FeedService
     this.history.register(this);
   }
 
+  /**
+   * The feed given (kg) and the water drunk (L) on the farms between two days
+   * (both inclusive): the one definition the dashboard (each farm's last
+   * recorded day) and the reports read. Two queries.
+   */
+  async periodFigures(
+    farmIds: string[],
+    from: Date,
+    to: Date,
+  ): Promise<{ feedKg: number; waterL: number }> {
+    const where = { farmId: { in: farmIds }, date: { gte: from, lte: to } };
+    const [feed, water] = await Promise.all([
+      this.prisma.feedDistribution.aggregate({
+        where,
+        _sum: { quantityKg: true },
+      }),
+      this.prisma.waterConsumption.aggregate({
+        where,
+        _sum: { liters: true },
+      }),
+    ]);
+    return {
+      feedKg: Number(feed._sum.quantityKg ?? 0),
+      waterL: Number(water._sum.liters ?? 0),
+    };
+  }
+
   /** Earliest feed or water record of the lot: moving the lot's entry date past it is refused. */
   async earliestDate(
     tx: Prisma.TransactionClient,

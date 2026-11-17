@@ -8,3 +8,6 @@ export const EXITED = 'Cet animal est sorti du cheptel';
 
 /** A write that needs one farm was sent without a farm selected (or under `all`). */
 export const SELECT_FARM = 'Sélectionnez une ferme';
+
+/** A batch (lot) that does not exist in the caller's farms. */
+export const BATCH_NOT_FOUND = 'Lot introuvable';

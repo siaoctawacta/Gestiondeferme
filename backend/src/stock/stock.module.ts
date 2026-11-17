@@ -31,6 +31,6 @@ import { StockOverviewService } from './stock-overview.service';
     StockOverviewService,
     InventoriesService,
   ],
-  exports: [StockLedgerService, StockItemsService],
+  exports: [StockLedgerService, StockItemsService, StockOverviewService],
 })
 export class StockModule {}

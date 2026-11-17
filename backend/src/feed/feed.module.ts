@@ -30,5 +30,6 @@ import { WaterService } from './water.service';
     FeedDistributionsService,
     WaterService,
   ],
+  exports: [FeedService],
 })
 export class FeedModule {}

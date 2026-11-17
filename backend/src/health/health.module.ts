@@ -8,6 +8,7 @@ import { HealthActsController } from './health-acts.controller';
 import { HealthActsService } from './health-acts.service';
 import { HealthCosts } from './health-costs';
 import { HealthHistory } from './health-history';
+import { HealthReport } from './health-report';
 import { HealthStock } from './health-stock';
 import { HealthTargets } from './health-targets';
 import { IncidentsController } from './incidents.controller';
@@ -36,6 +37,7 @@ import { VaccinationPlansService } from './vaccination-plans.service';
     HealthTargets,
     HealthStock,
     HealthHistory,
+    HealthReport,
     HealthCosts,
     HealthActsService,
     VaccinationPlansService,
@@ -43,5 +45,6 @@ import { VaccinationPlansService } from './vaccination-plans.service';
     IncidentsService,
     BiosecurityService,
   ],
+  exports: [HealthReport],
 })
 export class HealthModule {}

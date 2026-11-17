@@ -303,6 +303,7 @@ describe('Route permissions walk (e2e)', () => {
       TasksController: ['taches'],
       EquipmentController: ['equipements'],
       MaintenanceController: ['equipements'],
+      ReportsController: ['rapports'],
     };
     /** Open to every user of the farm by design (Q37): the selects of the task form and the day sheet. */
     const ANY_AUTHENTICATED = ['EmployeesController.options'];

@@ -16,6 +16,6 @@ import { IncubationsService } from './incubations.service';
     EggProductionService,
     IncubationsService,
   ],
-  exports: [EggOutflowRegistry, EggStockService],
+  exports: [EggOutflowRegistry, EggStockService, EggProductionService],
 })
 export class EggsModule {}

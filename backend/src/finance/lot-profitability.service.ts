@@ -208,6 +208,25 @@ export class LotProfitabilityService {
     };
   }
 
+  /**
+   * The lot view of the given lots over a period (the `GET /finance/lots` rows
+   * of those lots): the reports' « Rentabilité des lots ». A lot outside the
+   * caller's farms is absent; by code.
+   */
+  async forLots(
+    ctx: RequestContext,
+    ids: string[],
+    range: Range,
+  ): Promise<LotProfitability[]> {
+    if (ids.length === 0) return [];
+    const lots = await this.prisma.animalBatch.findMany({
+      where: { id: { in: ids }, farmId: { in: ctx.farmIds } },
+      select: batchSelect,
+      orderBy: [{ code: 'asc' }, { id: 'asc' }],
+    });
+    return (await this.figures(ctx, lots, range)).map((f) => f.item);
+  }
+
   /** The open lots of an activity on the farms in view (the select of a manual expense). */
   async options(
     ctx: RequestContext,

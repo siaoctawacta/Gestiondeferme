@@ -418,7 +418,7 @@ describe('Herd ledger and batches (e2e)', () => {
       );
       expect(lines[1]).toMatch(
         new RegExp(
-          `^LC-\\d{4}-01;Chair;;Poulailler 1;${daysAgo(30)};5000;180;;En cours;4820;3\\.6$`,
+          `^LC-\\d{4}-01;Chair;;Poulailler 1;${daysAgo(30)};5000;180;;En cours;4820;3,6$`,
         ),
       );
     });

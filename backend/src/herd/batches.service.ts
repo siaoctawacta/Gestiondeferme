@@ -246,6 +246,19 @@ export class BatchesService {
     return batch;
   }
 
+  /** The batches of the caller's farms among `ids` (an id outside them is simply absent), in the order of `ids`: a fixed number of queries. */
+  async getMany(ctx: RequestContext, ids: string[]): Promise<BatchItem[]> {
+    if (ids.length === 0) return [];
+    const rows = await this.prisma.animalBatch.findMany({
+      where: { id: { in: ids }, ...this.scope(ctx) },
+      include,
+    });
+    const order = new Map(ids.map((id, i) => [id, i]));
+    return this.toItems(
+      rows.sort((a, b) => (order.get(a.id) ?? 0) - (order.get(b.id) ?? 0)),
+    );
+  }
+
   async get(ctx: RequestContext, id: string): Promise<BatchItem> {
     return (await this.toItems([await this.load(ctx, id)]))[0];
   }
