@@ -48,11 +48,21 @@ function CompleteDialog({ row, onClose, onDone }: { row: TaskRow; onClose: () =>
   );
 }
 
-/** Opens the proof photo in a new tab: fetched with the session (the route needs it), shown from an object URL. */
+/**
+ * Opens the proof photo in a new tab. The window is opened at once (a browser only allows it in the click, not after the
+ * fetch), then pointed at an object URL of the photo fetched with the session (the route needs it).
+ */
 async function showProof(row: TaskRow): Promise<void> {
-  const url = URL.createObjectURL(await api.blob(`/tasks/${row.id}/proof`));
-  window.open(url, '_blank');
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  const win = window.open('', '_blank');
+  if (!win) throw new ApiError(0, "Le navigateur a bloqué l'ouverture de la photo");
+  try {
+    const url = URL.createObjectURL(await api.blob(`/tasks/${row.id}/proof`));
+    win.location.href = url;
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  } catch (e) {
+    win.close();
+    throw e;
+  }
 }
 
 /**

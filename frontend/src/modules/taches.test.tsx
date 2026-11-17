@@ -280,15 +280,54 @@ describe('taches actions', () => {
     expect(writes()).toHaveLength(0);
   });
 
-  it('opens the proof fetched as a blob', async () => {
-    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+  it('opens the window at once (before the fetch, so a browser lets it), then points it at the proof fetched as a blob', async () => {
+    const win = { location: { href: '' }, close: vi.fn() };
+    const open = vi.spyOn(window, 'open').mockReturnValue(win as unknown as Window);
     URL.createObjectURL = vi.fn(() => 'blob:proof');
     URL.revokeObjectURL = vi.fn();
     mount();
     await screen.findByText('Collecte des œufs');
     await userEvent.setup().click(rowOf('Collecte des œufs').getByRole('button', { name: 'Voir la preuve' }));
-    await waitFor(() => expect(open).toHaveBeenCalledWith('blob:proof', '_blank'));
+    await waitFor(() => expect(win.location.href).toBe('blob:proof'));
+    expect(open).toHaveBeenCalledWith('', '_blank');
     expect(calls.some((c) => c.url === '/api/tasks/t4/proof')).toBe(true);
+  });
+
+  it('tells the user when the browser blocks the window, and closes it when the photo cannot be read', async () => {
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+    mount();
+    await screen.findByText('Collecte des œufs');
+    const user = userEvent.setup();
+    await user.click(rowOf('Collecte des œufs').getByRole('button', { name: 'Voir la preuve' }));
+    expect(await screen.findByText("Le navigateur a bloqué l'ouverture de la photo")).toBeInTheDocument();
+    const win = { location: { href: '' }, close: vi.fn() };
+    open.mockReturnValue(win as unknown as Window);
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => (String(input) === '/api/tasks/t4/proof' ? json(404, { message: 'Preuve introuvable' }) : base(input, init)));
+    await user.click(rowOf('Collecte des œufs').getByRole('button', { name: 'Voir la preuve' }));
+    expect(await screen.findByText('Preuve introuvable')).toBeInTheDocument();
+    expect(win.close).toHaveBeenCalled();
+  });
+
+  it('on a retry after a refused photo sends only /proof: the task is already completed', async () => {
+    mount();
+    await screen.findByText('Nettoyage Porcherie 2');
+    const base = fetchMock.getMockImplementation()!;
+    let proofs = 0;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input) === '/api/tasks/t3/proof' && ++proofs === 1) return json(400, { message: 'Photo invalide : JPEG, PNG ou WebP de 5 Mo au plus' });
+      return base(input, init);
+    });
+    const user = userEvent.setup();
+    await user.click(rowOf('Nettoyage Porcherie 2').getByRole('button', { name: 'Terminer' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByLabelText('Photo (preuve)'), { target: { files: [new File(['x'], 'p.png', { type: 'image/png' })] } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await within(dialog).findByText(/La tâche est terminée, mais la photo/);
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());
+    expect(writes().map((c) => c.url)).toEqual(['/api/tasks/t3/complete', '/api/tasks/t3/proof']);
+    expect(proofs).toBe(2);
   });
 });
 
@@ -362,6 +401,33 @@ describe('taches form', () => {
     await waitFor(() => expect(writes()).toHaveLength(1));
     expect(writes()[0]).toMatchObject({ method: 'PATCH', url: '/api/tasks/t1', body: { priority: 'URGENTE', batchId: null } });
     expect(Object.keys(writes()[0].body as object).sort()).toEqual(['batchId', 'priority']);
+  });
+});
+
+describe('task on a closed lot', () => {
+  it('keeps the target of a task whose lot is no longer open, labelled, instead of a blank select', async () => {
+    const old = task('t8', 'Contrôle ancien lot', 'Kodjo A.', '2026-10-25', 'NORMALE', 'A_FAIRE', { target: { kind: 'LOT', id: 'l9', label: 'LC-2026-01' } });
+    mount({ tasks: [old] });
+    await screen.findByText('Contrôle ancien lot');
+    await userEvent.setup().click(rowOf('Contrôle ancien lot').getByRole('button', { name: 'Modifier' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => expect(within(dialog).getByRole('option', { name: 'LC-2026-14' })).toBeInTheDocument());
+    expect(within(dialog).getByRole('option', { name: 'LC-2026-01' })).toBeInTheDocument();
+    expect(within(dialog).getByLabelText('Lot')).toHaveValue('l9');
+  });
+});
+
+describe('shared employee options', () => {
+  it('maps the same employees answer separately for the Mes tâches filter and the Responsable select', async () => {
+    mount();
+    await screen.findByText('Nettoyage Porcherie 2');
+    expect(await screen.findByLabelText('Toutes les tâches')).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Tâches & personnel' });
+    await waitFor(() => expect(within(dialog).getByRole('option', { name: 'Kodjo A.' })).toBeInTheDocument());
+    expect(screen.getByRole('option', { name: 'Mes tâches' })).toBeInTheDocument();
+    expect(within(dialog).queryByRole('option', { name: 'Mes tâches' })).not.toBeInTheDocument();
   });
 });
 
@@ -518,5 +584,67 @@ describe('présences tab', () => {
   it('makes the attendance a daily entry: a manager without create sees no Ajouter', async () => {
     await open({ taches: ['read'], personnel: ['read'] });
     expect(screen.queryByRole('button', { name: 'Ajouter' })).not.toBeInTheDocument();
+  });
+
+  it('blocks a submit made before the grid follows a freshly typed date, and before the sheet is loaded', async () => {
+    const user = await open();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Présences' });
+    await waitFor(() => expect(within(dialog).getByText('Dr Koffi')).toBeInTheDocument());
+    fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: '2026-10-20' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Chargement de la feuille du jour…')).toBeInTheDocument();
+    expect(writes()).toHaveLength(0);
+  });
+
+  it('shows no grid until the employees AND the sheet already entered are loaded', async () => {
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((r) => { release = r; });
+    mount({ perms: RESP_AVICOLE });
+    await screen.findByText('Nettoyage Porcherie 2');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Présences' }));
+    await screen.findByText('Malade');
+    const base = fetchMock.getMockImplementation()!;
+    fetchMock.mockImplementation(async (input, init) => {
+      if (String(input).startsWith('/api/attendance?from=')) await gate;
+      return base(input, init);
+    });
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Présences' });
+    await waitFor(() => expect(calls.some((c) => c.url.startsWith('/api/employees/options?at='))).toBe(true));
+    expect(within(dialog).queryByText('Dr Koffi')).not.toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Chargement de la feuille du jour…')).toBeInTheDocument();
+    release();
+    await waitFor(() => expect(within(dialog).getByText('Dr Koffi')).toBeInTheDocument());
+  });
+
+  it('asks before leaving a day with unsaved edits: refusing keeps the day and the edits, accepting loads the other day', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = await open();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Présences' });
+    await waitFor(() => expect(within(dialog).getByText('Dr Koffi')).toBeInTheDocument());
+    await user.type(within(dialog).getByLabelText('Note ligne 2'), 'RAS');
+    fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: '2026-10-20' } });
+    await waitFor(() => expect(confirm).toHaveBeenCalledWith('Les saisies non enregistrées de cette journée seront perdues.'));
+    await waitFor(() => expect(within(dialog).getByLabelText('Date')).toHaveValue(todayIso()));
+    expect(within(dialog).getByLabelText('Note ligne 2')).toHaveValue('RAS');
+    confirm.mockReturnValue(true);
+    fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: '2026-10-20' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Note ligne 2')).toHaveValue(''));
+    expect(within(dialog).getByLabelText('Date')).toHaveValue('2026-10-20');
+  });
+
+  it('does not ask when nothing was edited', async () => {
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(false);
+    const user = await open();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Présences' });
+    await waitFor(() => expect(within(dialog).getByText('Dr Koffi')).toBeInTheDocument());
+    fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: '2026-10-20' } });
+    await waitFor(() => expect(within(dialog).getByLabelText('Statut ligne 3')).toHaveValue('ABSENT'));
+    expect(confirm).not.toHaveBeenCalled();
   });
 });

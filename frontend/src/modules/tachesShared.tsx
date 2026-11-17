@@ -135,6 +135,7 @@ export function TaskForm({ row, onSaved, onClose }: { row?: TaskRow; onSaved: ()
     },
     ...TARGETS.filter((x) => values.targetKind === x.kind).map((x): Field => ({
       name: x.field, label: x.label, type: 'select', required: true, options: x.options, optionsPermission: { module: x.module, action: 'read' },
+      currentLabel: row?.target?.kind === x.kind ? row.target.label : undefined,
     })),
   ];
   return (

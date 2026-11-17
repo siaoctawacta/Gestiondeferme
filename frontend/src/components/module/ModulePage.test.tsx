@@ -825,4 +825,22 @@ describe('column visibility and conditional filters', () => {
     await userEvent.setup().selectOptions(screen.getByLabelText('Tous'), 'Les miens');
     await waitFor(() => expect(listCalls().some((c) => c.url.includes('mine=true'))).toBe(true));
   });
+
+  it('keeps a hidden-when-empty filter on screen while one of its values is active', async () => {
+    let empty = false;
+    const config: ModuleConfig<Building> = {
+      ...batiments,
+      filters: [{
+        param: 'mine', allLabel: 'Tous', hideWhenEmpty: true,
+        options: { endpoint: '/who', select: () => (empty ? [] : [{ value: 'true', label: 'Les miens' }]) },
+      }],
+    };
+    setup({ config });
+    handler = (c) => (c.url.startsWith('/api/who') ? json(200, {}) : undefined);
+    const user = userEvent.setup();
+    await user.selectOptions(await screen.findByLabelText('Tous'), 'Les miens');
+    empty = true;
+    await user.type(screen.getByPlaceholderText('Rechercher…'), 'x');
+    expect(screen.getByLabelText('Tous')).toBeInTheDocument();
+  });
 });

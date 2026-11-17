@@ -34,14 +34,23 @@ export function useEndpointOptions(
   const remote = Array.isArray(def) ? null : def;
   const userId = useAuth().user?.id ?? null;
   const params = { ...remote?.params, ...extraParams };
+  const mapped = remote?.select;
+  // Options mapped by a `select` cache the RAW answer (one request per endpoint, whoever maps it) and map it at render, so
+  // two controls on one endpoint (a filter and a select) never overwrite each other's options.
+  const raw = useFarmQuery<unknown>(
+    [remote?.endpoint ?? '', 'options-raw', params],
+    () => api.get<unknown>(remote!.endpoint, params),
+    { enabled: mapped !== undefined && enabled },
+  );
   const { data } = useFarmQuery<Option[]>(
-    [remote?.endpoint ?? '', 'options', remote?.valueKey, remote?.labelKey, params, remote?.select ? userId : false],
+    [remote?.endpoint ?? '', 'options', remote?.valueKey, remote?.labelKey, params],
     async () =>
-      remote!.select ? remote!.select(await api.get<unknown>(remote!.endpoint, params), { userId }) : (await allPages<Record<string, unknown>>(remote!.endpoint, params)).map((r) => ({
+      (await allPages<Record<string, unknown>>(remote!.endpoint, params)).map((r) => ({
         value: String(r[remote!.valueKey ?? 'id']),
         label: String(r[remote!.labelKey ?? 'name']),
       })),
-    { enabled: remote !== null && enabled },
+    { enabled: remote !== null && mapped === undefined && enabled },
   );
-  return Array.isArray(def) ? def : enabled ? (data ?? []) : [];
+  const fromSelect = mapped && raw.data !== undefined ? mapped(raw.data, { userId }) : undefined;
+  return Array.isArray(def) ? def : enabled ? (fromSelect ?? data ?? []) : [];
 }

@@ -37,7 +37,8 @@ type Notice = { tone: 'success' | 'error'; message: string };
 
 function FilterSelect({ def, value, onChange }: { def: FilterDef; value: string; onChange: (v: string) => void }) {
   const options = useEndpointOptions(def.options ?? []);
-  if (def.hideWhenEmpty && options.length === 0) return null;
+  // A filter that is active stays, so it can be cleared.
+  if (def.hideWhenEmpty && options.length === 0 && value === '') return null;
   return (
     <Select className="h-9! pr-2!" aria-label={def.allLabel} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{def.allLabel}</option>

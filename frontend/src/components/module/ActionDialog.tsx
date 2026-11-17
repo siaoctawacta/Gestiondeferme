@@ -41,6 +41,8 @@ export interface ActionDialogProps {
    * receives only what changed (see below) and is not called at all when nothing did.
    */
   onSubmit: (body: unknown) => Promise<unknown>;
+  /** Called each time the user changes a field (a form that must know its values were touched). */
+  onEdit?: () => void;
   onClose: () => void;
   /** Called after a successful `onSubmit` (or straight away when an edit changed nothing). */
   onDone: () => void;
@@ -58,7 +60,7 @@ export interface ActionDialogProps {
  *   nothing sends no request and closes.
  */
 export function ActionDialog({
-  title, fields, initial = {}, intro, mode = 'create', submitLabel = 'Enregistrer', wide, validate, toPayload, onSubmit, onClose, onDone,
+  title, fields, initial = {}, intro, mode = 'create', submitLabel = 'Enregistrer', wide, validate, toPayload, onSubmit, onEdit, onClose, onDone,
 }: ActionDialogProps) {
   const [edited, setEdited] = useState<Values>({});
   const [busy, setBusy] = useState(false);
@@ -89,6 +91,7 @@ export function ActionDialog({
 
   /** Sets a field; selects depending on it (and theirs in turn) lose their value, shown or not. */
   const setField = (name: string, v: unknown, edit?: LinesEdit) => {
+    onEdit?.();
     setLineErrors((e) => (e?.name === name ? null : e));
     if (edit) dependent.changeRows(name, v as LineRow[], edit);
     else dependent.change(name, v);
