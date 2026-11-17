@@ -167,6 +167,8 @@ export type Field =
       dependsOn?: string;
       /** Label of the current value when the options do not offer it (shown disabled instead of `Valeur actuelle`). */
       currentLabel?: string;
+      /** The select cannot be changed (a state only a workflow step leaves); its value is kept and, unchanged, never sent. */
+      disabled?: boolean;
       /** The endpoint options need this permission (see `OptionsPermission`); without it `required` does not apply. */
       optionsPermission?: OptionsPermission;
     })

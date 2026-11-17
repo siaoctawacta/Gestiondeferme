@@ -1,31 +1,12 @@
-import type { ModuleConfig, StatusDef } from '../components/module/types';
+import { lazyRetry } from '../components/lazyRetry';
+import type { ModuleConfig } from '../components/module/types';
 import { Pill } from '../components/ui/Pill';
 import { formatNumber, formatPct } from '../lib/format';
+import { BUILDING_STATUSES, BUILDING_TYPES, buildingTypeLabel, type Building } from './batimentsShared';
 
-export interface Building {
-  id: string;
-  name: string;
-  type: 'AVICOLE' | 'PORCIN' | 'AUTRE';
-  siteId: string;
-  siteName: string;
-  capacity: number;
-  occupation: number;
-  occupationRate: number;
-  status: 'ACTIF' | 'VIDE_SANITAIRE' | 'MAINTENANCE';
-  zones: number;
-}
+export type { Building };
 
-const TYPE_OPTIONS = [
-  { value: 'AVICOLE', label: 'Avicole' },
-  { value: 'PORCIN', label: 'Porcin' },
-  { value: 'AUTRE', label: 'Autre' },
-];
-
-const STATUSES: StatusDef[] = [
-  { value: 'ACTIF', label: 'Actif', tone: 'success' },
-  { value: 'VIDE_SANITAIRE', label: 'Vide sanitaire', tone: 'warning' },
-  { value: 'MAINTENANCE', label: 'Maintenance', tone: 'danger' },
-];
+const BuildingDetail = lazyRetry(() => import('../pages/details/BuildingDetail').then((m) => ({ default: m.BuildingDetail })));
 
 export interface Zone {
   id: string;
@@ -63,7 +44,7 @@ export const batiments: ModuleConfig<Building> = {
   endpoint: '/buildings',
   columns: [
     { key: 'name', header: 'NOM', sortable: true },
-    { key: 'type', header: 'TYPE', sortable: true, render: (b) => TYPE_OPTIONS.find((t) => t.value === b.type)?.label ?? b.type },
+    { key: 'type', header: 'TYPE', sortable: true, render: (b) => buildingTypeLabel(b.type) },
     { key: 'siteName', header: 'SITE' },
     { key: 'capacity', header: 'CAPACITÉ', sortable: true, render: (b) => formatNumber(b.capacity) },
     { key: 'occupation', header: 'OCCUPATION', render: (b) => formatNumber(b.occupation) },
@@ -80,13 +61,14 @@ export const batiments: ModuleConfig<Building> = {
   ],
   fields: [
     { name: 'name', label: 'Nom', type: 'text', required: true },
-    { name: 'type', label: 'Type', type: 'select', required: true, options: TYPE_OPTIONS },
+    { name: 'type', label: 'Type', type: 'select', required: true, options: BUILDING_TYPES },
     { name: 'siteId', label: 'Site', type: 'select', required: true, options: { endpoint: '/sites' } },
     { name: 'capacity', label: 'Capacité', type: 'number', required: true, min: 1 },
-    { name: 'status', label: 'Statut', type: 'select', defaultValue: 'ACTIF', options: STATUSES.map(({ value, label }) => ({ value, label })) },
+    { name: 'status', label: 'Statut', type: 'select', defaultValue: 'ACTIF', options: BUILDING_STATUSES.map(({ value, label }) => ({ value, label })) },
   ],
-  statuses: STATUSES,
+  statuses: BUILDING_STATUSES,
   statusKey: 'status',
   qr: 'batiment',
+  detail: BuildingDetail,
   tabs: [{ key: 'zones', label: 'Zones', config: zones }],
 };

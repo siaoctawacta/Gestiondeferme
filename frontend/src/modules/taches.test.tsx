@@ -5,7 +5,7 @@ import { MemoryRouter, Route, Routes } from 'react-router';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { AuthProvider } from '../lib/auth';
 import { setAccessToken, setFarmHeader } from '../lib/api';
-import { ModulePage } from '../components/module/ModulePage';
+import { ModuleList, ModulePage } from '../components/module/ModulePage';
 import { todayIso } from '../lib/format';
 import { MODULES } from './registry';
 import './index';
@@ -64,7 +64,7 @@ const AGENT = { taches: ['read', 'update'], equipements: ['read', 'create'] };
 const COMPTABLE = { taches: ['read'], personnel: ['read'], finance: ['read', 'create', 'update', 'delete'] };
 const DIRECTEUR = { taches: ['read', 'create', 'update', 'delete'], personnel: ['read', 'create', 'update', 'delete'], lots: ['read'], batiments: ['read'], equipements: ['read'] };
 
-function mount({ perms = RESP_AVICOLE, tasks = TASKS, route = '/', employees = EMPLOYEE_OPTIONS }: { perms?: Record<string, string[]>; tasks?: unknown[]; route?: string; employees?: unknown[] } = {}) {
+function mount({ perms = RESP_AVICOLE, tasks = TASKS, route = '/', employees = EMPLOYEE_OPTIONS, scope }: { perms?: Record<string, string[]>; tasks?: unknown[]; route?: string; employees?: unknown[]; scope?: Record<string, string> } = {}) {
   fetchMock.mockImplementation(async (input, init) => {
     const body = init?.body instanceof FormData ? init.body : init?.body ? JSON.parse(String(init.body)) : undefined;
     const call: Call = { method: init?.method ?? 'GET', url: String(input), body };
@@ -86,7 +86,7 @@ function mount({ perms = RESP_AVICOLE, tasks = TASKS, route = '/', employees = E
   render(
     <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
       <MemoryRouter initialEntries={[route]}>
-        <AuthProvider><Routes><Route path="*" element={<ModulePage config={taches} />} /></Routes></AuthProvider>
+        <AuthProvider><Routes><Route path="*" element={scope ? <ModuleList config={taches} scope={scope} /> : <ModulePage config={taches} />} /></Routes></AuthProvider>
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -646,5 +646,22 @@ describe('présences tab', () => {
     fireEvent.change(within(dialog).getByLabelText('Date'), { target: { value: '2026-10-20' } });
     await waitFor(() => expect(within(dialog).getByLabelText('Statut ligne 3')).toHaveValue('ABSENT'));
     expect(confirm).not.toHaveBeenCalled();
+  });
+});
+
+describe('taches embedded in an equipment page', () => {
+  it('lists the tasks of the equipment and creates one for it, with no choice of target', async () => {
+    mount({ perms: DIRECTEUR, scope: { equipmentId: 'eq1' } });
+    await screen.findByText('Nettoyage Porcherie 2');
+    expect(calls.some((c) => c.url.startsWith('/api/tasks?') && c.url.includes('equipmentId=eq1'))).toBe(true);
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Ajouter' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Ajouter — Tâches & personnel' });
+    expect(within(dialog).queryByRole('radio')).not.toBeInTheDocument();
+    await user.type(within(dialog).getByLabelText('Tâche'), 'Graisser');
+    await user.click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(writes()).toHaveLength(1));
+    expect(writes()[0]).toMatchObject({ method: 'POST', url: '/api/tasks', body: { title: 'Graisser', equipmentId: 'eq1' } });
+    expect(writes()[0].body).not.toHaveProperty('batchId');
   });
 });

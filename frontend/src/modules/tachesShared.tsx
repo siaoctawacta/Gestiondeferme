@@ -118,9 +118,11 @@ const toForm = (t: TaskRow) => ({
  * building, a piece of equipment; the kinds the user may not read are not offered, but the task's own stays), and the
  * matching select follows. One target at most is sent, the others cleared (`null` on an edit).
  */
-export function TaskForm({ row, onSaved, onClose }: { row?: TaskRow; onSaved: () => void; onClose: () => void }) {
+export function TaskForm({ row, scope, onSaved, onClose }: { row?: TaskRow; scope?: Record<string, string>; onSaved: () => void; onClose: () => void }) {
   const { can } = useAuth();
-  const offered = TARGETS.filter((x) => can(x.module, 'read') || row?.target?.kind === x.kind);
+  // A list scoped to a lot, building or equipment (its detail page) fixes the target: the scope sets it, nothing is chosen.
+  const scoped = TARGETS.some((x) => scope?.[x.field]);
+  const offered = scoped ? [] : TARGETS.filter((x) => can(x.module, 'read') || row?.target?.kind === x.kind);
   const fields = (values: Record<string, unknown>): Field[] => [
     { name: 'title', label: 'Tâche', type: 'text', required: true },
     { name: 'description', label: 'Description', type: 'textarea' },
@@ -129,10 +131,10 @@ export function TaskForm({ row, onSaved, onClose }: { row?: TaskRow; onSaved: ()
     { name: 'dueTime', label: 'Heure', type: 'time' },
     { name: 'priority', label: 'Priorité', type: 'select', required: true, defaultValue: 'NORMALE', options: PRIORITIES },
     { name: 'recurrence', label: 'Récurrence', type: 'select', required: true, defaultValue: 'AUCUNE', options: RECURRENCES },
-    {
+    ...(scoped ? [] : [{
       name: 'targetKind', label: 'Concerne', type: 'segmented', defaultValue: 'NONE',
       options: [{ value: 'NONE', label: 'Rien' }, ...offered.map((x) => ({ value: x.kind, label: x.label }))],
-    },
+    } satisfies Field]),
     ...TARGETS.filter((x) => values.targetKind === x.kind).map((x): Field => ({
       name: x.field, label: x.label, type: 'select', required: true, options: x.options, optionsPermission: { module: x.module, action: 'read' },
       currentLabel: row?.target?.kind === x.kind ? row.target.label : undefined,
@@ -154,8 +156,9 @@ export function TaskForm({ row, onSaved, onClose }: { row?: TaskRow; onSaved: ()
         recurrence: v.recurrence,
         // A target not shown is absent from the values: the stored one while its kind is the chosen one (what an edit is
         // compared with), cleared (`''`, sent as null on an edit) otherwise.
-        ...Object.fromEntries(TARGETS.map((x) => [x.field, v.targetKind === x.kind ? v[x.field] ?? (row?.target?.kind === x.kind ? row.target.id : '') : ''])),
+        ...(scoped ? {} : Object.fromEntries(TARGETS.map((x) => [x.field, v.targetKind === x.kind ? v[x.field] ?? (row?.target?.kind === x.kind ? row.target.id : '') : '']))),
       })}
+      scope={scope}
       createPath="/tasks"
       patchPath={(r) => `/tasks/${r.id}`}
       onSaved={onSaved}

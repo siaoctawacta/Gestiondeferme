@@ -194,7 +194,7 @@ function LabelledControl({ field, value, onChange, parentValue, waitingFor, hint
           onChange={(e) => onChange(e.target.files?.[0] ?? '')}
         />
       ) : (
-        <CellControl id={id} aria-describedby={hint ? `${id}-hint` : undefined} field={field} value={value} onChange={(v) => onChange(v)} parentValue={parentValue} waitingFor={waitingFor} currentLabel={field.type === 'select' ? field.currentLabel : undefined} />
+        <CellControl id={id} aria-describedby={hint ? `${id}-hint` : undefined} field={field} value={value} onChange={(v) => onChange(v)} parentValue={parentValue} waitingFor={waitingFor} currentLabel={field.type === 'select' ? field.currentLabel : undefined} disabled={field.type === 'select' ? field.disabled : undefined} />
       )}
       {hint && <p id={`${id}-hint`} className="text-xs text-muted-foreground">{hint}</p>}
     </div>

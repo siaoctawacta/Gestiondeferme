@@ -528,3 +528,21 @@ describe('ActionDialog: file field', () => {
     expect(onSubmit).not.toHaveBeenCalled();
   });
 });
+
+describe('ActionDialog disabled select', () => {
+  const fields: Field[] = [
+    { name: 'condition', label: 'État', type: 'select', disabled: true, hint: 'Remis en service par une intervention', currentLabel: 'En panne', options: [{ value: 'BON', label: 'Bon' }] },
+  ];
+
+  it('shows the select disabled with its hint and keeps the stored value out of the edit body', async () => {
+    const { onSubmit, onDone } = mount({ fields, mode: 'update', initial: { condition: 'EN_PANNE' } });
+    const dialog = await screen.findByRole('dialog');
+    const select = within(dialog).getByLabelText('État');
+    expect(select).toBeDisabled();
+    expect(select).toHaveValue('EN_PANNE');
+    expect(within(dialog).getByText('Remis en service par une intervention')).toBeInTheDocument();
+    await userEvent.setup().click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onDone).toHaveBeenCalled());
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
