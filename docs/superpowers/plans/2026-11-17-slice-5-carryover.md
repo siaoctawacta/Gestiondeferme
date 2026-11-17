@@ -87,4 +87,10 @@ Other open points:
 
 ## Verification at the end of slice 5
 
-Recorded in the final commit message of the slice and in the README « État d'avancement ».
+Controller run at 816029b (Linux, PostgreSQL 16 local):
+
+- Backend: `tsc --noEmit` and eslint clean, unit 397 tests (51 suites), e2e 1338 tests (56 suites), build OK.
+- Frontend: `tsc -b` clean, unit 790 tests (46 files), build OK.
+- Browser (`npm run e2e`): 83 of 83.
+- Demo seed: loaded on the development database and on a scratch database, second run refused as already loaded.
+- Not verified: Docker, a real Mac or Windows machine, a hosted database.

@@ -370,9 +370,9 @@ chiffres du mois en cours). Les captures de `docs/reference/built/` peuvent diff
 d'un jour à l'autre par un seul nombre (« Dépassée depuis N j » de l'alerte de mise bas) ; la date de l'acte de santé
 planifié et les mouvements de consommation de stock (jours de stock) sont calculés par rapport au jour d'exécution.
 
-État vérifié en fin de tranche 5 (Linux, PostgreSQL 16 local) : frontend `tsc -b` propre, 45 fichiers et 775 tests unitaires, build de production
+État vérifié en fin de tranche 5 (Linux, PostgreSQL 16 local) : frontend `tsc -b` propre, 46 fichiers et 790 tests unitaires, build de production
 réussi ; navigateur : `npm run e2e` complet, 83 scénarios sur 83 (auth, bâtiments, commerce, logistique, opérations, production, rendu), sans
-relance ni scénario ignoré. Les suites du backend sont comptées dans `docs/superpowers/plans/2026-11-17-slice-5-carryover.md`.
+relance ni scénario ignoré. Backend : `tsc` et eslint propres, 397 tests unitaires (51 suites), 1 338 tests de bout en bout (56 suites), build réussi.
 Les étapes d'installation de ce fichier (migrations, seed, démonstration, `dev.sh` et son option `--demo`) ont été exécutées ici ; ne l'ont **pas** été :
 Docker (pas de démon), un vrai Mac, Windows, une base hébergée.
 
