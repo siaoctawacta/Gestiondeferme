@@ -7,7 +7,7 @@ import { useAuth } from '../../lib/auth';
 import { resolveEndpointTemplate, useEndpointOptions } from './useEndpointOptions';
 
 /** A field rendered by a bare control (no label): the inputs of the form and the cells of a `lines` row. */
-export type ControlField = Exclude<Field, { type: 'multiselect' | 'checkbox' | 'lines' | 'textarea' }> | CellField;
+export type ControlField = Exclude<Field, { type: 'multiselect' | 'checkbox' | 'lines' | 'textarea' | 'file' }> | CellField;
 
 export interface CellControlProps {
   field: ControlField;

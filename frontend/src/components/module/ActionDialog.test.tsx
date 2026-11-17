@@ -496,3 +496,35 @@ describe('ActionDialog: field hints', () => {
     expect(within(dialog).getByLabelText('Commentaire')).toHaveAccessibleDescription('Visible sur la fiche');
   });
 });
+
+describe('ActionDialog: file field', () => {
+  const fields: Field[] = [{ name: 'photo', label: 'Photo (preuve)', type: 'file', accept: 'image/png' }];
+
+  it('sends nothing for an empty choice', async () => {
+    const { onSubmit } = mount({ fields });
+    const dialog = await screen.findByRole('dialog');
+    const input = within(dialog).getByLabelText('Photo (preuve)');
+    expect(input).toHaveAttribute('type', 'file');
+    expect(input).toHaveAttribute('accept', 'image/png');
+    await userEvent.setup().click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({}));
+  });
+
+  it('hands the chosen File to the payload', async () => {
+    const { onSubmit } = mount({ fields });
+    const dialog = await screen.findByRole('dialog');
+    const input = within(dialog).getByLabelText('Photo (preuve)');
+    const file = new File(['x'], 'p.png', { type: 'image/png' });
+    fireEvent.change(input, { target: { files: [file] } });
+    await userEvent.setup().click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith({ photo: file }));
+  });
+
+  it('refuses an empty required file', async () => {
+    const { onSubmit } = mount({ fields: [{ ...fields[0], required: true }] });
+    const dialog = await screen.findByRole('dialog');
+    await userEvent.setup().click(within(dialog).getByRole('button', { name: 'Enregistrer' }));
+    expect(await within(dialog).findByText('Le champ « Photo (preuve) » est requis')).toBeInTheDocument();
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+});

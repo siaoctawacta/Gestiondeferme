@@ -37,6 +37,7 @@ type Notice = { tone: 'success' | 'error'; message: string };
 
 function FilterSelect({ def, value, onChange }: { def: FilterDef; value: string; onChange: (v: string) => void }) {
   const options = useEndpointOptions(def.options ?? []);
+  if (def.hideWhenEmpty && options.length === 0) return null;
   return (
     <Select className="h-9! pr-2!" aria-label={def.allLabel} value={value} onChange={(e) => onChange(e.target.value)}>
       <option value="">{def.allLabel}</option>
@@ -274,7 +275,7 @@ function ModuleView<T extends { id: string }>({
             className={`border-t border-border transition-opacity ${list.isPlaceholderData ? 'opacity-60' : ''}`}
           >
             <DataTable
-              columns={config.columns}
+              columns={config.columns.filter((c) => c.visible?.({ can }) ?? true)}
               rows={list.data?.items ?? []}
               loading={list.isPending && !sharedError}
               statuses={config.statuses}

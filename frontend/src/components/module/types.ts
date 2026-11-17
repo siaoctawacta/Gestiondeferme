@@ -11,7 +11,8 @@ import type { QrKind } from '../../lib/qr';
  * - `endpoint` may hold `{field}`, replaced by the (URL-encoded) value of that parent field
  *   (`/stock/{stockItemId}`); the parent value is then part of the path and not sent as a query parameter;
  * - `select` maps the response of a single `GET` (not a `{items}` page list, nothing is paged) to the options,
- *   for an endpoint whose answer is a record holding the choices (a stock item and its batches).
+ *   for an endpoint whose answer is a record holding the choices (a stock item and its batches); `ctx.userId` is the
+ *   signed-in user (the employee linked to him, among the options of `/employees/options`).
  * Until the parent has a value the select is disabled and no request is made; changing the parent clears it.
  */
 export type EndpointOptions = {
@@ -19,7 +20,7 @@ export type EndpointOptions = {
   valueKey?: string;
   labelKey?: string;
   params?: Record<string, string>;
-  select?: (data: unknown) => OptionItem[];
+  select?: (data: unknown, ctx: { userId: string | null }) => OptionItem[];
 };
 
 /**
@@ -142,6 +143,11 @@ interface CellBase {
  */
 export type Field =
   | (FieldBase & { type: 'text' | 'date' | 'textarea' })
+  /**
+   * A file chosen from the device (a proof photo): the value is the `File`, or `''` for none (then left out of the
+   * payload); the request that sends it (`FormData`) is the caller's. `accept` narrows the picker.
+   */
+  | (FieldBase & { type: 'file'; accept?: string })
   /** Time of day; the value sent is `HH:mm`. */
   | (FieldBase & { type: 'time' })
   /** `max` is checked on submit; `step` is passed to the input (e.g. `0.1` for decimals). */
@@ -210,6 +216,8 @@ export type Column<T> = {
   render?: (row: T) => ReactNode;
   /** Clicking the header toggles `sort=key:asc|desc` (the backend must allow the field). */
   sortable?: boolean;
+  /** The column is shown only when this answers true (a salary column behind a permission); default: always. */
+  visible?: (ctx: { can: (module: ModuleKey, action: Action) => boolean }) => boolean;
 };
 
 export type StatusDef = {
@@ -231,6 +239,8 @@ export type FilterDef =
       allLabel: string;
       type?: 'select';
       options: OptionsDef;
+      /** The select is not rendered while it has no option (`Mes tâches`, for a user who is no employee). */
+      hideWhenEmpty?: boolean;
     }
   | {
       param: string;
@@ -238,6 +248,7 @@ export type FilterDef =
       allLabel: string;
       type: 'date';
       options?: never;
+      hideWhenEmpty?: never;
     };
 
 /** Fields shared by every extra per-row button. */

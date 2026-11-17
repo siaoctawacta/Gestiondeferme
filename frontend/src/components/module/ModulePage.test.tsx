@@ -789,3 +789,40 @@ describe('date filters', () => {
     expect(listCalls().every((c) => !c.url.includes('to='))).toBe(true);
   });
 });
+
+describe('column visibility and conditional filters', () => {
+  it('leaves out a column its `visible` refuses for the user', async () => {
+    const config: ModuleConfig<Building> = {
+      ...batiments,
+      columns: [...batiments.columns, { key: 'zones', header: 'ZONES SECRÈTES', visible: ({ can }) => can('finance', 'read') }],
+    };
+    setup({ config });
+    await screen.findByText('Poulailler A');
+    expect(screen.queryByRole('columnheader', { name: 'ZONES SECRÈTES' })).not.toBeInTheDocument();
+  });
+
+  const mineFilter = (hideWhenEmpty: boolean): ModuleConfig<Building> => ({
+    ...batiments,
+    filters: [{
+      param: 'mine', allLabel: 'Tous', hideWhenEmpty,
+      options: { endpoint: '/who', select: (data, { userId }) => ((data as { ids: string[] }).ids.includes(userId ?? '') ? [{ value: 'true', label: 'Les miens' }] : []) },
+    }],
+  });
+
+  it('hides a select filter without options when `hideWhenEmpty`, and hands the user id to the options mapper', async () => {
+    handler = () => undefined;
+    setup({ config: mineFilter(true) });
+    handler = (c) => (c.url.startsWith('/api/who') ? json(200, { ids: ['other'] }) : undefined);
+    await screen.findByText('Poulailler A');
+    await waitFor(() => expect(calls.some((c) => c.url.startsWith('/api/who'))).toBe(true));
+    expect(screen.queryByLabelText('Tous')).not.toBeInTheDocument();
+  });
+
+  it('shows it when the mapper answers an option for this user', async () => {
+    setup({ config: mineFilter(true) });
+    handler = (c) => (c.url.startsWith('/api/who') ? json(200, { ids: ['u1'] }) : undefined);
+    expect(await screen.findByLabelText('Tous')).toBeInTheDocument();
+    await userEvent.setup().selectOptions(screen.getByLabelText('Tous'), 'Les miens');
+    await waitFor(() => expect(listCalls().some((c) => c.url.includes('mine=true'))).toBe(true));
+  });
+});

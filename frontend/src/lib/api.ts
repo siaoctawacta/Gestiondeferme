@@ -88,7 +88,9 @@ function send(
   { params, body, token }: { params?: Params; body?: unknown } & RequestOptions,
 ): Promise<Response> {
   const headers = new Headers();
-  if (body !== undefined) headers.set('Content-Type', 'application/json');
+  // A FormData goes as is: the browser sets the multipart content type with its boundary.
+  const multipart = body instanceof FormData;
+  if (body !== undefined && !multipart) headers.set('Content-Type', 'application/json');
   const bearer = token ?? accessToken;
   if (bearer) headers.set('Authorization', `Bearer ${bearer}`);
   if (farmHeader) headers.set('X-Farm-Id', farmHeader);
@@ -96,7 +98,7 @@ function send(
     method,
     headers,
     credentials: 'include',
-    body: body === undefined ? undefined : JSON.stringify(body),
+    body: body === undefined ? undefined : multipart ? body : JSON.stringify(body),
   }).catch(() => {
     throw new ApiError(0, UNREACHABLE);
   });
@@ -184,6 +186,12 @@ export const api = {
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, { body: body ?? {} }),
   put: <T>(path: string, body?: unknown) => request<T>('PUT', path, { body: body ?? {} }),
   del: <T = void>(path: string) => request<T>('DELETE', path),
+  /** Fetches a file with the session credentials (a proof photo to display). */
+  async blob(path: string, params?: Params): Promise<Blob> {
+    const res = await sendWithRetry('GET', path, { params });
+    if (!res.ok) throw await toError(res);
+    return res.blob();
+  },
   /** Fetches a file with the session credentials and hands it to the browser as a download. */
   async download(path: string, params: Params | undefined, filename: string): Promise<void> {
     const res = await sendWithRetry('GET', path, { params });

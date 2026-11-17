@@ -11,6 +11,7 @@ import { reproduction } from './reproduction';
 import { MODULES, registerModule } from './registry';
 import { sante } from './sante';
 import { stocks } from './stocks';
+import { taches } from './taches';
 import { ventes } from './ventes';
 
 /** Module pages built on the ModulePage kit; later slices register their configs here. */
@@ -27,5 +28,6 @@ registerModule(sante);
 registerModule(clients);
 registerModule(ventes);
 registerModule(finance);
+registerModule(taches);
 
 export { MODULES };

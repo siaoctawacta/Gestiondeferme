@@ -22,6 +22,7 @@ export function initialValue(field: Field, raw: Values, mode: FormMode = 'create
     case 'lines': return linesValue(field.columns, v);
     case 'checkbox': return Boolean(v ?? false);
     case 'multiselect': return Array.isArray(v) ? v.map(String) : [];
+    case 'file': return '';
     default: return v === null || v === undefined ? '' : String(v);
   }
 }
@@ -65,7 +66,7 @@ export function defaultPayload(fields: Field[], values: Values, mode: FormMode):
       out[f.name] = (v as LineRow[]).filter((r) => !isBlankRow(f.columns, r)).map((r) => linePayload(f.columns, r));
     } else if (f.type === 'number') {
       if (v !== '') out[f.name] = Number(v);
-    } else if (f.type === 'select' || f.type === 'segmented' || f.type === 'date' || f.type === 'time') {
+    } else if (f.type === 'select' || f.type === 'segmented' || f.type === 'date' || f.type === 'time' || f.type === 'file') {
       if (v !== '') out[f.name] = v;
     } else if (f.type === 'text' || f.type === 'textarea') {
       out[f.name] = String(v).trim();
@@ -111,6 +112,7 @@ export function firstInvalid(fields: Field[], values: Values, mode: FormMode): {
     }
     const empty = f.type === 'multiselect' ? (v as string[]).length === 0
       : f.type === 'checkbox' ? false
+        : f.type === 'file' ? v === ''
         : String(v).trim() === '';
     const fail = (message: string) => ({ field: f, message });
     if (f.required && empty) return fail(`Le champ « ${f.label} » est requis`);
@@ -181,6 +183,15 @@ function LabelledControl({ field, value, onChange, parentValue, waitingFor, hint
           className="w-full rounded-2xl border border-border bg-card px-4 py-2 text-sm"
           value={String(value)}
           onChange={(e) => onChange(e.target.value)}
+        />
+      ) : field.type === 'file' ? (
+        <input
+          id={id}
+          type="file"
+          accept={field.accept}
+          aria-describedby={hint ? `${id}-hint` : undefined}
+          className="block w-full text-sm file:mr-3 file:h-10 file:rounded-full file:border file:border-border file:bg-card file:px-4 file:text-sm"
+          onChange={(e) => onChange(e.target.files?.[0] ?? '')}
         />
       ) : (
         <CellControl id={id} aria-describedby={hint ? `${id}-hint` : undefined} field={field} value={value} onChange={(v) => onChange(v)} parentValue={parentValue} waitingFor={waitingFor} currentLabel={field.type === 'select' ? field.currentLabel : undefined} />

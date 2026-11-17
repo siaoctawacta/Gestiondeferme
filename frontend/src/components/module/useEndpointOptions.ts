@@ -1,4 +1,5 @@
 import { api } from '../../lib/api';
+import { useAuth } from '../../lib/auth';
 import { useFarmQuery } from '../../lib/query';
 import { allPages } from './allPages';
 import type { OptionItem, OptionsDef } from './types';
@@ -31,11 +32,12 @@ export function useEndpointOptions(
   enabled = true,
 ): Option[] {
   const remote = Array.isArray(def) ? null : def;
+  const userId = useAuth().user?.id ?? null;
   const params = { ...remote?.params, ...extraParams };
   const { data } = useFarmQuery<Option[]>(
-    [remote?.endpoint ?? '', 'options', remote?.valueKey, remote?.labelKey, params, Boolean(remote?.select)],
+    [remote?.endpoint ?? '', 'options', remote?.valueKey, remote?.labelKey, params, remote?.select ? userId : false],
     async () =>
-      remote!.select ? remote!.select(await api.get<unknown>(remote!.endpoint, params)) : (await allPages<Record<string, unknown>>(remote!.endpoint, params)).map((r) => ({
+      remote!.select ? remote!.select(await api.get<unknown>(remote!.endpoint, params), { userId }) : (await allPages<Record<string, unknown>>(remote!.endpoint, params)).map((r) => ({
         value: String(r[remote!.valueKey ?? 'id']),
         label: String(r[remote!.labelKey ?? 'name']),
       })),

@@ -153,3 +153,25 @@ describe('api client', () => {
     expect(err).toMatchObject({ status: 0, message: msg });
   });
 });
+
+describe('api client: files', () => {
+  it('posts a FormData as is, without a JSON content type (the browser sets the multipart boundary)', async () => {
+    fetchMock.mockResolvedValueOnce(json(201, { ok: true }));
+    const form = new FormData();
+    form.append('file', new File(['x'], 'preuve.png', { type: 'image/png' }));
+    await api.post('/tasks/t1/proof', form);
+    const init = fetchMock.mock.calls[0][1] as RequestInit;
+    expect(init.body).toBe(form);
+    expect(headersOf(0).has('Content-Type')).toBe(false);
+  });
+
+  it('fetches a file as a blob with the session credentials, and reports an error like any request', async () => {
+    // jsdom's Response cannot wrap a Blob: answer with the blob its `blob()` hands out.
+    fetchMock.mockResolvedValueOnce(Object.assign(new Response(null, { status: 200 }), { blob: async () => new Blob(['img'], { type: 'image/png' }) }));
+    const blob = await api.blob('/tasks/t1/proof');
+    expect(blob.type).toBe('image/png');
+    expect(headersOf(0).get('Authorization')).toBe('Bearer tok-1');
+    fetchMock.mockResolvedValueOnce(json(404, { message: 'Introuvable' }));
+    await expect(api.blob('/tasks/t2/proof')).rejects.toMatchObject({ status: 404, message: 'Introuvable' });
+  });
+});
