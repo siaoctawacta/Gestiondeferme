@@ -19,8 +19,8 @@ import { ACTIVITIES, activityLabel } from './purchasingShared';
 
 export type FinanceKind = 'DEPENSE' | 'RECETTE';
 
-/** Where a row of the ledger comes from: a manual entry, or a document (purchase, lot purchase price, invoice, credit note). */
-export type FinanceOrigin = 'MANUEL' | 'ACHAT' | 'LOT' | 'FACTURE' | 'AVOIR';
+/** Where a row of the ledger comes from: a manual entry, or a document (purchase, lot purchase price, invoice, credit note, maintenance intervention). */
+export type FinanceOrigin = 'MANUEL' | 'ACHAT' | 'LOT' | 'FACTURE' | 'AVOIR' | 'MAINTENANCE';
 
 /**
  * `GET /finance/entries`. A derived row (`editable: false`) is made by its document: `sourceId` is that document's id
@@ -31,6 +31,8 @@ export interface FinanceEntryRow {
   id: string;
   origin: FinanceOrigin;
   sourceId: string | null;
+  /** A `MAINTENANCE` row: the equipment of the intervention, when the API names it (`sourceId` is the intervention's id). */
+  equipmentId?: string | null;
   /** `YYYY-MM-DD` */
   date: string;
   label: string;
@@ -121,7 +123,8 @@ export const categoriesOf = (kind: string) => (kind === 'RECETTE' ? REVENUE_CATE
 export const categoryLabel = (c: string) => [...EXPENSE_CATEGORIES, ...REVENUE_CATEGORIES].find((x) => x.value === c)?.label ?? c;
 
 /** Why a derived row is locked (`by`: its origin, as it reads after `Écriture générée par`), and where its document is. */
-const ORIGINS: Record<Exclude<FinanceOrigin, 'MANUEL'>, { by: string; path?: (id: string, row: FinanceEntryRow) => string; module: (row: FinanceEntryRow) => ModuleKey }> = {
+type OriginInfo = { by: string; path?: (id: string | null, row: FinanceEntryRow) => string | null; module: (row: FinanceEntryRow) => ModuleKey | null };
+const ORIGINS: Record<Exclude<FinanceOrigin, 'MANUEL'>, OriginInfo> = {
   ACHAT: { by: 'un achat', path: (id) => `/m/achats/${id}`, module: () => 'achats' },
   // The detail of a pig lot is served under `porcs`.
   LOT: {
@@ -132,20 +135,25 @@ const ORIGINS: Record<Exclude<FinanceOrigin, 'MANUEL'>, { by: string; path?: (id
   FACTURE: { by: 'une facture', path: (id) => `/m/ventes/${id}`, module: () => 'ventes' },
   // A credit note has no page of its own: it is read on its invoice, which the row does not name.
   AVOIR: { by: 'un avoir', module: () => 'ventes' },
+  // An intervention has no page of its own: the row opens its equipment (the module's list when the row does not name it).
+  MAINTENANCE: { by: 'une intervention', path: (_id, r) => (r.equipmentId ? `/m/equipements/${r.equipmentId}` : '/m/equipements'), module: () => 'equipements' },
 };
+/** Neutral stand-in for an origin this screen does not know (a newer backend): read-only, no link, no crash. */
+const UNKNOWN_ORIGIN: OriginInfo = { by: 'un autre document', module: () => null };
+const originOf = (row: FinanceEntryRow): OriginInfo => (ORIGINS as Record<string, OriginInfo | undefined>)[row.origin] ?? UNKNOWN_ORIGIN;
 
 /** The tooltip of the disabled edit / delete icons of a derived row. */
 export const lockedReason = (row: FinanceEntryRow): true | string =>
-  row.editable || row.origin === 'MANUEL' ? true : `Écriture générée par ${ORIGINS[row.origin].by} — corrigez le document d'origine`;
+  row.editable || row.origin === 'MANUEL' ? true : `Écriture générée par ${originOf(row).by} — corrigez le document d'origine`;
 
 /** The label of a row; a derived one links to its document when the API names it and the user may read its module. */
 export function EntryLabel({ row }: { row: FinanceEntryRow }) {
   const { can } = useAuth();
   if (row.origin === 'MANUEL') return <>{row.label}</>;
-  const origin = ORIGINS[row.origin];
-  return row.sourceId && origin.path && can(origin.module(row), 'read')
-    ? <Link to={origin.path(row.sourceId, row)} className="hover:underline">{row.label}</Link>
-    : <>{row.label}</>;
+  const origin = originOf(row);
+  const module = origin.module(row);
+  const to = row.sourceId && module && can(module, 'read') ? origin.path?.(row.sourceId, row) : null;
+  return to ? <Link to={to} className="hover:underline">{row.label}</Link> : <>{row.label}</>;
 }
 
 /** The `MONTANT` pill: a `Dépense` in danger, a `Recette` in success, a negative revenue (a credit note) in danger. */

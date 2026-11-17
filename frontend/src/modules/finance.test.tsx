@@ -206,6 +206,40 @@ describe('finance list', () => {
     expect(await screen.findByRole('link', { name: 'Achat du lot PC-2026-03' })).toHaveAttribute('href', '/m/porcs/lot-p9');
   });
 
+  it('locks a MAINTENANCE row (an intervention) and links it to the equipment, or to the module without an equipment id', async () => {
+    const base = { origin: 'MAINTENANCE', sourceId: 'mt1', editable: false };
+    mountPage({
+      perms: { ...COMPTABLE, equipements: ['read'] },
+      entries: [
+        entry('maintenance:mt1', '2026-10-12', 'Maintenance Groupe électrogène — Vidange', 'DEPENSE', 'GENERAL', 'ENTRETIEN', 45000, { ...base, equipmentId: 'e1' }),
+        entry('maintenance:mt2', '2026-10-13', 'Maintenance Pompe — Joint', 'DEPENSE', 'GENERAL', 'ENTRETIEN', 12000, { ...base, sourceId: 'mt2' }),
+      ],
+    });
+    expect(await screen.findByRole('link', { name: 'Maintenance Groupe électrogène — Vidange' })).toHaveAttribute('href', '/m/equipements/e1');
+    const withId = rowOf('Maintenance Groupe électrogène — Vidange');
+    for (const name of ['Modifier', 'Supprimer']) {
+      const button = withId.getByRole('button', { name });
+      expect(button).toHaveAttribute('aria-disabled', 'true');
+      expect(button).toHaveAttribute('title', "Écriture générée par une intervention — corrigez le document d'origine");
+    }
+    expect(rowOf('Maintenance Pompe — Joint').getByRole('link')).toHaveAttribute('href', '/m/equipements');
+    cleanup();
+    mountPage({ perms: { finance: ['read'] }, entries: [entry('maintenance:mt1', '2026-10-12', 'Maintenance Groupe électrogène — Vidange', 'DEPENSE', 'GENERAL', 'ENTRETIEN', 45000, { ...base, equipmentId: 'e1' })] });
+    await screen.findByText('Maintenance Groupe électrogène — Vidange');
+    expect(rowOf('Maintenance Groupe électrogène — Vidange').queryByRole('link')).not.toBeInTheDocument();
+  });
+
+  it('renders a row of an unknown origin read-only and without a link, instead of crashing', async () => {
+    mountPage({ entries: [entry('futur:1', '2026-10-12', 'Écriture future', 'DEPENSE', 'GENERAL', 'AUTRE_CHARGE', 1000, { origin: 'FUTURE', sourceId: 'x1', editable: false })] });
+    await screen.findByText('Écriture future');
+    const row = rowOf('Écriture future');
+    expect(row.queryByRole('link')).not.toBeInTheDocument();
+    for (const name of ['Modifier', 'Supprimer']) {
+      expect(row.getByRole('button', { name })).toHaveAttribute('aria-disabled', 'true');
+      expect(row.getByRole('button', { name })).toHaveAttribute('title', "Écriture générée par un autre document — corrigez le document d'origine");
+    }
+  });
+
   it('has the period, activity and category filters and sends them to the entries endpoint', async () => {
     mountPage();
     await screen.findByText('Salaires septembre');
