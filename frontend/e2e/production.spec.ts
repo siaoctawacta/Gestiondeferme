@@ -359,8 +359,10 @@ describe('production : lots, ponte, porcs, reproduction et alimentation de bout 
     // A closed lot takes no more operations and offers no other action.
     assert.equal(await page.getByRole('button', { name: 'Transférer' }).count(), 0);
     assert.equal(await page.getByRole('button', { name: 'Ajouter' }).count(), 0);
-    // Its movements are read-only: no edit icon on the sale.
-    assert.equal(await page.getByRole('row', { name: /Vente/ }).getByRole('button', { name: 'Modifier' }).count(), 0);
+    // Its movements are read-only: the edit icon of the sale stays, disabled, with the reason.
+    const edit = page.getByRole('row', { name: /Vente/ }).getByRole('button', { name: 'Modifier' });
+    assert.equal(await edit.getAttribute('aria-disabled'), 'true');
+    assert.equal(await edit.getAttribute('title'), 'Lot clôturé');
 
     await page.getByRole('button', { name: 'Rouvrir' }).click();
     await page.getByRole('button', { name: 'Clôturer' }).waitFor();

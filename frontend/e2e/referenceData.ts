@@ -260,3 +260,45 @@ export async function seedCommerceReferenceData(admin: EnrolledAdmin, production
   await expense('2026-10-10', 'Vaccins & médicaments', 'AVICOLE', 'SANTE', 120000);
   await expense('2026-10-14', 'Aliment porc 2 t', 'PORCIN', 'ALIMENT', 560000);
 }
+
+/**
+ * The rows of `m_taches.png` and `m_equipements.png`, and what makes the alerts reach the reference's 14: three overdue open
+ * tasks, two equipment due for maintenance and one broken. Employees (Kodjo A., Dr Koffi, Yawa M., Ama K.) are the assignees.
+ * Differences from the reference, listed in the task report: the Pompe forage maintenance is dated ahead (the reference
+ * 2026-11-15 is past, so it would be due: the reference captured it a day before), and the completed task was completed
+ * today (the dashboard counts tasks completed in the last 30 days).
+ */
+export const PUMP_NEXT_MAINTENANCE = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+export async function seedOperationsReferenceData(admin: EnrolledAdmin, production: ProductionIds, buildings: Map<string, string>): Promise<void> {
+  const call = <T = Created>(path: string, method: string, body?: unknown) =>
+    api<T>(path, { method, token: admin.token, farmId: admin.farmId, body });
+  const post = <T = Created>(path: string, body: unknown) => call<T>(path, 'POST', body);
+  const today = new Date().toISOString().slice(0, 10);
+
+  const employee: Record<string, string> = {};
+  for (const [name, job, salary] of [['Kodjo A.', "Agent d'élevage", 85000], ['Dr Koffi', 'Vétérinaire', 250000], ['Yawa M.', 'Ouvrière', 60000], ['Ama K.', 'Ouvrière', 60000]] as const) {
+    employee[name] = (await post('/employees', { name, jobTitle: job, contractType: 'CDI', hireDate: '2026-01-05', monthlySalary: salary })).id;
+  }
+  const task = (title: string, assignee: string, dueDate: string, priority: string, extra: object = {}) =>
+    post('/tasks', { title, assigneeId: employee[assignee], dueDate, priority, ...extra });
+  await task('Pesée hebdomadaire LC-2026-14', 'Kodjo A.', '2026-10-23', 'NORMALE', { recurrence: 'HEBDOMADAIRE', batchId: production.lots['LC-2026-14'] });
+  await task('Vaccination Gumboro LC-2026-15', 'Dr Koffi', '2026-10-24', 'HAUTE', { batchId: production.lots['LC-2026-15'] });
+  const cleaning = await task('Nettoyage Porcherie 2', 'Yawa M.', '2026-10-18', 'URGENTE', { buildingId: buildings.get('Porcherie 2') });
+  await call(`/tasks/${cleaning.id}/start`, 'POST');
+  const eggs = await task('Collecte des œufs', 'Ama K.', '2026-10-22', 'NORMALE');
+  await call(`/tasks/${eggs.id}/complete`, 'POST', { date: today });
+
+  const sites: Record<string, string> = {};
+  const existing = await call<{ items: { id: string; name: string }[] }>('/sites', 'GET');
+  for (const name of ['Site Nord', 'Site Sud', 'Incubation']) {
+    sites[name] = existing.items.find((s) => s.name === name)?.id ?? (await post('/sites', { name })).id;
+  }
+  const equipment = (name: string, type: string, location: object, next: string) =>
+    post('/equipment', { name, type, ...location, maintenanceIntervalDays: 90, firstMaintenanceDate: next });
+  await equipment('Groupe électrogène 20 kVA', 'GROUPE_ELECTROGENE', { siteId: sites['Site Nord'] }, '2026-10-30');
+  const incubator = await equipment('Couveuse 1200 œufs', 'COUVEUSE', { siteId: sites.Incubation }, '2026-10-25');
+  await call(`/equipment/${incubator.id}`, 'PATCH', { condition: 'A_SURVEILLER' });
+  await equipment('Pompe forage', 'POMPE', { siteId: sites['Site Sud'] }, PUMP_NEXT_MAINTENANCE);
+  const fan = await equipment('Ventilateur Poulailler B #3', 'VENTILATEUR', { buildingId: buildings.get('Poulailler B') }, '2026-10-20');
+  await post(`/equipment/${fan.id}/breakdowns`, { date: today, description: 'Le moteur ne démarre plus' });
+}

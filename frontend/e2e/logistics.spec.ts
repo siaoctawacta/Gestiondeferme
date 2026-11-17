@@ -601,6 +601,7 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     await mainShows(page, new RegExp(`${day(1)} Réalisé le ${day(-1)}`));
     await page.goto(`${WEB_URL}/m/stocks`);
     await page.getByRole('link', { name: 'Vaccin Newcastle' }).click();
+    await page.waitForLoadState('networkidle');
     await page.getByRole('tab', { name: 'Mouvements' }).click();
     assert.match(flat(await page.getByRole('row', { name: /Sortie/ }).innerText()), new RegExp(`^${day(-1)} Vaccin Newcastle Sortie -4 `));
 
@@ -641,10 +642,18 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     const planned = page.getByRole('row', { name: /Marek prévu/ });
     const done = page.getByRole('row', { name: /Newcastle fait/ });
     await planned.waitFor();
-    // Planned: cancel and delete (the API allows both on a closed lot), neither complete nor edit. Done: nothing.
-    const icons = async (row: typeof planned) => (await row.getByRole('button').all()).map(async (b) => b.getAttribute('aria-label'));
-    assert.deepEqual(await Promise.all(await icons(planned)), ['Annuler', 'Supprimer']);
-    assert.deepEqual(await Promise.all(await icons(done)), []);
+    // Planned: cancel and delete stay usable (the API allows both on a closed lot); completing and editing stay visible but
+    // disabled with the reason. Done: every icon disabled.
+    const icons = async (row: typeof planned, disabled: boolean) => {
+      const names: string[] = [];
+      for (const b of await row.getByRole('button').all()) {
+        if (((await b.getAttribute('aria-disabled')) === 'true') === disabled) names.push((await b.getAttribute('aria-label')) ?? '');
+      }
+      return names;
+    };
+    assert.deepEqual(await icons(planned, false), ['Annuler', 'Supprimer']);
+    assert.deepEqual(await icons(planned, true), ['Marquer réalisé', 'Modifier']);
+    assert.deepEqual(await icons(done, false), []);
     assert.equal(await page.getByRole('button', { name: 'Ajouter' }).count(), 0);
 
     await planned.getByRole('button', { name: 'Annuler' }).click();
@@ -653,7 +662,7 @@ describe('logistique : achat, réception, stock, distribution, inventaire, sant�
     await dialog.waitFor({ state: 'detached' });
     await planned.getByText('Annulé', { exact: true }).waitFor();
     // A cancelled act on a closed lot can no longer be changed.
-    assert.deepEqual(await Promise.all(await icons(planned)), []);
+    assert.deepEqual(await icons(planned, false), []);
     await page.context().close();
   });
 

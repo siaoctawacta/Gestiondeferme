@@ -5,7 +5,7 @@ import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import type { Browser, Locator, Page } from 'playwright';
 import { api, enrollAdmin, enrollUser, launch, newPage, PASSWORD, uiLoginWithBackupCode, WEB_URL, type EnrolledAdmin } from './helpers.ts';
-import { PLANNED_VACCINATION_DATE, seedCommerceReferenceData, seedLogisticsReferenceData, seedReferenceData } from './referenceData.ts';
+import { PLANNED_VACCINATION_DATE, PUMP_NEXT_MAINTENANCE, seedCommerceReferenceData, seedLogisticsReferenceData, seedOperationsReferenceData, seedReferenceData } from './referenceData.ts';
 
 const BUILT = join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'docs', 'reference', 'built');
 
@@ -162,7 +162,44 @@ const REF_SCREENS = {
 } as const;
 // Row edit / delete icons stay on every row, as in the reference. A row that cannot be changed shows them
 // disabled (aria-disabled) with the reason as tooltip: [row text, icon, reason].
+// The slice-5 screens (tasks, equipment), seeded by `seedOperationsReferenceData` after the screens above.
+const OPS_SCREENS = {
+  m_taches: {
+    path: '/m/taches', wait: 'Collecte des œufs',
+    tiles: ['Total enregistrements', 'À faire', 'En cours', 'Terminée'],
+    headers: ['TÂCHE', 'RESPONSABLE', 'ÉCHÉANCE', 'PRIORITÉ', 'STATUT'],
+    pills: [['À faire', 'warning'], ['En cours', 'warning'], ['Terminée', 'success']],
+    headerHeight: 40, rowHeight: 56,
+    row: ['Pesée hebdomadaire LC-2026-14', 'Kodjo A.', '2026-10-23', 'Normale', 'À faire'],
+    more: [
+      ['Vaccination Gumboro LC-2026-15', 'Dr Koffi', '2026-10-24', 'Haute', 'À faire'],
+      ['Nettoyage Porcherie 2', 'Yawa M.', '2026-10-18', 'Urgente', 'En cours'],
+      ['Collecte des œufs', 'Ama K.', '2026-10-22', 'Normale', 'Terminée'],
+    ],
+  },
+  m_equipements: {
+    path: '/m/equipements', wait: 'Pompe forage',
+    tiles: ['Total enregistrements', 'Bon', 'À surveiller', 'En panne'],
+    headers: ['ÉQUIPEMENT', 'TYPE', 'EMPLACEMENT', 'PROCHAINE MAINTENANCE', 'ÉTAT'],
+    pills: [['Bon', 'success'], ['À surveiller', 'warning'], ['En panne', 'danger']],
+    headerHeight: 40, rowHeight: 56,
+    row: ['Groupe électrogène 20 kVA', 'Groupe électrogène', 'Site Nord', '2026-10-30', 'Bon'],
+    more: [
+      ['Couveuse 1200 œufs', 'Couveuse', 'Incubation', '2026-10-25', 'À surveiller'],
+      // The reference date (2026-11-15) is past when this runs: dated ahead, so the pump raises no « Maintenance due ».
+      ['Pompe forage', 'Pompe', 'Site Sud', PUMP_NEXT_MAINTENANCE, 'Bon'],
+      ['Ventilateur Poulailler B #3', 'Ventilateur', 'Poulailler B', '2026-10-20', 'En panne'],
+    ],
+  },
+} as const;
 const DISABLED_ICONS: Record<string, [string, string, string][]> = {
+  m_taches: [
+    ['Collecte des œufs', 'Modifier', 'Tâche terminée — rouvrez-la'],
+    ['Collecte des œufs', 'Supprimer', 'Une tâche terminée ne peut pas être supprimée'],
+  ],
+  m_equipements: [
+    ['Ventilateur Poulailler B #3', 'Supprimer', 'Équipement avec historique — réformez-le'],
+  ],
   m_lots: [
     ['LC-2026-12', 'Modifier', 'Lot clôturé'],
     ['LC-2026-12', 'Supprimer', 'Lot clôturé'],
@@ -210,7 +247,7 @@ const SEED_BUILDINGS = [
 const flat = (t: string) => t.replace(/\s+/g, ' ').trim();
 
 /** Header labels, tile labels, one reference row and the measured rects of a production screen. */
-async function compareWithReference(page: Page, name: string, ref: (typeof REF_SCREENS)[keyof typeof REF_SCREENS]): Promise<void> {
+async function compareWithReference(page: Page, name: string, ref: (typeof REF_SCREENS)[keyof typeof REF_SCREENS] | (typeof OPS_SCREENS)[keyof typeof OPS_SCREENS]): Promise<void> {
   // The last header cell is the screen-reader-only « Actions » column.
   const headers = (await page.locator('thead th').allInnerTexts()).map(flat).filter((h) => h && h !== 'ACTIONS');
   assert.deepEqual(headers, [...ref.headers], `${name}: column order and labels`);
@@ -1012,8 +1049,15 @@ describe('rendu : captures et comparaison avec la référence', () => {
       ['emptied start', '', '2026-10-31', 'Indiquez les deux dates'],
     ] as const) {
       finance.length = 0;
-      await wide.getByLabel('Du', { exact: true }).fill(from);
-      await wide.getByLabel('Au', { exact: true }).fill(to);
+      // Both bounds empty is a valid period (all dates, ruling Q31): the end is set before the start is cleared, so the
+      // page never passes through it and every request the checks below count is one it must not make.
+      if (from === '') {
+        await wide.getByLabel('Au', { exact: true }).fill(to);
+        await wide.getByLabel('Du', { exact: true }).fill(from);
+      } else {
+        await wide.getByLabel('Du', { exact: true }).fill(from);
+        await wide.getByLabel('Au', { exact: true }).fill(to);
+      }
       for (const tab of ['Dépenses & recettes', 'Synthèse', 'Rentabilité par lot']) {
         await wide.getByRole('tab', { name: tab }).click();
         await wide.getByText(message, { exact: true }).waitFor();
@@ -1083,5 +1127,142 @@ describe('rendu : captures et comparaison avec la référence', () => {
     await printed('purchase order', 'Bon de commande', /BC-0142/, 'bon_de_commande_impression_comptable');
     await opened.context.close();
     await call('/settings/legal', 'PUT', { value: previousLegal });
+  });
+  it('opérations : tâches, équipements, personnel, alertes (14, dont une masquée), rapport imprimé, QR et fiches, à 1440 et 375 px', async () => {
+    const call = <T = { id: string }>(path: string, method = 'GET', body?: unknown) => api<T>(path, { method, token: admin.token, farmId: admin.farmId, body });
+    const lots = new Map<string, string>();
+    for (const species of ['AVICOLE', 'PORCIN']) {
+      for (const b of (await call<{ items: { id: string; code: string }[] }>(`/batches?species=${species}&pageSize=100`)).items) lots.set(b.code, b.id);
+    }
+    const buildings = new Map((await call<{ items: { id: string; name: string }[] }>('/buildings?pageSize=100')).items.map((b) => [b.name, b.id]));
+    await seedOperationsReferenceData(admin, { lots: Object.fromEntries(lots), animals: {} }, buildings);
+
+    // 1. The two new list screens, measured like the others.
+    for (const [name, ref] of Object.entries(OPS_SCREENS)) {
+      await page.goto(`${WEB_URL}${ref.path}`);
+      await page.getByRole('row', { name: new RegExp(ref.wait) }).first().waitFor();
+      await settle(page);
+      await page.screenshot({ path: join(BUILT, `${name}.png`) });
+      await compareWithReference(page, name, ref);
+    }
+    // The export menu offers the label sheet on equipment (the QR icon of every row too), not on tasks (no QR on tasks).
+    assert.equal(await page.locator('tbody').getByRole('button', { name: 'QR code' }).count(), 4, 'every equipment row has its QR icon');
+    await page.goto(`${WEB_URL}/m/taches`);
+    await page.getByRole('row', { name: /Collecte des œufs/ }).waitFor();
+    assert.equal(await page.locator('tbody').getByRole('button', { name: 'QR code' }).count(), 0, 'no QR icon on a task row');
+    // Personnel: the Employés tab of the same page.
+    await page.getByRole('tab', { name: 'Employés' }).click();
+    await page.getByRole('row', { name: /Kodjo A\./ }).waitFor();
+    await settle(page);
+    assert.match(flat(await page.getByRole('row', { name: /Dr Koffi/ }).innerText()), /Dr Koffi Vétérinaire CDI .* Actif 250 000 FCFA/);
+    await page.screenshot({ path: join(BUILT, 'personnel.png') });
+
+    // 2. Home: the task tiles and the five tasks to come.
+    await page.goto(`${WEB_URL}/`);
+    await page.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
+    await mainShowsText(page, /Tâches terminées 1/);
+    const home = flat(await page.locator('main').innerText());
+    assert.match(home, /En attente 3/);
+    for (const title of ['Pesée hebdomadaire LC-2026-14', 'Vaccination Gumboro LC-2026-15', 'Nettoyage Porcherie 2']) assert.ok(home.includes(title), `home lists « ${title} » among the tasks to come`);
+    assert.ok(!home.includes('Collecte des œufs'), 'a completed task is not « à venir »');
+    await settle(page);
+    await page.screenshot({ path: join(BUILT, 'home.png'), fullPage: true });
+
+    // 3. Alerts: the reference's 14 (the planned vaccination replaces the late one: `Vaccination à venir`), urgent first.
+    await page.goto(`${WEB_URL}/alertes`);
+    await page.getByText('Équipement en panne').first().waitFor();
+    await settle(page);
+    const titles = await page.locator('main li p.font-semibold').allInnerTexts();
+    assert.equal(titles.length, 14, `14 open alerts (got ${JSON.stringify(titles)})`);
+    assert.match(flat(await page.locator('main').innerText()), /14 alertes ouvertes/);
+    const expectedTitles = ['Stock faible : Aliment ponte', 'Stock critique : Aliment engraissement porc', 'Mortalité élevée LC-2026-14', 'Mortalité élevée LP-2026-03', 'Désinfection en retard',
+      'Tâche en retard', 'Tâche en retard', 'Tâche en retard', 'Maintenance due', 'Maintenance due', 'Équipement en panne', 'Créance FA-0309'];
+    for (const t of expectedTitles) assert.ok(titles.some((x) => x.startsWith(t)), `an alert « ${t} » is open (got ${JSON.stringify(titles)})`);
+    const urgentCount = await page.locator('main li svg.lucide-circle-alert').count();
+    const firstWarning = (await page.locator('main li').evaluateAll((els) => els.findIndex((el) => !el.querySelector('svg.lucide-circle-alert'))));
+    assert.ok(urgentCount > 0 && firstWarning === urgentCount, `the urgent alerts come first (${urgentCount} urgent, first non-urgent at ${firstWarning})`);
+    const text = flat(await page.locator('main').innerText());
+    for (const expected of ['Tâche en retard Pesée hebdomadaire LC-2026-14 (Kodjo A.)', 'Tâche en retard Nettoyage Porcherie 2 (Yawa M.)', 'Maintenance due Couveuse 1200 œufs', 'Équipement en panne Ventilateur Poulailler B #3']) {
+      assert.ok(text.includes(expected), `the alerts page shows « ${expected} »`);
+    }
+    await page.screenshot({ path: join(BUILT, 'alertes.png'), fullPage: true });
+    // One alert masked, the masked ones shown: its control reads « Réafficher ». Put back at the end.
+    await page.getByRole('button', { name: "Masquer l'alerte : Créance FA-0309" }).click();
+    await page.getByRole('link', { name: 'Afficher les alertes masquées (1)' }).click();
+    await page.getByRole('button', { name: "Réafficher l'alerte : Créance FA-0309" }).waitFor();
+    await settle(page);
+    await page.screenshot({ path: join(BUILT, 'alertes_masquee.png'), fullPage: true });
+    await page.getByRole('button', { name: "Réafficher l'alerte : Créance FA-0309" }).click();
+    await page.getByRole('button', { name: "Masquer l'alerte : Créance FA-0309" }).waitFor();
+
+    // 4. Reports (screen and print), the audit log.
+    await page.goto(`${WEB_URL}/rapports?type=mensuel`);
+    await page.getByRole('heading', { name: 'Finance' }).waitFor();
+    await settle(page);
+    await page.emulateMedia({ media: 'print' });
+    assert.equal(await page.locator('aside').isVisible(), false, 'the sidebar is hidden when printing a report');
+    await page.screenshot({ path: join(BUILT, 'rapport_mensuel_impression.png'), fullPage: true });
+    await page.emulateMedia({ media: 'screen' });
+    await page.goto(`${WEB_URL}/audit`);
+    await page.getByRole('heading', { name: /Journal d'audit/ }).waitFor();
+    await settle(page);
+    assert.equal(await page.getByRole('button', { name: /Réinitialiser les données/ }).count(), 0, 'no « Réinitialiser les données » button: the audit log is immutable');
+    await page.screenshot({ path: join(BUILT, 'audit.png') });
+
+    // 5. Building sheet at 1440, the label sheet and its print layout.
+    await page.goto(`${WEB_URL}/m/batiments/${buildings.get('Poulailler B')}`);
+    await page.getByRole('heading', { name: 'Poulailler B' }).first().waitFor();
+    await mainShowsText(page, /Ventilateur Poulailler B #3/);
+    await settle(page);
+    await page.screenshot({ path: join(BUILT, 'batiment_detail_1440.png'), fullPage: true });
+    await page.goto(`${WEB_URL}/m/lots`);
+    await page.getByRole('row', { name: /LC-2026-14/ }).waitFor();
+    await page.getByRole('button', { name: 'Exporter' }).click();
+    await page.getByRole('menuitem', { name: 'Étiquettes QR' }).click();
+    const labels = page.getByRole('dialog');
+    await labels.getByTestId('qr-label').first().waitFor();
+    const labelCount = await labels.getByTestId('qr-label').count();
+    assert.ok(labelCount >= 3, `the sheet previews the lots on screen (${labelCount})`);
+    await page.emulateMedia({ media: 'print' });
+    const sheet = page.locator('.qr-sheet section').first();
+    await sheet.waitFor();
+    const sheetBox = await box(sheet);
+    near(sheetBox.width / 96 * 25.4, 210, 'label sheet width in mm');
+    assert.equal(await page.locator('aside').isVisible(), false, 'the sidebar is hidden when printing labels');
+    await page.screenshot({ path: join(BUILT, 'etiquettes_qr.png'), fullPage: true });
+    await page.emulateMedia({ media: 'screen' });
+    await page.keyboard.press('Escape');
+
+    // 6. The phone: the task list, an equipment sheet and a QR dialog, no horizontal scroll.
+    const directorEmail = 'directeur-visual@e2e.test';
+    await call('/users', 'POST', { name: 'Directeur Visuel', email: directorEmail, role: 'DIRECTEUR_FERME', farmIds: [admin.farmId], password: PASSWORD });
+    const director = await enrollUser(directorEmail);
+    const { context, page: phone } = await newPage(browser, { width: 375, height: 812 }, 2);
+    await context.addInitScript((farm) => localStorage.setItem('ap_farm', farm), admin.farmId);
+    await uiLoginWithBackupCode(phone, directorEmail, director.backupCodes[0]);
+    await phone.getByRole('heading', { name: 'Tableau de bord' }).waitFor();
+    const noScroll = async (what: string) => {
+      const { scrollWidth } = await phone.evaluate(() => ({ scrollWidth: document.documentElement.scrollWidth }));
+      assert.ok(scrollWidth <= 375, `${what}: document scrollWidth ${scrollWidth} > 375`);
+    };
+    await phone.goto(`${WEB_URL}/m/taches`);
+    await phone.getByRole('row', { name: /Collecte des œufs/ }).waitFor();
+    await settle(phone);
+    await noScroll('tasks');
+    await phone.screenshot({ path: join(BUILT, 'taches_375.png') });
+    const fan = (await call<{ items: { id: string; name: string }[] }>('/equipment')).items.find((e) => e.name === 'Ventilateur Poulailler B #3')!;
+    await phone.goto(`${WEB_URL}/m/equipements/${fan.id}`);
+    await phone.getByRole('heading', { name: 'Ventilateur Poulailler B #3' }).waitFor();
+    await settle(phone);
+    await noScroll('equipment sheet');
+    await phone.screenshot({ path: join(BUILT, 'equipement_detail_375.png'), fullPage: true });
+    await phone.getByRole('button', { name: 'QR code' }).click();
+    const qr = phone.getByRole('dialog');
+    await qr.getByRole('img', { name: 'QR code Ventilateur Poulailler B #3' }).waitFor();
+    await settle(phone);
+    const panel = await box(qr);
+    assert.ok(panel.x >= 0 && panel.y >= 0 && panel.x + panel.width <= 375 && panel.y + panel.height <= 812, 'the QR dialog fits the phone');
+    await phone.screenshot({ path: join(BUILT, 'qr_dialogue_375.png') });
+    await context.close();
   });
 });
