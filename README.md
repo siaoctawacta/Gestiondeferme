@@ -32,7 +32,8 @@ SEED_ADMIN_EMAIL=moi@exemple.com SEED_ADMIN_PASSWORD='un mot de passe long' ./sc
 Le script `scripts/dev.sh` :
 
 1. crée `backend/.env` à partir de `backend/.env.example` s'il n'existe pas, avec des `JWT_SECRET` et
-   `TOTP_ENC_KEY` aléatoires (un `.env` existant n'est jamais modifié) ;
+   `TOTP_ENC_KEY` aléatoires. Un `.env` existant n'est jamais écrasé ; seuls les `JWT_SECRET` et `TOTP_ENC_KEY` vides ou
+   encore à la valeur d'exemple (`change-me…`) y sont remplis, le reste n'est pas touché ;
 2. exige `SEED_ADMIN_EMAIL` et `SEED_ADMIN_PASSWORD` (10 caractères minimum), depuis l'environnement ou depuis
    `backend/.env`, et s'arrête avec un message clair s'ils manquent ;
 3. lance `npm install` dans `backend/` et `frontend/` si `node_modules` manque ;
@@ -167,8 +168,9 @@ Créez ensuite les fermes, sites, bâtiments et utilisateurs depuis le menu Admi
 ## Démarrage avec Docker
 
 > **Non vérifié ici** : le démon Docker n'était pas disponible dans l'environnement de développement de ce
-> dépôt. `docker compose config` valide le fichier, mais les images (`backend/Dockerfile`,
-> `frontend/Dockerfile`) n'ont **pas été construites** ici. Les étapes de build (`npm ci`, `npm run build`,
+> dépôt. Les images (`backend/Dockerfile`, `frontend/Dockerfile`) n'ont **pas été construites** ici, et ni
+> `docker compose config` ni les images n'ont été revérifiés après la tranche 5 (nouveau dossier de fichiers
+> téléversés, volume `api-uploads`, démonstration, `APP_URL`). Les étapes de build (`npm ci`, `npm run build`,
 > `prisma migrate deploy`, démarrage de `node dist/main`) ont été exécutées à la main, hors conteneur.
 > Faites un premier essai sur une machine de test avant toute mise en production.
 
@@ -211,7 +213,7 @@ même journal d'audit que la saisie à la main), pas par du SQL.
 ```bash
 cd backend
 npx prisma migrate deploy && npx prisma db seed          # base prête et administrateur initial
-SEED_ADMIN_EMAIL=moi@exemple.com DEMO_PASSWORD='10 caractères minimum' npm run seed:demo   # environ 5 secondes
+SEED_ADMIN_EMAIL=moi@exemple.com DEMO_PASSWORD='10 caractères minimum' npm run seed:demo   # une quinzaine de secondes avec la compilation
 ```
 
 - `SEED_ADMIN_EMAIL` doit être l'administrateur créé par `prisma db seed` ; `DEMO_PASSWORD` est le mot de passe commun des comptes.
@@ -282,7 +284,7 @@ SEED_ADMIN_EMAIL=moi@exemple.com DEMO_PASSWORD='10 caractères minimum' npm run 
 | `TRUST_PROXY` | non | Nombre de proxys (`1`), `true`… derrière nginx, pour la limitation de débit |
 | `SEED_ADMIN_EMAIL` | pour le seed | E-mail de l'administrateur initial (utilisé par `prisma db seed` et `seed:demo`) |
 | `SEED_ADMIN_PASSWORD` | pour le seed | Mot de passe initial, 10 caractères minimum |
-| `DEMO_PASSWORD` | pour la démo | Mot de passe des 12 comptes de démonstration, 10 caractères minimum ; lu dans l'environnement, jamais écrit ni journalisé |
+| `DEMO_PASSWORD` | pour la démo | Mot de passe des 12 comptes de démonstration, 10 caractères minimum ; lu dans l'environnement ou dans `backend/.env`, jamais écrit ni journalisé ; `./scripts/dev.sh --demo` en génère un et l'affiche une seule fois |
 | `ALLOW_DEMO_SEED` | non | `1` pour autoriser la démo quand `NODE_ENV=production` (installation d'évaluation) ; le mot de passe de démo doit alors avoir 16 caractères au moins |
 | `ALLOW_DEMO_RESET` | non | `1` pour autoriser `npm run demo:reset`, qui **détruit toute la base** (développement, base locale seulement) |
 
@@ -549,7 +551,7 @@ Le Comptable lit les achats mais ne paie pas les fournisseurs : le paiement rest
   aussi pour un Comptable : `*_impression_comptable.png`) ; la page d'une facture (cinq tuiles, dont « Échéance », et la pastille
   « Échue ») est mesurée à 1440, 1024 et 375 px (`vente_detail_1440.png`, `vente_detail_1024.png`, `vente_detail_375.png`).
 - Écarts assumés avec la maquette : la tuile « Total enregistrements » de Finance n'est pas 5 (les écritures dérivées des
-  factures et de l'achat reçu s'ajoutent aux cinq saisies) et la liste s'ouvre sur le mois en cours (la capture règle la
+  factures et de l'achat reçu s'ajoutent aux cinq saisies) et la liste s'ouvre sur toutes les dates (la capture règle la
   période sur octobre) ; les chiffres du tableau de bord suivent le mois civil en cours, pas ceux de la maquette ; FA-0309
   vend 12 000 œufs, donc des jours de ponte supplémentaires sont créés pour LP-2026-03 (la tuile de « Ponte & œufs » diffère) ;
   les données de référence contiennent elles-mêmes la double saisie des vaccins (l'achat reçu BC-0141 et la saisie manuelle
@@ -593,9 +595,10 @@ Les règles à connaître :
   unité (plateau ou œuf) ; une unité sur une ligne de lot, d'animal ou de prestation est refusée.
 - Une dépense saisie à la main et attribuée à un lot est comptée dans la colonne « Autres » de ce lot, quelle que soit sa
   catégorie (même « Aliment » ou « Santé ») : l'aliment et la santé d'un lot sont les seules consommations du stock.
-- La synthèse, la liste des écritures et la rentabilité par lot partagent une même période, toujours avec les deux dates (par
-  défaut, du 1er du mois à aujourd'hui) : effacer une date est refusé (« Indiquez les deux dates »). Sans dates, l'API
-  répondrait pour toute la vie de la ferme ; la fiche d'un lot affiche d'ailleurs ses chiffres depuis son entrée.
+- La synthèse, la liste des écritures et la rentabilité par lot partagent une même période. La liste des écritures s'ouvre sur
+  toutes les dates ; la synthèse s'ouvre sur le mois en cours (du 1er du mois à aujourd'hui), et les trois onglets gardent ensuite
+  la période choisie. Effacer les deux dates est permis (toutes les dates) ; une seule date est refusée (« Indiquez les deux
+  dates »). La fiche d'un lot affiche ses chiffres depuis son entrée.
 - Les feuilles imprimées lisent l'identité légale (nom, adresse, NIF, RCCM), l'échéance par défaut et le nombre d'œufs par
   plateau par une route ouverte à tout utilisateur connecté, qui ne rend que ces champs : un Commercial ou un Comptable
   imprime donc une facture complète sans avoir le droit de lire les paramètres.
@@ -659,10 +662,10 @@ récupéré le code, lancez `npx prisma migrate deploy` dans `backend/` (ou `./s
 |---|---|
 | Créer, modifier, supprimer un employé ; voir les salaires | Directeur, Super admin (salaires : tout rôle qui lit la finance) |
 | Saisir ou corriger la feuille de présence | Responsable avicole, Responsable porcin, Directeur, Super admin |
-| Lire les employés et les présences | Propriétaire, Comptable, Auditeur et les rôles ci-dessus |
+| Lire les employés et les présences | Propriétaire, Comptable, Auditeur et les rôles ci-dessus ; le Comptable ouvre « Tâches & personnel » sur Employés et Présences, en lecture seule, avec les salaires |
 | Créer, modifier, supprimer une tâche | Responsable avicole, Responsable porcin, Directeur, Super admin |
 | Démarrer, terminer, rouvrir une tâche | Les rôles ci-dessus ; Agent, Vétérinaire, Responsable stock, Magasinier : **seulement leurs propres tâches** (employé lié à leur compte) |
-| Voir les tâches | Tous ces rôles et Propriétaire, Auditeur ; pas le Commercial ni le Comptable |
+| Voir les tâches | Tous ces rôles et Propriétaire, Auditeur ; pas le Commercial ni le Comptable (le Comptable n'a pas l'onglet « Tâches ») |
 | Déclarer une panne | Agent, Responsable avicole, Responsable porcin, Directeur, Super admin |
 | Créer ou modifier un équipement, enregistrer une intervention, réformer | Directeur, Super admin |
 | Lire les équipements | Les rôles ci-dessus, Propriétaire, Auditeur |
@@ -677,6 +680,7 @@ récupéré le code, lancez `npx prisma migrate deploy` dans `backend/` (ou `./s
 ou se supprime avec le droit `C` ; une fiche de référence demande `M`. Ce tableau est celui du code (`backend/src/access/permissions.ts`, fonction
 `permissionsFor`).
 
+<!-- grants:start -->
 | Module | Super admin | Propriétaire | Directeur | Resp. avicole | Resp. porcin | Vétérinaire | Resp. stock | Comptable | Commercial | Agent | Magasinier | Auditeur |
 |---|---|---|---|---|---|---|---|---|---|---|---|---|
 | Tableau de bord | LCMSV | L | L | L | L | L | L | L | L | L | L | L |
@@ -702,6 +706,7 @@ ou se supprime avec le droit `C` ; une fiche de référence demande `M`. Ce tabl
 | Équipements | LCMSV | L | LCMSV | LC | LC | · | · | · | · | LC | · | L |
 | Personnel (employés, présences) | LCMSV | L | LCMSV | LC | LC | · | · | L | · | · | · | L |
 | Journal d'audit | L | L | L | · | · | · | · | · | · | · | · | L |
+<!-- grants:end -->
 
 Seul le Super administrateur écrit dans Fermes & sites, Utilisateurs et Paramètres ; le Propriétaire et l'Auditeur y lisent. Le journal d'audit est
 en lecture seule pour tous.
@@ -733,6 +738,14 @@ en lecture seule pour tous.
   documents commerciaux.
 - **Tâches** : la photo de preuve se lit avec le droit de lecture des tâches de la ferme (jamais par un lien public). Une tâche terminée ne se modifie
   ni ne se supprime : rouvrez-la d'abord. Un employé « parti » ou une date d'embauche qui laisserait une tâche ouverte hors de ses dates est refusé.
+- **Départ et réforme, tâches ouvertes** : seules les tâches ouvertes (à faire ou en cours, selon leur échéance) bloquent la date de départ d'un
+  employé et la réforme d'un équipement (« Des tâches ouvertes portent sur cet équipement ») ; les tâches terminées ne bloquent jamais. Un équipement
+  en panne peut être réformé. Rouvrir une tâche ne se refuse jamais : si son responsable n'est plus en poste à l'échéance, ou si l'équipement visé est
+  réformé, ce champ est vidé.
+- **Pannes et alertes** : chaque nouvelle panne déclarée donne sa propre alerte « Équipement en panne », même si l'alerte de la panne précédente avait été
+  masquée ; une alerte de tâche en retard change aussi quand l'échéance change.
+- **Rapports et espèces** : un rapport ne montre à chaque rôle que l'espèce (avicole, porcine) dont il voit les écrans ; un rôle qui ne lit que l'une des
+  deux ne voit pas les chiffres de l'autre.
 
 ## Limites connues et décisions ouvertes
 

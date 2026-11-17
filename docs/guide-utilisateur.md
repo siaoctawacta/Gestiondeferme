@@ -65,7 +65,7 @@ Le menu ne montre que ce que votre rôle peut ouvrir. Si un bouton manque, c'est
 | **Vétérinaire** | Santé et biosécurité (vaccinations, traitements, diagnostics, plans) ; avance ses propres tâches. |
 | **Responsable stock** / **Magasinier** | Stocks, mouvements, inventaires, fournisseurs, achats (le Magasinier réceptionne) ; avancent leurs propres tâches. |
 | **Commercial** | Clients, devis, factures, encaissements. |
-| **Comptable** | Dépenses et recettes, salaires du mois, paiements, avoirs, rapports avec l'argent. Ne voit pas les tâches. |
+| **Comptable** | Dépenses et recettes, salaires du mois, paiements, avoirs, rapports avec l'argent. Ouvre **Tâches & personnel** sur **Employés** et **Présences** (lecture seule, avec les salaires) ; ne voit pas les tâches. |
 | **Directeur de ferme** | Tout ce qui touche à la ferme : lots, stocks, achats, tâches, équipements, personnel ; lit les ventes, la finance, les rapports. |
 | **Propriétaire** / **Auditeur** | Lecture de tout ; le Propriétaire valide les achats et émet les avoirs. L'Auditeur ne modifie rien. |
 | **Super administrateur** | Tout, plus les fermes, utilisateurs et paramètres. |
@@ -134,7 +134,7 @@ Le **Directeur** referme la panne : sur la même ligne, icône **Intervention** 
 2. Sur la ligne : **Démarrer** (la tâche passe à **En cours**).
 3. Quand c'est fait : **Terminer**. Vérifiez la **Date de réalisation**, joignez la **Photo (preuve)** (JPEG, PNG ou WebP, 5 Mo au plus), **Enregistrer**.
 4. La ligne devient **Terminée**. Si la tâche se répète (chaque jour, semaine ou mois), une nouvelle ligne **À faire** apparaît pour la date suivante.
-5. **Voir la preuve** ouvre la photo dans un nouvel onglet. Une erreur ? **Rouvrir** remet la tâche à faire.
+5. **Voir la preuve** ouvre la photo dans un nouvel onglet ; **Remplacer la photo** et **Supprimer la preuve** (après confirmation) corrigent une mauvaise photo. Une erreur sur la tâche ? **Rouvrir** remet la tâche à faire.
 
 Vous ne voyez **Démarrer** et **Terminer** que sur **vos** tâches (celles de l'employé lié à votre compte). Les autres sont en lecture seule.
 
@@ -144,9 +144,9 @@ Vous ne voyez **Démarrer** et **Terminer** que sur **vos** tâches (celles de l
 
 *Responsable avicole ou porcin, Directeur (la présence : aussi eux).*
 
-- **Créer une tâche** : **Tâches & personnel**, **Ajouter** ; renseignez **Tâche**, **Responsable**, **Échéance**, **Heure**, **Priorité**, **Récurrence**, et **Concerne** (Rien, Lot, Bâtiment ou Équipement), puis **Enregistrer**. Une tâche terminée ne se modifie plus : **Rouvrir** d'abord.
+- **Créer une tâche** : **Tâches & personnel**, **Ajouter** ; renseignez **Tâche**, **Responsable**, **Échéance**, **Heure**, **Priorité**, **Récurrence**, et **Concerne** (Rien, Lot, Bâtiment ou Équipement), puis **Enregistrer**. Une tâche terminée ne se modifie plus : **Rouvrir** d'abord. Rouvrir ne se refuse jamais : si le responsable n'est plus en poste à l'échéance, ou si l'équipement visé est réformé, ce champ est vidé. Une tâche ouverte empêche de mettre une date de départ à un employé et de réformer un équipement : terminez-la ou changez-la d'abord.
 - **Présences du jour** : onglet **Présences**, **Ajouter**. La **Date** est celle d'aujourd'hui ; chaque employé en poste a une ligne : **Statut** (Présent par défaut, Absent, Congé, Maladie), **Heures** (pour une présence seulement), **Note**. **Enregistrer** : rouvrir le même jour montre la feuille déjà saisie.
-- **Employés** (Directeur) : onglet **Employés**, **Ajouter** : **Nom affiché** (« Kodjo A. »), **Poste**, **Contrat**, **Date d'embauche**, **Salaire mensuel (FCFA)**, et **Compte utilisateur** pour lier l'employé à son identifiant (il aura alors **Mes tâches**).
+- **Employés** (Directeur ; le Comptable les lit, salaires compris, sans pouvoir les modifier) : onglet **Employés**, **Ajouter** : **Nom affiché** (« Kodjo A. »), **Poste**, **Contrat**, **Date d'embauche**, **Salaire mensuel (FCFA)**, et **Compte utilisateur** pour lier l'employé à son identifiant (il aura alors **Mes tâches**).
 
 ![Employés](reference/built/personnel.png)
 
@@ -215,7 +215,7 @@ Menu **Alertes** (ou la cloche). Les alertes sont calculées automatiquement ; v
 | **Produit périmé / bientôt périmé** | le lot de produit est sorti du stock ou sa date corrigée. |
 | **Tâche en retard** | la tâche est **Terminée** (une tâche récurrente laisse la suivante à sa date). |
 | **Maintenance due** | une **Intervention** est enregistrée avec une prochaine date plus tard. |
-| **Équipement en panne** | une intervention **Corrective** répare la panne. |
+| **Équipement en panne** | une intervention **Corrective** répare la panne. Chaque nouvelle panne donne sa propre alerte, même si la précédente avait été masquée. |
 | **Créance FA-…** | la facture est payée (**Encaisser**) ou annulée. |
 
 ### Masquer une alerte

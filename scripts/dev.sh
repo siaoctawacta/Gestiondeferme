@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # One-command development start: database, migrations, seed, API (3000) and web (5173).
 #   SEED_ADMIN_EMAIL=moi@exemple.com SEED_ADMIN_PASSWORD='un mot de passe long' ./scripts/dev.sh
-# Never overwrites an existing backend/.env. Ctrl-C stops both servers.
+# Never overwrites an existing backend/.env, but fills in a JWT_SECRET or TOTP_ENC_KEY that is empty or still the
+# `change-me...` placeholder of .env.example; nothing else in it is changed. Ctrl-C stops both servers.
 # With --demo the demo farm « Ferme Kpalimé » is loaded after the seed. DEMO_PASSWORD (10 characters minimum) is the
 # password of its 12 accounts; without it one is generated and printed once. Nothing is reloaded when the demo is there:
 #   ./scripts/dev.sh --demo
